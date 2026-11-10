@@ -18,7 +18,7 @@ commands:
     stability: stable
     argument_mode: words
     input: "null"
-    output: stream<ono.plugin/1>
+    output: stream<ono.plugin/2>
     provider_capability: plugin.list
     selectors:
       - {name: id, type: string, doc: "Resolve one package by its publisher-namespaced id (spec §31.5), or by its short name when exactly one installed package carries it (K11P §10.4)."}
@@ -56,7 +56,7 @@ commands:
     summary: Show a package's manifest, origin, contributions, permissions, capabilities, resource use and errors.
     stability: stable
     argument_mode: words
-    input: "null | ono.plugin/1"
+    input: "null | ono.plugin/2"
     output: ono.plugin-inspection/1
     provider_capability: plugin.inspect
     selectors:
@@ -102,7 +102,7 @@ commands:
     summary: Remove a package with its permissions; state and policy retention is explicit.
     stability: stable
     argument_mode: words
-    input: "null | stream<ono.plugin/1>"
+    input: "null | stream<ono.plugin/2>"
     output: stream<ono.action-result/1>
     provider_capability: plugin.remove
     selectors:
@@ -123,7 +123,7 @@ commands:
     summary: Negotiate capabilities and instantiate a package's runtime — explicitly; an installed package's contributions load it on first use.
     stability: stable
     argument_mode: words
-    input: "null | stream<ono.plugin/1>"
+    input: "null | stream<ono.plugin/2>"
     output: ono.plugin-runtime/1
     provider_capability: plugin.load
     selectors:
@@ -141,7 +141,7 @@ commands:
     summary: Drain or cancel a package's jobs and withdraw its runtime contributions.
     stability: stable
     argument_mode: words
-    input: "null | stream<ono.plugin/1>"
+    input: "null | stream<ono.plugin/2>"
     output: stream<ono.action-result/1>
     provider_capability: plugin.unload
     selectors:
@@ -163,7 +163,7 @@ commands:
     summary: Change a package's management settings — enablement and background policy.
     stability: stable
     argument_mode: words
-    input: "null | stream<ono.plugin/1>"
+    input: "null | stream<ono.plugin/2>"
     output: stream<ono.action-result/1>
     provider_capability: plugin.set
     selectors:
@@ -184,7 +184,7 @@ commands:
     summary: Validate a package's integrity, signature and compatibility.
     stability: stable
     argument_mode: words
-    input: "null | stream<ono.plugin/1>"
+    input: "null | stream<ono.plugin/2>"
     output: ono.verification-result/1
     provider_capability: plugin.verify
     selectors:

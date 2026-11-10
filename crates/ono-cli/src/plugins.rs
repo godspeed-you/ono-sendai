@@ -467,14 +467,14 @@ pub fn claims(stage: &ono_parser::Stage) -> Option<Request> {
 }
 
 /// The piped form, `get plugin | verify plugin` (ADR-0118): the packages arrive as
-/// `ono.plugin/1` records and each is handled as `<verb> plugin <id>` would be. `ask assistant`
+/// `ono.plugin/2` records and each is handled as `<verb> plugin <id>` would be. `ask assistant`
 /// declares `input: null | any`, so whatever arrives is its context and the assistant is still
 /// named on the stage (spec §7.1); `install plugin` and `grant capability` declare no input.
 ///
 /// # Errors
 ///
 /// The structured refusal of the command, or a type error for a command with no stream input
-/// or for a piped value that is not an `ono.plugin/1` record.
+/// or for a piped value that is not an `ono.plugin/2` record.
 pub fn run_piped(
     session: &mut Session,
     request: Request,
@@ -518,7 +518,7 @@ pub fn run_piped(
 /// # Errors
 ///
 /// The first load that is refused, after the packages before it were loaded; a type error when
-/// the stage also names a package, or a piped value is not an `ono.plugin/1` record.
+/// the stage also names a package, or a piped value is not an `ono.plugin/2` record.
 pub fn load_piped(session: &mut Session, words: &[String], targets: &[Value]) -> Eval<ExitStatus> {
     let (named, options) = LoadOptions::from_words(words);
     if let Some(named) = named {

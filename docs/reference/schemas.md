@@ -106,7 +106,7 @@ Default view: `id`, `plugin`, `state`, `model`, `autonomy`, `tools`
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `id` | `string` | — | required | The assistant's id, as `ask assistant <id>` names it, e.g. `ops-assist`. |
-| `plugin` | `ref<ono.plugin/1>` | — | required | The package that provides it. An assistant is an extension role, not a separate subsystem (spec §31.41). |
+| `plugin` | `ref<ono.plugin/2>` | — | required | The package that provides it. An assistant is an extension role, not a separate subsystem (spec §31.41). |
 | `name` | `string` | — | required | The display name. |
 | `state` | `enum` | — | required | Spec §31.42's state set. `loaded` means the package is up but the assistant has not completed its model selection; `ready` means it can take a turn; `degraded` means it can take a turn with something missing — typically no model. |
 | `model_policy` | `record` | — | required | The requirements the package declares and the resolution the broker made: `{requirements, selected, allowed_providers}`. Shape in `docs/contracts/kuang/assistants.v1.yaml` → `model_requirements` (spec §31.43). |
@@ -154,7 +154,7 @@ Default view: `plugin`, `capability`, `scope`, `duration`, `decision`, `expires_
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `id` | `uuid` | — | required | The grant's own identity, so it can be revoked and cited precisely. |
-| `plugin` | `ref<ono.plugin/1>` | — | nullable | The package the grant is made to. A grant is never to a publisher or to a class of packages. Null on the rows `get capability` lists before the grants: a capability *definition* the broker knows and no package has asked for yet names no package, and saying so with a null is what spec §35.3 requires instead of inventing one (ADR-0111). |
+| `plugin` | `ref<ono.plugin/2>` | — | nullable | The package the grant is made to. A grant is never to a publisher or to a class of packages. Null on the rows `get capability` lists before the grants: a capability *definition* the broker knows and no package has asked for yet names no package, and saying so with a null is what spec §35.3 requires instead of inventing one (ADR-0111). |
 | `capability` | `string` | — | required | The capability id, from `kuang_capabilities` in `docs/contracts/capabilities.yaml`. |
 | `class` | `enum` | — | nullable | How the package declared it (spec §31.17). A `required` denial blocks the load; an `optional` denial degrades it. Null on a definition row, which no package has declared (ADR-0111). |
 | `decision` | `enum` | — | required | The standing answer. `ask` is not a grant: it prompts, once, per the requirements of spec §31.18, and resolves to `deny` where no one can be asked. |
@@ -1441,7 +1441,7 @@ Default view: `title`, `state`, `when`, `scope`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
-| `plugin` | `ref<ono.plugin/1>` | — | required | The package the permission belongs to, by canonical id. |
+| `plugin` | `ref<ono.plugin/2>` | — | required | The package the permission belongs to, by canonical id. |
 | `id` | `string` | — | required | The package-local permission id, e.g. `cluster-access`, or `capability:<family>` for a legacy grant no descriptor maps. |
 | `title` | `string` | — | required | The human statement, package-authored and sanitised, or the host's own wording for a derived permission. |
 | `purpose` | `string` | — | nullable | Why the package needs it, package-authored and sanitised. Null when the package said nothing. |
@@ -1550,7 +1550,7 @@ Default view: `at`, `plugin`, `capability`, `action`, `target`, `result`
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `id` | `uuid` | — | required | The record's own identity, so an event can be cited from a finding or an assistant answer. |
-| `plugin` | `ref<ono.plugin/1>` | — | required | The package that acted. Set by the host; a package cannot attribute an action to another. |
+| `plugin` | `ref<ono.plugin/2>` | — | required | The package that acted. Set by the host; a package cannot attribute an action to another. |
 | `invocation` | `string` | — | required | The invocation the action belonged to — the command, view, stream, analysis or assistant turn. It is what lets a trail be read as a story rather than as isolated calls. |
 | `capability` | `string` | — | required | The capability id the action was taken under, from `kuang_capabilities` in `docs/contracts/capabilities.yaml`. |
 | `scope` | `value` | — | nullable | The scope in force, as spec §31.37 types it (`scope: Value`). Null when the capability declares no scope — which is different from an empty scope, and the difference matters when reading a trail back. |
@@ -1575,7 +1575,7 @@ Default view: `plugin`, `origin`, `memory_current`, `open_streams`, `restart_cou
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
-| `plugin` | `ref<ono.plugin/1>` | — | required | The package version being inspected. |
+| `plugin` | `ref<ono.plugin/2>` | — | required | The package version being inspected. |
 | `manifest` | `record` | — | required | The validated manifest, as parsed. Its shape is `docs/contracts/kuang/manifest.v1.yaml`. Present even for a package that has never been loaded, which is the point of manifest-before-code. |
 | `origin` | `enum` | — | required | Where the contributions came from (spec §31.64). `plugin` for anything installed locally; `remote-provider` for a component projected across a link. |
 | `contributions` | `record` | — | required | What the package contributes, resolved: command ids, schema ids, target names, view ids, relation shapes and annotation keys. Spec §31.1: every line is backed by a manifest field or a resolved dependency, never by marketing metadata. |
@@ -1584,7 +1584,7 @@ Default view: `plugin`, `origin`, `memory_current`, `open_streams`, `restart_cou
 | `verification` | `ono.verification-result/1` | — | required | The most recent verification: integrity, signature, publisher, transparency, compatibility, runtime. |
 | `permissions` | `list<ono.permission/1>` | — | required | The package's permission layer with its standing decisions — every descriptor, declared or derived, with the exact capabilities and scopes underneath (K11P §25.3). What `get permission <id> --all` answers, in one place with everything else. |
 | `profiles` | `list<record>` | — | required | The access profiles the package offers, as `{name, title, permissions, adds_mutation}`; `minimal` and `recommended` are always among them for a package with any permission request (K11P §9). `adds_mutation` is the host's own flag, appended to the title wherever a profile is offered (K11P §9.3). |
-| `readiness` | `enum` | — | required | The derived label of `ono.plugin/1.readiness`, beside the internal state it projects (K11P §17.2). |
+| `readiness` | `enum` | — | required | The derived label of `ono.plugin/2.readiness`, beside the internal state it projects (K11P §17.2). |
 | `acquisition` | `record` | — | nullable | Where the installed copy came from (K11A §18, §21.4): `source_kind`, `source_identity`, `system_package` and `package_manager` when a distribution package supplied it, `source_path`, the `catalog` that resolved it, the `installed_digest` the copy is pinned to, and `origin_available` — whether that source still holds this version, or null for a network artifact this host does not probe. Null for a package placed by hand before the origin was recorded. |
 | `isolation_statement` | `string` | — | required | The host's own sentence about the execution tier, verbatim what the install prompt shows — for `native-process`, that brokered capabilities and process confinement are not a complete filesystem or network sandbox (v0.4.1 §15.2, K11P §18.2). Never package-authored. |
 | `runtime` | `ono.plugin-runtime/1` | — | nullable | The negotiated contract of the running instance. Null when nothing is loaded — not an empty record. |
@@ -1629,7 +1629,7 @@ Default view: `name`, `id`, `version`, `trust`, `source_kind`, `source`, `instal
 | `network` | `record` | — | required | The declared outbound policy and destinations (spec §31.21). `outbound: none` is a stated answer, not an absent field. |
 | `integrity` | `string` | — | nullable | The content hash the source advertises, e.g. `sha256:...`. Null when the source offers none — which makes installing from it a decision rather than a formality. |
 | `signature` | `enum` | — | required | The signature state, as far as it can be judged without downloading the artifact. `unknown` is the honest answer for a source that does not say (spec §35.3). |
-| `trust` | `enum` | — | required | What is known about the publisher, using the same vocabulary as `ono.plugin/1.trust`. |
+| `trust` | `enum` | — | required | What is known about the publisher, using the same vocabulary as `ono.plugin/2.trust`. |
 | `installed` | `bool` | — | required | Whether this exact id and version is already installed on this host. |
 | `catalog` | `string` | — | nullable | The catalog that answered, by name, e.g. `official` (K11P §11). Null for a package read from an installed directory or an explicit path. |
 | `catalog_verification` | `enum` | — | nullable | How the shell knows the catalog: part of the release, placed by the operator, or claimed. A separate answer from `signature` and `trust` on purpose — a catalog saying a package exists makes nobody trusted (K11P §11.3, ADR-0601 §2). Null when no catalog answered. |
@@ -1647,7 +1647,7 @@ Default view: `plugin`, `host_api`, `execution_tier`, `degraded`, `started_at`
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
 | `instance` | `string` | — | required | The runtime instance's id. Identity is the instance rather than the package, because an upgrade and a restart both produce a new instance while the package id stays the same. |
-| `plugin` | `ref<ono.plugin/1>` | — | required | The installed package version this instance runs. |
+| `plugin` | `ref<ono.plugin/2>` | — | required | The installed package version this instance runs. |
 | `host_api` | `string` | — | required | The negotiated host API version, e.g. `kuang-host/11.1` — one version, not the range the package asked for (spec §31.63). |
 | `value_protocol` | `string` | — | required | The negotiated value protocol, e.g. `ono-value/1` (spec §31.62). |
 | `isolation` | `enum` | — | required | The tier the package's manifest declares, in spec §31.10's own vocabulary. It says what kind of thing the artifact is; `execution_tier` says what was actually installed around it, and the two are different questions (v0.4.1 §17.2). |
@@ -1665,7 +1665,7 @@ Default view: `plugin`, `host_api`, `execution_tier`, `degraded`, `started_at`
 | `started_at` | `timestamp` | — | required | When the instance was created. |
 | `development_mode` | `bool` | — | required | Whether the instance was loaded with `--dev` (spec §31.71). Development mode relaxes integrity, never authority, and it must remain visually marked for the whole session. |
 
-## Plugin — `ono.plugin/1`
+## Plugin — `ono.plugin/2`
 
 One installed version of a KUANG/11 package, and what it is currently doing.
 
@@ -1680,9 +1680,8 @@ Default view: `id`, `version`, `state`, `trust`, `jobs`, `memory`
 | `version` | `string` | — | required | This installed version. Part of the identity, because several may be installed at once. |
 | `publisher` | `string` | — | required | The publisher namespace `id` begins with. |
 | `state` | `enum` | — | required | The lifecycle state of spec §31.8. `installed` and `enabled` mean no code of this package has run. See `docs/contracts/kuang/lifecycle.v1.yaml` for the transitions. |
-| `trust` | `enum` | — | required | What is known about who produced the artifact (spec §31.8's table, §31.36). `signed` means a valid signature from a key this system does not vouch for; `verified` means a valid signature from a trusted publisher; `local` is an unsigned development package; `untrusted` is a package quarantined on trust grounds. It is a separate question from `isolation`, deliberately (spec §31.36). |
-| `isolation` | `enum` | — | required | What kind of thing the artifact is — the tiers of spec §31.10, as the manifest declares them. A package cannot declare `core-built-in`. It is not a statement about what is installed around the artifact; `execution_tier` is. |
-| `execution_tier` | `enum` | — | required | The named tier a loaded instance of this package runs in (v0.4.1 §17.2), and the name that reaches audit, diagnostics and documentation. A name rather than a boolean: v0.4.1 §17.3 forbids describing a tier as "sandboxed" without stating the boundary, and `native-confined` states it — capability mediation and process confinement, no kernel isolation of the filesystem or the network. `inspect plugin` shows the controls that name stands for. |
+| `trust` | `enum` | — | required | What is known about who produced the artifact (spec §31.8's table, §31.36). `signed` means a valid signature from a key this system does not vouch for; `verified` means a valid signature from a trusted publisher; `local` is an unsigned development package; `untrusted` is a package quarantined on trust grounds. It is a separate question from `execution_tier`, deliberately (spec §31.36). |
+| `execution_tier` | `enum` | — | required | The named tier a loaded instance of this package runs in — for a package with no instance, the tier one would run in (v0.4.1 §17.2) — and the one field of this record that says so: version 1's `isolation` repeated the question in the manifest's vocabulary. The name that reaches audit, diagnostics and documentation. A name rather than a boolean: v0.4.1 §17.3 forbids describing a tier as "sandboxed" without stating the boundary, and `native-confined` states it — capability mediation and process confinement, no kernel isolation of the filesystem or the network. `inspect plugin` shows the controls that name stands for. |
 | `roles` | `list<string>` | — | required | The extension roles of spec §31.4 the package declares, at least one. |
 | `enabled` | `bool` | — | required | Whether policy makes it eligible for loading. Distinct from `state`, which says what is happening now: a package can be enabled and unloaded, which is the normal resting state under lazy loading (spec §31.68). |
 | `readiness` | `enum` | — | required | The derived user-facing label of K11P §12.2 and §17.2, a projection over `state` and `enabled` and never a replacement for them: `ready` is installed, enabled, registered, with every install-time permission of its selected profile allowed and not quarantined; `needs-permission` lacks one of those decisions; `blocked` is disabled or quarantined; `running` is loaded or active. For a `startup: lazy` package, `ready` with `state: installed` is the normal resting state (ADR-0602 §2). |

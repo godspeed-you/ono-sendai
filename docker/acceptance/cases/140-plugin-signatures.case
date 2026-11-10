@@ -54,7 +54,7 @@ run: |
 
   echo "== four questions, four answers; an unknown key is not a trusted one =="
   ono -c 'verify plugin dev.example.signed | select integrity signature trust transparency | to json'
-  ono -c 'get plugin dev.example.signed | select trust isolation | to json'
+  ono -c 'get plugin dev.example.signed | select trust execution_tier | to json'
 
   echo "== the operator enrols the key: user-trusted, and the package is verified =="
   printf 'format: kuang-trust/1\nkeys:\n  - publisher: dev.example\n    key: %s\n    trust: trusted\n' "$key" > "$home/config/ono/kuang/trust.yaml"
@@ -97,7 +97,7 @@ stdout-contains: signature-file=ok
 stdout-contains: plan-signature=ok
 stdout-contains: {"status":"success"}
 stdout-contains: {"integrity":"valid","signature":"valid","trust":"unknown","transparency":"unknown"}
-stdout-contains: {"trust":"signed","isolation":"core-built-in"}
+stdout-contains: {"trust":"signed","execution_tier":"core-built-in"}
 stdout-contains: {"signature":"valid","trust":"user-trusted","publisher":"dev.example"}
 stdout-contains: {"trust":"verified"}
 stdout-contains: {"trust":"system-trusted"}

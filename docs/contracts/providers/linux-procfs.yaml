@@ -188,7 +188,7 @@ providers:
                    plugin.inspect, plugin.remove, plugin.unload, plugin.set, capability.list,
                    capability.revoke, permission.list, audit.list, assistant.list, model.list,
                    finding.list]
-    schemas: [ono.job/1, ono.link/1, ono.host/1, ono.host-key/1, ono.client-key/1, ono.plugin/1,
+    schemas: [ono.job/1, ono.link/1, ono.host/1, ono.host-key/1, ono.client-key/1, ono.plugin/2,
               ono.plugin-package/1,
               ono.plugin-inspection/1, ono.capability-grant/1, ono.permission/1,
               ono.plugin-audit-event/1,

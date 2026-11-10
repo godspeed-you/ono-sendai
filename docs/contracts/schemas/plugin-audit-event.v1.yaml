@@ -16,7 +16,7 @@ fields:
     required: true
     doc: The record's own identity, so an event can be cited from a finding or an assistant answer.
   plugin:
-    type: ref<ono.plugin/1>
+    type: ref<ono.plugin/2>
     required: true
     doc: The package that acted. Set by the host; a package cannot attribute an action to another.
   invocation:

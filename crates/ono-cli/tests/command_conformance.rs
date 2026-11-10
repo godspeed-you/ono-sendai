@@ -659,7 +659,7 @@ fn should_produce_what_ono_plugin_get_declares_when_example_1_runs() {
     harness::assert_example_conforms(&harness::ExampleCase {
         command: "ono.plugin.get",
         example: "get plugin",
-        output: "stream<ono.plugin/1>",
+        output: "stream<ono.plugin/2>",
         may_be_empty: Some("a fresh environment has no plugin installed (`ONO_PLUGIN_PATH` is an empty scratch directory)."),
     });
 }
@@ -671,7 +671,7 @@ fn should_produce_what_ono_plugin_get_declares_when_example_2_runs() {
     harness::assert_example_conforms(&harness::ExampleCase {
         command: "ono.plugin.get",
         example: "get plugin | where state == loaded",
-        output: "stream<ono.plugin/1>",
+        output: "stream<ono.plugin/2>",
         may_be_empty: Some("a fresh environment has no plugin installed (`ONO_PLUGIN_PATH` is an empty scratch directory)."),
     });
 }

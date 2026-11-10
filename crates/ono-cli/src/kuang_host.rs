@@ -1141,7 +1141,7 @@ impl Host {
         }
     }
 
-    /// The `ono.plugin/1` records of the installed set, with this session's runtime states over
+    /// The `ono.plugin/2` records of the installed set, with this session's runtime states over
     /// them (spec §31.8), and the packages that could not be read.
     ///
     /// # Errors
@@ -1275,14 +1275,21 @@ pub fn read_package(directory: &Path) -> Result<Option<Installed>, ErrorValue> {
     }
 }
 
-/// A core schema by name, as the build embeds it.
+/// A core schema by name, as the build embeds it: the newest version of it, which is the one
+/// every record here is built to (`ono.plugin/2`, ADR-0996; every other name has one version).
 ///
 /// # Errors
 ///
 /// `provider.schema_violation` when the contract is missing from the build.
 pub fn schema(name: &str) -> Result<Arc<Schema>, ErrorValue> {
-    let id = SchemaId::new(name, 1);
-    ono_value::builtin_schemas().get(&id).ok_or_else(|| {
+    let schemas = ono_value::builtin_schemas();
+    let id = schemas
+        .ids()
+        .filter(|id| id.name() == name)
+        .max_by_key(|id| id.version())
+        .cloned()
+        .unwrap_or_else(|| SchemaId::new(name, 1));
+    schemas.get(&id).ok_or_else(|| {
         ErrorValue::new(
             ErrorCode::ProviderSchemaViolation,
             format!(
@@ -1481,7 +1488,7 @@ pub fn signature_of(package: &Installed) -> SignatureCheck {
     }
 }
 
-/// The word `ono.plugin/1.trust` and `ono.plugin-package/1.trust` carry for one package
+/// The word `ono.plugin/2.trust` and `ono.plugin-package/1.trust` carry for one package
 /// (ADR-0312's table).
 #[must_use]
 pub fn trust_word(check: &SignatureCheck, standing: Trust) -> &'static str {
@@ -1515,7 +1522,7 @@ pub fn degraded_reason(plugin: &LoadedPlugin) -> Option<String> {
     (!denied.is_empty()).then(|| denied.join("; "))
 }
 
-/// The `ono.plugin/1` record of one installed package (spec §31.8).
+/// The `ono.plugin/2` record of one installed package (spec §31.8).
 ///
 /// # Errors
 ///
@@ -1550,9 +1557,9 @@ pub fn plugin_record(
         // Spec §31.36's four questions stay four answers: this one is about who produced the
         // artifact, and `local` is what an unsigned development package says.
         .set("trust", Value::string(package_trust))?
-        .set("isolation", Value::string(isolation(manifest)))?
         // v0.4.1 §17.2: the tier is a name, and it is the name that reaches audit, diagnostics
-        // and documentation. `inspect plugin` shows the controls it stands for (ADR-0448).
+        // and documentation. `inspect plugin` shows the controls it stands for (ADR-0448), and
+        // the manifest's own word for its kind stays in the manifest (ADR-0996).
         .set("execution_tier", Value::string(execution_tier(manifest)))?
         .set("roles", roles)?
         .set("enabled", Value::Bool(management.enabled))?
@@ -2567,11 +2574,14 @@ pub fn inspection_record(
 
 // --- install and remove, spec §31.9 and §31.81 ------------------------------------------------
 
+/// The version of `ono.plugin` a package version is an object of (ADR-0996).
+const PLUGIN_SCHEMA_VERSION: u32 = 2;
+
 /// The identity of a package version as an action's object.
 #[must_use]
 pub fn object_id(id: &str, version: &str) -> ObjectId {
     ObjectId::new(
-        SchemaId::new("ono.plugin", 1),
+        SchemaId::new("ono.plugin", PLUGIN_SCHEMA_VERSION),
         [Value::string(id), Value::string(version)],
     )
 }
@@ -2671,7 +2681,7 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<(), ErrorValue> {
     Ok(())
 }
 
-/// The action an `ono.plugin/1` object is the target of, for the outcome records.
+/// The action an `ono.plugin/2` object is the target of, for the outcome records.
 #[must_use]
 pub fn action(operation: &str, id: &str, version: &str) -> Action {
     Action::new("plugin", operation, object_id(id, version))

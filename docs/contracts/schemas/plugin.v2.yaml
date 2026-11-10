@@ -1,15 +1,20 @@
 # Plugin. Source: spec §31.8 (the state model and the `get plugin` table), §31.5 (identity),
-# §31.10 (isolation tiers), §31.36 (trust), §31.33 (runtime health). Output of `get plugin`
-# (`docs/contracts/commands/kuang.yaml` → `ono.plugin.get`).
+# §31.10 (isolation tiers), v0.4.1 §17.2 (execution tiers), §31.36 (trust), §31.33 (runtime
+# health). Output of `get plugin` (`docs/contracts/commands/kuang.yaml` → `ono.plugin.get`).
 #
 # ADR-0022: identity is `[id, version]`, not `[id]`. Spec §31.35 wants side-by-side installed
 # versions with one active per scope, and §31.81's removal shows two versions of one package;
 # an identity of `[id]` alone cannot represent that, and would make two installed versions the
 # same object.
 #
+# ADR-0996: version 2 drops `isolation`. It repeated spec §31.10's manifest vocabulary beside
+# `execution_tier`, so two fields answered one question — what the instance runs in — and the
+# answers could differ (ADR-0448). The manifest's declared `runtime.kind` is still read from the
+# manifest (`inspect plugin`); this record names the tier once.
+#
 # ADR-0022: the fourth state is `active`, not `running`. Spec §31.8's state machine writes ACTIVE
 # and its definitions define "Active"; "run" appears only in that section's heading.
-id: ono.plugin/1
+id: ono.plugin/2
 name: Plugin
 summary: One installed version of a KUANG/11 package, and what it is currently doing.
 identity: [id, version]
@@ -46,21 +51,15 @@ fields:
       a valid signature from a key this system does not vouch for; `verified` means a valid
       signature from a trusted publisher; `local` is an unsigned development package;
       `untrusted` is a package quarantined on trust grounds. It is a separate question from
-      `isolation`, deliberately (spec §31.36).
-  isolation:
-    type: enum
-    required: true
-    values: [core-built-in, trusted-native, isolated-component, remote-service]
-    doc: >-
-      What kind of thing the artifact is — the tiers of spec §31.10, as the manifest declares
-      them. A package cannot declare `core-built-in`. It is not a statement about what is
-      installed around the artifact; `execution_tier` is.
+      `execution_tier`, deliberately (spec §31.36).
   execution_tier:
     type: enum
     required: true
     values: [native-confined, native-isolated, wasm, remote-service, declarative, core-built-in]
     doc: >-
-      The named tier a loaded instance of this package runs in (v0.4.1 §17.2), and the name that
+      The named tier a loaded instance of this package runs in — for a package with no instance,
+      the tier one would run in (v0.4.1 §17.2) — and the one field of this record that says so:
+      version 1's `isolation` repeated the question in the manifest's vocabulary. The name that
       reaches audit, diagnostics and documentation. A name rather than a boolean: v0.4.1 §17.3
       forbids describing a tier as "sandboxed" without stating the boundary, and
       `native-confined` states it — capability mediation and process confinement, no kernel

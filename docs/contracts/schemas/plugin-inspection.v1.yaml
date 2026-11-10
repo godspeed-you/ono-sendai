@@ -11,7 +11,7 @@ summary: Everything Ono knows about one installed package — manifest, contribu
 identity: [plugin]
 fields:
   plugin:
-    type: ref<ono.plugin/1>
+    type: ref<ono.plugin/2>
     required: true
     doc: The package version being inspected.
   manifest:
@@ -68,7 +68,7 @@ fields:
     type: enum
     required: true
     values: [ready, needs-permission, blocked, running]
-    doc: The derived label of `ono.plugin/1.readiness`, beside the internal state it projects (K11P §17.2).
+    doc: The derived label of `ono.plugin/2.readiness`, beside the internal state it projects (K11P §17.2).
   acquisition:
     type: record
     nullable: true
