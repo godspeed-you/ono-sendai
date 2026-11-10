@@ -608,49 +608,9 @@ fn should_report_what_a_running_instance_has_allocated_and_used() {
 
 // --- the wasm-component tier through the shell (spec §31.10; ADR-0569) -----------------------
 
-/// The example package built as a component, or why it could not be (see the conformance
-/// suite's `component_fixture`, which this mirrors).
-fn component_fixture() -> Result<std::path::PathBuf, String> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .expect("the workspace root")
-        .to_path_buf();
-    let installed = std::process::Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output()
-        .map_err(|error| format!("rustup could not be run: {error}"))?;
-    if !String::from_utf8_lossy(&installed.stdout).contains("wasm32-wasip2") {
-        return Err("the wasm32-wasip2 target is not installed".to_owned());
-    }
-    let target_dir = root.join("target").join("wasm-fixture");
-    let status = std::process::Command::new("cargo")
-        .args([
-            "build",
-            "--quiet",
-            "--target",
-            "wasm32-wasip2",
-            "-p",
-            "ono-kuang-sdk",
-            "--bin",
-            "kuang-example-plugin",
-        ])
-        .env("CARGO_TARGET_DIR", &target_dir)
-        .current_dir(&root)
-        .status()
-        .map_err(|error| format!("cargo could not be run: {error}"))?;
-    if !status.success() {
-        return Err(format!("the component build ended with {status}"));
-    }
-    Ok(target_dir
-        .join("wasm32-wasip2")
-        .join("debug")
-        .join("kuang-example-plugin.wasm"))
-}
-
 #[test]
 fn should_load_a_component_package_under_the_wasm_tier_and_run_its_command() {
-    let component = match component_fixture() {
+    let component = match support::component_fixture() {
         Ok(path) => path,
         Err(why) => {
             ono_testkit::skipped(ono_testkit::SkipReason::ExternalToolUnavailable, &why);
@@ -784,7 +744,7 @@ fn should_refuse_to_load_a_component_nobody_compiled_and_name_the_compile_step()
 fn should_compile_a_component_package_when_it_is_installed_so_that_it_loads() {
     // The documented flow never meets the refusal: `install plugin` runs the compile step, into
     // the operator's store, before the package is placed (ADR-0870).
-    let component = match component_fixture() {
+    let component = match support::component_fixture() {
         Ok(path) => path,
         Err(why) => {
             ono_testkit::skipped(ono_testkit::SkipReason::ExternalToolUnavailable, &why);

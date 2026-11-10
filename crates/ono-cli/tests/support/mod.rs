@@ -1072,3 +1072,44 @@ impl Drop for Streaming {
         }
     }
 }
+
+/// The example package built as a component, or why it could not be (see the conformance
+/// suite's `component_fixture`, which this mirrors) — the one fixture every suite that drives a
+/// `wasm-component` package through the shell builds it with (v0.4.1 §39.1).
+pub fn component_fixture() -> Result<std::path::PathBuf, String> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .expect("the workspace root")
+        .to_path_buf();
+    let installed = std::process::Command::new("rustup")
+        .args(["target", "list", "--installed"])
+        .output()
+        .map_err(|error| format!("rustup could not be run: {error}"))?;
+    if !String::from_utf8_lossy(&installed.stdout).contains("wasm32-wasip2") {
+        return Err("the wasm32-wasip2 target is not installed".to_owned());
+    }
+    let target_dir = root.join("target").join("wasm-fixture");
+    let status = std::process::Command::new("cargo")
+        .args([
+            "build",
+            "--quiet",
+            "--target",
+            "wasm32-wasip2",
+            "-p",
+            "ono-kuang-sdk",
+            "--bin",
+            "kuang-example-plugin",
+        ])
+        .env("CARGO_TARGET_DIR", &target_dir)
+        .current_dir(&root)
+        .status()
+        .map_err(|error| format!("cargo could not be run: {error}"))?;
+    if !status.success() {
+        return Err(format!("the component build ended with {status}"));
+    }
+    Ok(target_dir
+        .join("wasm32-wasip2")
+        .join("debug")
+        .join("kuang-example-plugin.wasm"))
+}
