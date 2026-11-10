@@ -75,7 +75,7 @@ Encoded by `crates/ono-provider-linux/tests/process.rs::should_name_the_containe
 `::should_place_a_process_in_its_pid_namespace_when_that_is_not_the_observers_own`,
 `crates/ono-spatial-query/tests/resolution.rs::should_mark_the_container_and_the_namespace_between_the_host_and_the_place`,
 `crates/ono-spatial-index/tests/relations.rs::should_show_one_container_when_a_process_record_names_it_and_its_cgroup_carries_the_id`
-and acceptance case `140-container-and-namespace-boundaries`, which makes both boundaries as
+and acceptance case `144-container-and-namespace-boundaries`, which makes both boundaries as
 root and walks across them with the real binary.
 
 ## Alternatives considered
