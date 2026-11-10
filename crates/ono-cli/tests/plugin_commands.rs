@@ -1,4 +1,4 @@
-//! Outcome tests for the KUANG/11 command surface the contract declares: `ono.plugin/1`
+//! Outcome tests for the KUANG/11 command surface the contract declares: `ono.plugin/2`
 //! records that compose (spec §31.8), `find`/`inspect`/`install`/`remove`/
 //! `unload`/`set`/`verify plugin` (spec §31.8, §31.9, §31.36, §31.81, `lifecycle.v1.yaml`), the
 //! capability commands (spec §31.16–§31.19), the audit trail (spec §31.37), hot reload
@@ -144,7 +144,7 @@ fn assert_refused_with(run: &ono_testkit::Run, code: &str, why: &str) {
 }
 
 // ---------------------------------------------------------------------------------------------
-// `get plugin` as records — spec §31.8, `ono.plugin/1`
+// `get plugin` as records — spec §31.8, `ono.plugin/2`
 // ---------------------------------------------------------------------------------------------
 
 #[test]
@@ -157,17 +157,17 @@ fn should_emit_plugin_records_when_get_plugin_is_piped() {
     assert_eq!(
         str_field(record, "id"),
         ECHO,
-        "plugin.v1: `id` is the publisher-namespaced package id (spec §31.5)"
+        "plugin.v2: `id` is the publisher-namespaced package id (spec §31.5)"
     );
     assert_eq!(
         str_field(record, "version"),
         "0.1.0",
-        "plugin.v1: `version`"
+        "plugin.v2: `version`"
     );
     assert_eq!(
         str_field(record, "publisher"),
         "dev.example",
-        "plugin.v1: `publisher` is the namespace the id begins with"
+        "plugin.v2: `publisher` is the namespace the id begins with"
     );
     assert_eq!(
         str_field(record, "state"),
@@ -180,32 +180,33 @@ fn should_emit_plugin_records_when_get_plugin_is_piped() {
         "spec §31.36: an unsigned local package is visibly untrusted, got {trust}"
     );
     assert_eq!(
-        str_field(record, "isolation"),
-        "trusted-native",
-        "lifecycle.v1 isolation_tiers: `runtime.kind: native-process` is T1 trusted-native"
+        str_field(record, "execution_tier"),
+        "native-confined",
+        "plugin.v2: `runtime.kind: native-process` runs in the native-confined tier, the one field \
+         that names it (v0.4.1 §17.2, ADR-0996)"
     );
     assert_eq!(
         str_field(record, "kuang_api"),
         ">=11.1 <12",
-        "plugin.v1: `kuang_api` is the range the manifest declares"
+        "plugin.v2: `kuang_api` is the range the manifest declares"
     );
     assert!(
         field(record, "enabled").as_bool().is_some(),
-        "plugin.v1: `enabled` is a required bool, got {record:?}"
+        "plugin.v2: `enabled` is a required bool, got {record:?}"
     );
     assert_eq!(
         field(record, "jobs").as_i64(),
         Some(0),
-        "plugin.v1: `jobs` counts running jobs; an unloaded package has none"
+        "plugin.v2: `jobs` counts running jobs; an unloaded package has none"
     );
     let source = str_field(record, "source");
     assert!(
         source.contains(&home.path().join("plugins").display().to_string()),
-        "plugin.v1: `source` names where the artifact came from (spec §31.9); a directory in the plugin home is a path source, got {source}"
+        "plugin.v2: `source` names where the artifact came from (spec §31.9); a directory in the plugin home is a path source, got {source}"
     );
     assert!(
         field(record, "loaded_at").is_null(),
-        "plugin.v1: `loaded_at` is null while the package has never been loaded"
+        "plugin.v2: `loaded_at` is null while the package has never been loaded"
     );
 }
 
@@ -264,7 +265,7 @@ fn should_report_degraded_when_an_optional_capability_was_denied_at_load() {
     let reason = str_field(record, "degraded_reason");
     assert!(
         reason.contains("filesystem.read"),
-        "plugin.v1: `degraded_reason` names the unavailable capability, got {reason:?}"
+        "plugin.v2: `degraded_reason` names the unavailable capability, got {reason:?}"
     );
 }
 
@@ -536,7 +537,7 @@ fn should_refuse_to_load_an_incompatible_package() {
 
 #[test]
 fn should_verify_the_piped_packages_when_verify_plugin_follows_get_plugin() {
-    // kuang.yaml `verify plugin`: input `null | stream<ono.plugin/1>` — each piped record is
+    // kuang.yaml `verify plugin`: input `null | stream<ono.plugin/2>` — each piped record is
     // verified as `verify plugin <id>` would.
     let home = plugin_home();
     let run = ono_with_plugins(&home, "get plugin | verify plugin | to json");
@@ -776,7 +777,7 @@ fn should_disable_a_package_and_refuse_to_load_it() {
     assert_eq!(
         field(only(&run, &plugin), "enabled").as_bool(),
         Some(false),
-        "plugin.v1: `enabled` reflects the setting (spec §31.3)"
+        "plugin.v2: `enabled` reflects the setting (spec §31.3)"
     );
 
     let load = ono_with_plugins(

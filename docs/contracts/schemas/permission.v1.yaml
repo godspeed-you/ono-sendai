@@ -13,7 +13,7 @@ summary: What one KUANG/11 package is permitted to do, in human terms, and the c
 identity: [plugin, id]
 fields:
   plugin:
-    type: ref<ono.plugin/1>
+    type: ref<ono.plugin/2>
     required: true
     doc: The package the permission belongs to, by canonical id.
   id:

@@ -2507,7 +2507,7 @@ Enumerate installed and loaded KUANG/11 packages and their runtime health.
 | stability | stable |
 | phase | I |
 | input | `null` |
-| output | `stream<ono.plugin/1>` |
+| output | `stream<ono.plugin/2>` |
 | provider capability | `plugin.list` |
 | privilege | none |
 | arguments | parsed in words mode (ADR-0009) |
@@ -2575,7 +2575,7 @@ Show a package's manifest, origin, contributions, permissions, capabilities, res
 | id | `ono.plugin.inspect` |
 | stability | stable |
 | phase | I |
-| input | `null | ono.plugin/1` |
+| input | `null | ono.plugin/2` |
 | output | `ono.plugin-inspection/1` |
 | provider capability | `plugin.inspect` |
 | privilege | none |
@@ -2643,7 +2643,7 @@ Remove a package with its permissions; state and policy retention is explicit.
 | id | `ono.plugin.remove` |
 | stability | stable |
 | phase | I |
-| input | `null | stream<ono.plugin/1>` |
+| input | `null | stream<ono.plugin/2>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `plugin.remove` |
 | privilege | none |
@@ -2679,7 +2679,7 @@ Negotiate capabilities and instantiate a package's runtime — explicitly; an in
 | id | `ono.plugin.load` |
 | stability | stable |
 | phase | I |
-| input | `null | stream<ono.plugin/1>` |
+| input | `null | stream<ono.plugin/2>` |
 | output | `ono.plugin-runtime/1` |
 | provider capability | `plugin.load` |
 | privilege | none |
@@ -2707,7 +2707,7 @@ Drain or cancel a package's jobs and withdraw its runtime contributions.
 | id | `ono.plugin.unload` |
 | stability | stable |
 | phase | I |
-| input | `null | stream<ono.plugin/1>` |
+| input | `null | stream<ono.plugin/2>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `plugin.unload` |
 | privilege | none |
@@ -2741,7 +2741,7 @@ Change a package's management settings — enablement and background policy.
 | id | `ono.plugin.set` |
 | stability | stable |
 | phase | I |
-| input | `null | stream<ono.plugin/1>` |
+| input | `null | stream<ono.plugin/2>` |
 | output | `stream<ono.action-result/1>` |
 | provider capability | `plugin.set` |
 | privilege | none |
@@ -2777,7 +2777,7 @@ Validate a package's integrity, signature and compatibility.
 | id | `ono.plugin.verify` |
 | stability | stable |
 | phase | I |
-| input | `null | stream<ono.plugin/1>` |
+| input | `null | stream<ono.plugin/2>` |
 | output | `ono.verification-result/1` |
 | provider capability | `plugin.verify` |
 | privilege | none |

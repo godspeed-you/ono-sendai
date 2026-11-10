@@ -11,7 +11,7 @@ summary: Everything Ono knows about one installed package — manifest, contribu
 identity: [plugin]
 fields:
   plugin:
-    type: ref<ono.plugin/1>
+    type: ref<ono.plugin/2>
     required: true
     doc: The package version being inspected.
   manifest:
@@ -68,7 +68,7 @@ fields:
     type: enum
     required: true
     values: [ready, needs-permission, blocked, running]
-    doc: The derived label of `ono.plugin/1.readiness`, beside the internal state it projects (K11P §17.2).
+    doc: The derived label of `ono.plugin/2.readiness`, beside the internal state it projects (K11P §17.2).
   acquisition:
     type: record
     nullable: true
@@ -92,7 +92,10 @@ fields:
   memory_current:
     type: bytesize
     nullable: true
-    doc: Instance memory now. Null when nothing is loaded.
+    doc: >-
+      Instance memory now: the kernel's account of what a native process has allocated, or the
+      runtime's account of a component's memory. Null when nothing is loaded, and null until the
+      host has sampled the instance.
   memory_limit:
     type: bytesize
     required: true
@@ -100,7 +103,10 @@ fields:
   cpu_time:
     type: duration
     nullable: true
-    doc: CPU consumed by the current instance. Null when nothing is loaded.
+    doc: >-
+      CPU consumed by the current instance, as the kernel accounts it for a native process. Null
+      when nothing is loaded, null until the host has sampled the instance, and null for a `wasm`
+      component, whose CPU time the runtime does not account per instance (ADR-0997).
   host_calls:
     type: int
     required: true

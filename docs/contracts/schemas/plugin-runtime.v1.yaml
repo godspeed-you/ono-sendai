@@ -18,7 +18,7 @@ fields:
       The runtime instance's id. Identity is the instance rather than the package, because an
       upgrade and a restart both produce a new instance while the package id stays the same.
   plugin:
-    type: ref<ono.plugin/1>
+    type: ref<ono.plugin/2>
     required: true
     doc: The installed package version this instance runs.
   host_api:

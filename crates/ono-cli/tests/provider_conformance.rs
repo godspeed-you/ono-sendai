@@ -1056,7 +1056,7 @@ async fn should_advertise_exactly_what_ono_shell_declares() {
             harness::CapabilityClaim { id: "model.list", risk: "read", elevation: "none" },
             harness::CapabilityClaim { id: "finding.list", risk: "read", elevation: "none" },
         ],
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_token: None,
         temporal: harness::TemporalClaim {
             current_snapshot: true,
@@ -1190,11 +1190,11 @@ async fn should_shape_ono_client_key_1_the_way_ono_shell_declares_it() {
 
 #[rustfmt::skip]
 #[tokio::test]
-async fn should_shape_ono_plugin_1_the_way_ono_shell_declares_it() {
+async fn should_shape_ono_plugin_2_the_way_ono_shell_declares_it() {
     harness::assert_schema_contract(&harness::SchemaContract {
         provider: "ono.shell",
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
-        schema: "ono.plugin/1",
+        schema: "ono.plugin/2",
         identity: &["id", "version"],
         identity_fallback: &[],
         default_view: &["id", "version", "state", "trust", "jobs", "memory"],
@@ -1205,7 +1205,6 @@ async fn should_shape_ono_plugin_1_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "publisher", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "state", ty: "enum<installed|enabled|loaded|active|degraded|quarantined>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "trust", ty: "enum<signed|verified|local|unknown|untrusted>", required: true, nullable: false, unit: None },
-            harness::FieldContract { name: "isolation", ty: "enum<core-built-in|trusted-native|isolated-component|remote-service>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "execution_tier", ty: "enum<native-confined|native-isolated|wasm|remote-service|declarative|core-built-in>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "roles", ty: "list<string>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "enabled", ty: "bool", required: true, nullable: false, unit: None },
@@ -1216,6 +1215,7 @@ async fn should_shape_ono_plugin_1_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "kuang_api", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "jobs", ty: "int", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "memory", ty: "bytesize", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "cpu_time", ty: "duration", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "state_usage", ty: "bytesize", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "degraded_reason", ty: "string", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "quarantine_reason", ty: "string", required: false, nullable: true, unit: None },
@@ -1276,7 +1276,7 @@ async fn should_shape_ono_plugin_inspection_1_the_way_ono_shell_declares_it() {
         identity_fallback: &[],
         default_view: &["plugin", "origin", "memory_current", "open_streams", "restart_count", "last_error"],
         fields: &[
-            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/1>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/2>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "manifest", ty: "map", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "origin", ty: "enum<core|plugin|remote-provider>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "contributions", ty: "map", required: true, nullable: false, unit: None },
@@ -1318,7 +1318,7 @@ async fn should_shape_ono_capability_grant_1_the_way_ono_shell_declares_it() {
         default_view: &["plugin", "capability", "scope", "duration", "decision", "expires_at"],
         fields: &[
             harness::FieldContract { name: "id", ty: "uuid", required: true, nullable: false, unit: None },
-            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/1>", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/2>", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "capability", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "class", ty: "enum<required|optional|runtime-requested>", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "decision", ty: "enum<allow|deny|ask>", required: true, nullable: false, unit: None },
@@ -1353,7 +1353,7 @@ async fn should_shape_ono_permission_1_the_way_ono_shell_declares_it() {
         identity_fallback: &[],
         default_view: &["title", "state", "when", "scope"],
         fields: &[
-            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/1>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/2>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "title", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "purpose", ty: "string", required: false, nullable: true, unit: None },
@@ -1387,7 +1387,7 @@ async fn should_shape_ono_plugin_audit_event_1_the_way_ono_shell_declares_it() {
         default_view: &["at", "plugin", "capability", "action", "target", "result"],
         fields: &[
             harness::FieldContract { name: "id", ty: "uuid", required: true, nullable: false, unit: None },
-            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/1>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/2>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "invocation", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "capability", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "scope", ty: "any", required: false, nullable: true, unit: None },
@@ -1417,7 +1417,7 @@ async fn should_shape_ono_assistant_1_the_way_ono_shell_declares_it() {
         default_view: &["id", "plugin", "state", "model", "autonomy", "tools"],
         fields: &[
             harness::FieldContract { name: "id", ty: "string", required: true, nullable: false, unit: None },
-            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/1>", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "plugin", ty: "ref<ono.plugin/2>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "name", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "state", ty: "enum<loaded|ready|busy|degraded>", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "model_policy", ty: "map", required: true, nullable: false, unit: None },
@@ -1499,7 +1499,7 @@ async fn should_answer_for_job_within_its_contract_when_ono_shell_is_asked() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "job",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1512,7 +1512,7 @@ async fn should_answer_for_link_within_its_contract_when_ono_shell_is_asked() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "link",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1525,7 +1525,7 @@ async fn should_answer_for_host_within_its_contract_when_ono_shell_is_asked() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "host",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1538,7 +1538,7 @@ async fn should_answer_for_host_key_within_its_contract_when_ono_shell_is_asked(
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "host-key",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1551,7 +1551,7 @@ async fn should_answer_for_client_key_within_its_contract_when_ono_shell_is_aske
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "client-key",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1564,7 +1564,7 @@ async fn should_answer_for_plugin_within_its_contract_when_ono_shell_is_asked() 
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "plugin",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1577,7 +1577,7 @@ async fn should_answer_for_capability_within_its_contract_when_ono_shell_is_aske
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "capability",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1590,7 +1590,7 @@ async fn should_answer_for_permission_within_its_contract_when_ono_shell_is_aske
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "permission",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1603,7 +1603,7 @@ async fn should_answer_for_audit_within_its_contract_when_ono_shell_is_asked() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "audit",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1616,7 +1616,7 @@ async fn should_answer_for_assistant_within_its_contract_when_ono_shell_is_asked
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "assistant",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1629,7 +1629,7 @@ async fn should_answer_for_model_within_its_contract_when_ono_shell_is_asked() {
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "model",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }
@@ -1642,7 +1642,7 @@ async fn should_answer_for_finding_within_its_contract_when_ono_shell_is_asked()
         targets: &["job", "link", "host", "host-key", "client-key", "plugin", "capability", "permission", "audit", "assistant", "model", "finding"],
         target: "finding",
         exercise: harness::Exercise::Enumerable,
-        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/1", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
+        schemas: &["ono.job/1", "ono.link/1", "ono.host/1", "ono.host-key/1", "ono.client-key/1", "ono.plugin/2", "ono.plugin-package/1", "ono.plugin-inspection/1", "ono.capability-grant/1", "ono.permission/1", "ono.plugin-audit-event/1", "ono.assistant/1", "ono.model-provider/1", "ono.finding/1"],
         identity_strategy: Some("lifetime"),
     }).await;
 }

@@ -757,12 +757,28 @@ impl Host {
     }
 
     /// Takes the instance of `id` out of the host, so the caller can shut it down.
+    ///
+    /// The host lets the instance go here, so this is where its end enters the trail: what the
+    /// instance recorded is kept, and the unload is recorded beside the load that started it
+    /// (spec §31.37, ADR-0995).
     pub fn remove_instance(&mut self, id: &str) -> Option<Instance> {
         let index = self
             .instances
             .iter()
             .position(|instance| instance.id == id)?;
-        Some(self.instances.remove(index))
+        let instance = self.instances.remove(index);
+        self.retain_audit(instance.plugin.audit());
+        self.record_host_event(id, "plugin.unload", "lifecycle.unload", true);
+        Some(instance)
+    }
+
+    /// Takes every instance out of the host, each as [`Self::remove_instance`] does, so the
+    /// session can shut them down as it ends.
+    pub fn take_instances(&mut self) -> Vec<Instance> {
+        let ids: Vec<String> = self.plugin_ids().map(str::to_owned).collect();
+        ids.iter()
+            .filter_map(|id| self.remove_instance(id))
+            .collect()
     }
 
     /// A fresh identity for a grant or a host event: in order within the session, and unlike
@@ -1125,7 +1141,7 @@ impl Host {
         }
     }
 
-    /// The `ono.plugin/1` records of the installed set, with this session's runtime states over
+    /// The `ono.plugin/2` records of the installed set, with this session's runtime states over
     /// them (spec §31.8), and the packages that could not be read.
     ///
     /// # Errors
@@ -1259,14 +1275,21 @@ pub fn read_package(directory: &Path) -> Result<Option<Installed>, ErrorValue> {
     }
 }
 
-/// A core schema by name, as the build embeds it.
+/// A core schema by name, as the build embeds it: the newest version of it, which is the one
+/// every record here is built to (`ono.plugin/2`, ADR-0996; every other name has one version).
 ///
 /// # Errors
 ///
 /// `provider.schema_violation` when the contract is missing from the build.
 pub fn schema(name: &str) -> Result<Arc<Schema>, ErrorValue> {
-    let id = SchemaId::new(name, 1);
-    ono_value::builtin_schemas().get(&id).ok_or_else(|| {
+    let schemas = ono_value::builtin_schemas();
+    let id = schemas
+        .ids()
+        .filter(|id| id.name() == name)
+        .max_by_key(|id| id.version())
+        .cloned()
+        .unwrap_or_else(|| SchemaId::new(name, 1));
+    schemas.get(&id).ok_or_else(|| {
         ErrorValue::new(
             ErrorCode::ProviderSchemaViolation,
             format!(
@@ -1465,7 +1488,7 @@ pub fn signature_of(package: &Installed) -> SignatureCheck {
     }
 }
 
-/// The word `ono.plugin/1.trust` and `ono.plugin-package/1.trust` carry for one package
+/// The word `ono.plugin/2.trust` and `ono.plugin-package/1.trust` carry for one package
 /// (ADR-0312's table).
 #[must_use]
 pub fn trust_word(check: &SignatureCheck, standing: Trust) -> &'static str {
@@ -1499,7 +1522,7 @@ pub fn degraded_reason(plugin: &LoadedPlugin) -> Option<String> {
     (!denied.is_empty()).then(|| denied.join("; "))
 }
 
-/// The `ono.plugin/1` record of one installed package (spec §31.8).
+/// The `ono.plugin/2` record of one installed package (spec §31.8).
 ///
 /// # Errors
 ///
@@ -1534,9 +1557,9 @@ pub fn plugin_record(
         // Spec §31.36's four questions stay four answers: this one is about who produced the
         // artifact, and `local` is what an unsigned development package says.
         .set("trust", Value::string(package_trust))?
-        .set("isolation", Value::string(isolation(manifest)))?
         // v0.4.1 §17.2: the tier is a name, and it is the name that reaches audit, diagnostics
-        // and documentation. `inspect plugin` shows the controls it stands for (ADR-0448).
+        // and documentation. `inspect plugin` shows the controls it stands for (ADR-0448), and
+        // the manifest's own word for its kind stays in the manifest (ADR-0996).
         .set("execution_tier", Value::string(execution_tier(manifest)))?
         .set("roles", roles)?
         .set("enabled", Value::Bool(management.enabled))?
@@ -1550,10 +1573,30 @@ pub fn plugin_record(
             "kuang_api",
             Value::string(manifest.compatibility.kuang_api.source()),
         )?
-        // Invocations run in the foreground of this session and finish before the next
-        // statement, so nothing is running when a table is read.
-        .set("jobs", Value::Int(0))?
-        .set("memory", Value::Null)?
+        // A job runs packages in the session's instance (ADR-0995), so an invocation can be
+        // running while the shell reads the table: the instance's own count, zero unless active.
+        .set(
+            "jobs",
+            Value::Int(plugin.map_or(0, |plugin| i128::from(plugin.running_invocations()))),
+        )?
+        // Spec §31.33's figures, measured where the host can measure them and null where it
+        // cannot or has not yet: unknown is never zero (spec §35.3, ADR-0997).
+        .set(
+            "memory",
+            plugin
+                .and_then(LoadedPlugin::current_memory)
+                .map_or(Value::Null, |allocated| {
+                    Value::ByteSize(ono_value::ByteSize::from_bytes(u128::from(allocated)))
+                }),
+        )?
+        .set(
+            "cpu_time",
+            plugin
+                .and_then(LoadedPlugin::cpu_time)
+                .map_or(Value::Null, |nanoseconds| {
+                    Value::Duration(ono_value::Duration::from_nanoseconds(nanoseconds))
+                }),
+        )?
         .set("state_usage", Value::Null)?
         .set(
             "degraded_reason",
@@ -2551,11 +2594,14 @@ pub fn inspection_record(
 
 // --- install and remove, spec §31.9 and §31.81 ------------------------------------------------
 
+/// The version of `ono.plugin` a package version is an object of (ADR-0996).
+const PLUGIN_SCHEMA_VERSION: u32 = 2;
+
 /// The identity of a package version as an action's object.
 #[must_use]
 pub fn object_id(id: &str, version: &str) -> ObjectId {
     ObjectId::new(
-        SchemaId::new("ono.plugin", 1),
+        SchemaId::new("ono.plugin", PLUGIN_SCHEMA_VERSION),
         [Value::string(id), Value::string(version)],
     )
 }
@@ -2655,7 +2701,7 @@ pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<(), ErrorValue> {
     Ok(())
 }
 
-/// The action an `ono.plugin/1` object is the target of, for the outcome records.
+/// The action an `ono.plugin/2` object is the target of, for the outcome records.
 #[must_use]
 pub fn action(operation: &str, id: &str, version: &str) -> Action {
     Action::new("plugin", operation, object_id(id, version))

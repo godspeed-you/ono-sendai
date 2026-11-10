@@ -1,0 +1,57 @@
+# Spec §31.8, §31.33, §35.3; ADR-0996, ADR-0997 (issues #222, #199): `get plugin` answers
+# `ono.plugin/2`. An instance that has run reports the memory it has allocated and the CPU time it
+# has used, from the kernel's own accounting; a package nothing has loaded reports both as null,
+# never as zero; and the record names the tier once, as `execution_tier`.
+case: get plugin reports an instance's measured memory and cpu time, and null without one
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  MANIFEST
+
+  echo "== nothing loaded: no instance, so no figures — null, not zero (§35.3) =="
+  ono -c 'get plugin dev.example.echo | select memory cpu_time | to json'
+
+  echo "== an instance that has run: measured memory and cpu time (§31.33) =="
+  ono -c 'load plugin dev.example.echo; echo:emit --count 3 | count; get plugin dev.example.echo | select memory cpu_time | to json' \
+    | grep -Eq '"memory":[1-9][0-9]*,"cpu_time":"[0-9]' && echo "instance-measured" || echo "instance-unmeasured"
+
+  echo "== one field names the tier (ono.plugin/2) =="
+  ono -c 'get plugin dev.example.echo | to json' | grep -q '"isolation"' && echo "isolation-still-listed" || echo "one-tier-field"
+  ono -c 'get plugin dev.example.echo | select execution_tier | to json'
+  ono -c 'help get plugin' | grep -o 'stream<ono.plugin/2>'
+exit: 0
+stdout-contains: [{"memory":null,"cpu_time":null}]
+stdout-contains: instance-measured
+stdout-not-contains: instance-unmeasured
+stdout-contains: one-tier-field
+stdout-not-contains: isolation-still-listed
+stdout-contains: [{"execution_tier":"native-confined"}]
+stdout-contains: stream<ono.plugin/2>
+stdout-not-contains: panicked

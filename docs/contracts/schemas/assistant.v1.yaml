@@ -16,7 +16,7 @@ fields:
     required: true
     doc: The assistant's id, as `ask assistant <id>` names it, e.g. `ops-assist`.
   plugin:
-    type: ref<ono.plugin/1>
+    type: ref<ono.plugin/2>
     required: true
     doc: The package that provides it. An assistant is an extension role, not a separate subsystem (spec §31.41).
   name:

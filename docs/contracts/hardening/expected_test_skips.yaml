@@ -39,6 +39,9 @@ declared:
   - id: "crates/ono-cli/tests/plugins.rs::should_compile_a_component_package_when_it_is_installed_so_that_it_loads"
     category: external_tool_unavailable
     prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569, ADR-0870)"
+  - id: "crates/ono-cli/tests/plugin_record.rs::should_report_a_components_memory_and_no_cpu_time_when_it_is_inspected"
+    category: external_tool_unavailable
+    prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569, ADR-0997)"
   - id: "crates/ono-kuang-sdk/tests/conformance.rs::should_load_a_component_under_the_wasm_tier_with_the_controls_the_runtime_installs"
     category: external_tool_unavailable
     prerequisite: "the `wasm32-wasip2` target of the pinned toolchain, so the example package can be built as a component (ADR-0569)"

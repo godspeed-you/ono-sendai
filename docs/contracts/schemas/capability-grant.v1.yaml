@@ -19,7 +19,7 @@ fields:
     required: true
     doc: The grant's own identity, so it can be revoked and cited precisely.
   plugin:
-    type: ref<ono.plugin/1>
+    type: ref<ono.plugin/2>
     nullable: true
     doc: >-
       The package the grant is made to. A grant is never to a publisher or to a class of

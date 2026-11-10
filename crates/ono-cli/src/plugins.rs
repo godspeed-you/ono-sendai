@@ -467,14 +467,14 @@ pub fn claims(stage: &ono_parser::Stage) -> Option<Request> {
 }
 
 /// The piped form, `get plugin | verify plugin` (ADR-0118): the packages arrive as
-/// `ono.plugin/1` records and each is handled as `<verb> plugin <id>` would be. `ask assistant`
+/// `ono.plugin/2` records and each is handled as `<verb> plugin <id>` would be. `ask assistant`
 /// declares `input: null | any`, so whatever arrives is its context and the assistant is still
 /// named on the stage (spec §7.1); `install plugin` and `grant capability` declare no input.
 ///
 /// # Errors
 ///
 /// The structured refusal of the command, or a type error for a command with no stream input
-/// or for a piped value that is not an `ono.plugin/1` record.
+/// or for a piped value that is not an `ono.plugin/2` record.
 pub fn run_piped(
     session: &mut Session,
     request: Request,
@@ -518,7 +518,7 @@ pub fn run_piped(
 /// # Errors
 ///
 /// The first load that is refused, after the packages before it were loaded; a type error when
-/// the stage also names a package, or a piped value is not an `ono.plugin/1` record.
+/// the stage also names a package, or a piped value is not an `ono.plugin/2` record.
 pub fn load_piped(session: &mut Session, words: &[String], targets: &[Value]) -> Eval<ExitStatus> {
     let (named, options) = LoadOptions::from_words(words);
     if let Some(named) = named {
@@ -953,6 +953,43 @@ fn delivered(
     Ok(values)
 }
 
+/// Reads an invocation to its end, or cancels it when the line running it is interrupted first.
+///
+/// The line's interrupt is the evaluator's: Ctrl-C in the foreground, and in a background job
+/// the job's own cancellation — `kill %N`, Ctrl-C under `fg`, a leaving shell (ADR-0952,
+/// ADR-0959). A job runs packages in the session's instance (ADR-0995), so the job's end can no
+/// longer be the end of an instance of its own: what ends is the job's invocation, through the
+/// cancellation spec §31.14 delivers to the package. The instance and every other invocation in
+/// it go on. The package is given the shutdown grace period to answer the cancellation, so the
+/// instance's state no longer counts the invocation once the line has unwound; one that does not
+/// answer is left to the supervisor.
+///
+/// `None` when the line was interrupted.
+async fn collect_unless_interrupted(
+    mut invocation: ono_kuang_supervisor::RunningInvocation,
+) -> Option<(
+    Vec<ono_kuang_supervisor::StreamEvent>,
+    ono_kuang_protocol::InvokeResult,
+)> {
+    let mut interrupted = std::pin::pin!(crate::eval::native::interrupted());
+    let mut events = Vec::new();
+    loop {
+        tokio::select! {
+            biased;
+            () = &mut interrupted => {
+                invocation.cancel().await;
+                let _ = tokio::time::timeout(crate::shutdown::GRACE, invocation.finish()).await;
+                return None;
+            }
+            event = invocation.next() => match event {
+                Some(event) => events.push(event),
+                None => break,
+            },
+        }
+    }
+    Some((events, invocation.finish().await))
+}
+
 /// Runs a contributed command: `<package>:<command> --name value …` (spec §31.22, ADR-0011).
 ///
 /// # Errors
@@ -1013,10 +1050,12 @@ pub fn invoke(
                 .invoke(&full, arguments)
                 .await
                 .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
-            Ok::<_, ErrorValue>(invocation.collect().await)
+            Ok::<_, ErrorValue>(collect_unless_interrupted(invocation).await)
         })
     };
-    let (events, result) = outcome.map_err(Flow::Failed)?;
+    let (events, result) = outcome
+        .map_err(Flow::Failed)?
+        .ok_or_else(crate::eval::interrupted_flow_now)?;
     delivered(events, &result)
 }
 
@@ -1322,10 +1361,12 @@ pub fn query(
                 .query(target, arguments)
                 .await
                 .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
-            Ok::<_, ErrorValue>(invocation.collect().await)
+            Ok::<_, ErrorValue>(collect_unless_interrupted(invocation).await)
         })
     };
-    let (events, result) = outcome.map_err(Flow::Failed)?;
+    let (events, result) = outcome
+        .map_err(Flow::Failed)?
+        .ok_or_else(crate::eval::interrupted_flow_now)?;
     delivered(events, &result).map(Answered::Values)
 }
 

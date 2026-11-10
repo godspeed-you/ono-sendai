@@ -1,15 +1,21 @@
 # Plugin. Source: spec §31.8 (the state model and the `get plugin` table), §31.5 (identity),
-# §31.10 (isolation tiers), §31.36 (trust), §31.33 (runtime health). Output of `get plugin`
-# (`docs/contracts/commands/kuang.yaml` → `ono.plugin.get`).
+# §31.10 (isolation tiers), v0.4.1 §17.2 (execution tiers), §31.36 (trust), §31.33 (runtime
+# health). Output of `get plugin` (`docs/contracts/commands/kuang.yaml` → `ono.plugin.get`).
 #
 # ADR-0022: identity is `[id, version]`, not `[id]`. Spec §31.35 wants side-by-side installed
 # versions with one active per scope, and §31.81's removal shows two versions of one package;
 # an identity of `[id]` alone cannot represent that, and would make two installed versions the
 # same object.
 #
+# ADR-0996: version 2 drops `isolation`. It repeated spec §31.10's manifest vocabulary beside
+# `execution_tier`, so two fields answered one question — what the instance runs in — and the
+# answers could differ (ADR-0448). The manifest's declared `runtime.kind` is still read from the
+# manifest (`inspect plugin`); this record names the tier once. It also carries the instance's
+# measured `memory` and a `cpu_time` beside it (ADR-0997).
+#
 # ADR-0022: the fourth state is `active`, not `running`. Spec §31.8's state machine writes ACTIVE
 # and its definitions define "Active"; "run" appears only in that section's heading.
-id: ono.plugin/1
+id: ono.plugin/2
 name: Plugin
 summary: One installed version of a KUANG/11 package, and what it is currently doing.
 identity: [id, version]
@@ -46,21 +52,15 @@ fields:
       a valid signature from a key this system does not vouch for; `verified` means a valid
       signature from a trusted publisher; `local` is an unsigned development package;
       `untrusted` is a package quarantined on trust grounds. It is a separate question from
-      `isolation`, deliberately (spec §31.36).
-  isolation:
-    type: enum
-    required: true
-    values: [core-built-in, trusted-native, isolated-component, remote-service]
-    doc: >-
-      What kind of thing the artifact is — the tiers of spec §31.10, as the manifest declares
-      them. A package cannot declare `core-built-in`. It is not a statement about what is
-      installed around the artifact; `execution_tier` is.
+      `execution_tier`, deliberately (spec §31.36).
   execution_tier:
     type: enum
     required: true
     values: [native-confined, native-isolated, wasm, remote-service, declarative, core-built-in]
     doc: >-
-      The named tier a loaded instance of this package runs in (v0.4.1 §17.2), and the name that
+      The named tier a loaded instance of this package runs in — for a package with no instance,
+      the tier one would run in (v0.4.1 §17.2) — and the one field of this record that says so:
+      version 1's `isolation` repeated the question in the manifest's vocabulary. The name that
       reaches audit, diagnostics and documentation. A name rather than a boolean: v0.4.1 §17.3
       forbids describing a tier as "sandboxed" without stating the boundary, and
       `native-confined` states it — capability mediation and process confinement, no kernel
@@ -116,8 +116,23 @@ fields:
     type: bytesize
     nullable: true
     doc: >-
-      Current instance memory. Null when nothing is loaded — which is not zero, because an
-      unloaded package has no instance to measure (spec §10.5).
+      The memory the current instance has allocated, measured by the host (spec §31.33): for a
+      `native-confined` process the kernel's own accounting of what the process has allocated
+      (the figure its memory ceiling bounds), sampled while it runs; for a `wasm` component the
+      runtime's account of the component's memory, which every growth passes. Null when nothing
+      is loaded — not zero, because an unloaded package has no instance to measure (spec §10.5)
+      — and null for an instance the host has not sampled yet.
+  cpu_time:
+    type: duration
+    nullable: true
+    doc: >-
+      The CPU time the current instance has used, user and system together, as the kernel
+      accounts it for a `native-confined` process (spec §31.33), sampled while it runs; the
+      kernel counts it in clock ticks, so an instance that has done next to nothing reads `0ns`.
+      Null when nothing is loaded, null for an instance the host has not sampled yet, and null
+      for a `wasm` component: a component runs on the shell's own threads, and the runtime keeps
+      no account of the CPU time one instance used, so there is no figure to report — never a
+      zero standing in for one (spec §35.3, ADR-0997).
   state_usage:
     type: bytesize
     nullable: true

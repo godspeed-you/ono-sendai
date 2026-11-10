@@ -159,7 +159,7 @@ pub(super) fn asking_stage(
 /// the kernel to interrupt — so whatever a thread waits on races this and loses to it (spec
 /// §18.5). Dropping the losing future drops every stream receiver, which closes the bounded
 /// channels and stops every producer at its next send.
-pub(super) async fn interrupted() {
+pub(crate) async fn interrupted() {
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(40));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
