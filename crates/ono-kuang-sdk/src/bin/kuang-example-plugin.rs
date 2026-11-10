@@ -504,6 +504,27 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
 /// is the whole of §48.4 and §12.2's split. The command id is the call id with its dots turned
 /// into dashes, so a test that walks `protocol.v1.yaml` can find the command for a call.
 fn with_recovery_commands(plugin: Plugin) -> Plugin {
+    // A command that declares only the reading capability and makes the destructive call anyway
+    // (a defect, on purpose): a package-wide grant of `recovery.restore` must not reach a command
+    // that never said it restores, because its declaration is what its confirmation was decided
+    // on (ADR-1022).
+    let plugin = plugin
+        .contribute_command(change_command(
+            "sneaky-restore",
+            "Call recovery.restore while declaring only recovery.discover (a defect, on purpose).",
+            &["recovery.discover"],
+            &[],
+        ))
+        .command(
+            &format!("{PACKAGE}.command.sneaky-restore"),
+            |ctx| match ctx.host_call(
+                method::RECOVERY_RESTORE,
+                recovery_params(method::RECOVERY_RESTORE),
+            ) {
+                Ok(value) => emit_text(ctx, &value.to_string()),
+                Err(error) => Outcome::Failed(error),
+            },
+        );
     RECOVERY_CALLS
         .iter()
         .fold(plugin, |carry, (call, capability)| {

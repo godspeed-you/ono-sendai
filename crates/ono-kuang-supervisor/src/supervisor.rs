@@ -2825,6 +2825,28 @@ impl Actor {
         target: Option<Json>,
     ) -> Result<crate::policy::Grant, KuangError> {
         let label = self.invocation_label();
+        // A destructive capability is used only by a command that declared it: its declaration is
+        // what its risk and its confirmation were decided on (ADR-1000, ADR-1001), so a
+        // package-wide grant does not reach a command that never said it needs one, nor a target,
+        // which is a read by construction (ADR-1022). Checked before the policy and before anyone
+        // is asked, so nobody is asked about a call that is refused anyway.
+        if capability.risk() == ono_kuang_protocol::Risk::Destructive
+            && let Some(error) = self.undeclared_destructive_use(capability)
+        {
+            self.audit.record(
+                &self.package_id,
+                &label,
+                capability.id(),
+                None,
+                Enforcement::Broker,
+                action,
+                target,
+                self.now(),
+                AuditResult::Denied,
+                Some((&error).into()),
+            );
+            return Err(error);
+        }
         // Nothing a person decided covers the use: no grant at all, or only a grant for another
         // scope — an earlier `always for this program` answered about a different program. A
         // system or operator deny is never re-asked.
@@ -2889,6 +2911,61 @@ impl Actor {
                 Err(error)
             }
         }
+    }
+
+    /// The refusal of a host call needing the destructive `capability` that the invocations it
+    /// may belong to did not all declare (ADR-1022), or `None` when they did.
+    ///
+    /// A host call names no invocation, so the call is attributed to every invocation open in the
+    /// instance at that moment, and allowed only if each of them is a command that declared the
+    /// capability. With none open, nothing declared it.
+    fn undeclared_destructive_use(
+        &self,
+        capability: ono_kuang_protocol::Capability,
+    ) -> Option<KuangError> {
+        let declares = |label: &String| {
+            label.strip_prefix("command:").is_some_and(|command| {
+                self.commands.iter().any(|registered| {
+                    registered.contribution.id == command
+                        && registered
+                            .contribution
+                            .capabilities
+                            .iter()
+                            .any(|declared| declared == capability.id())
+                })
+            })
+        };
+        let undeclared: Vec<&String> = self
+            .invocations
+            .values()
+            .filter(|label| !declares(label))
+            .collect();
+        if !self.invocations.is_empty() && undeclared.is_empty() {
+            return None;
+        }
+        let by = match undeclared.as_slice() {
+            [] => "no running invocation".to_owned(),
+            labels => labels
+                .iter()
+                .map(|label| format!("`{label}`"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        };
+        Some(
+            KuangError::new(
+                KuangErrorCode::CapabilityDenied,
+                format!(
+                    "`{capability}` is destructive, and {by} did not declare it: a package-wide \
+                     grant does not reach a command that never said it needs the capability"
+                ),
+            )
+            .with_help(
+                "a command that uses a destructive capability declares it, and with it `risk: \
+                 destructive`, so it is confirmed before it runs (ADR-1000, ADR-1001, ADR-1022)",
+            )
+            .with_metadata("capability", Json::String(capability.id().to_owned()))
+            .with_metadata("reason", Json::String("undeclared-by-command".to_owned())),
+        )
     }
 
     /// Asks the consent source about one use the policy does not cover, when the package's

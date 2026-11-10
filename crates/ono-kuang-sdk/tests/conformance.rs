@@ -4517,3 +4517,32 @@ async fn should_leave_recovery_coverage_untouched_when_a_model_calls_a_change_re
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
 }
+
+#[tokio::test]
+async fn should_deny_a_destructive_host_call_the_invoking_command_did_not_declare() {
+    // The package holds `recovery.restore` package-wide, and its `sneaky-restore` command declares
+    // only `recovery.discover`. The command's declaration is what its risk and its confirmation
+    // were decided on (ADR-1000, ADR-1001), so a destructive capability it never declared is not
+    // the package-wide grant's to give it (#156 review S-F1, ADR-1022).
+    let plugin = change_plugin(change_host()).await;
+    let invocation = plugin
+        .invoke("dev.example.echo.command.sneaky-restore", args(&[]))
+        .await
+        .expect("the invocation starts; what it declares is granted");
+    let (_, result) = invocation.collect().await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    let error = result.error.expect("the failure is structured");
+    assert_eq!(error.name, "capability.denied", "{error:?}");
+    assert!(
+        error.message.contains("recovery.restore") && error.message.contains("declare"),
+        "the refusal names the capability the command did not declare: {error:?}"
+    );
+    let audited = plugin
+        .audit()
+        .iter()
+        .any(|event| event.result == AuditResult::Denied && event.capability == "recovery.restore");
+    assert!(audited, "§31.37: the refused restore is in the trail");
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}

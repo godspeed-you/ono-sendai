@@ -1047,19 +1047,20 @@ pub fn invoke(
             )
         })?;
         // The qualified spelling is a second door to the same contribution, and it is held to
-        // the same confirmation: the declaration on disk where there is one, the running
-        // package's own hello where there is not (ADR-1001).
-        let spoken = match declared {
-            Some(declared) => Some(declared.clone()),
-            None => plugin
-                .commands()
-                .iter()
-                .find(|registered| registered.contribution.id == full)
-                .map(|registered| hello_contract(&id, &registered.contribution))
-                .transpose()
-                .map_err(Flow::Failed)?,
-        };
-        refuse_unconfirmed(spoken.as_ref(), words)?;
+        // the same confirmation (ADR-1001). The declaration on disk and the running package's
+        // hello are two declarations of one command, and the hello is the one the package's
+        // broker enforces: it is held to the registry's floor whether or not the disk declares
+        // the command too (ADR-1002), and the stronger of the two decides the confirmation, so a
+        // package cannot say `read` in one and act on `destructive` in the other (ADR-1022).
+        let hello = plugin
+            .commands()
+            .iter()
+            .find(|registered| registered.contribution.id == full)
+            .map(|registered| hello_contract(&id, &registered.contribution))
+            .transpose()
+            .map_err(Flow::Failed)?;
+        refuse_unconfirmed(declaration(&full), words)?;
+        refuse_unconfirmed(hello.as_ref(), words)?;
         runtime.block_on(async {
             let invocation = plugin
                 .invoke(&full, arguments)

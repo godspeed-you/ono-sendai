@@ -921,6 +921,7 @@ grant:
       - {rank: 5, id: default-deny, doc: "Everything else. Deny by default is the floor, not a fallback (spec §31.80)."}
     rules:
       - "Precedence is evaluated per call, not cached per package: a policy change takes effect on the next host call."
+      - "A grant is package-wide, and a destructive family is bounded by the command as well: a host call needing a capability whose risk is `destructive` (`filesystem.write`, `recovery.restore`) is refused with `capability.denied` (metadata `reason: undeclared-by-command`) unless every invocation open in the instance is a command that declared that capability. A target, a read by construction, never does, and a call made while no invocation is open has nothing that declared it. Checked before the policy and before any just-in-time question, and audited as a denial (ADR-1022). Other families are bounded by the package's grants alone: a target declares no capabilities and reads through `network.connect`, `secret.use` and the like."
       - "A scoped grant covers a request only if the request's scope is a subset of the grant's. Overlap is not coverage."
       - "Remote authority is the intersection of local and remote policy, evaluated on both sides (spec §31.40)."
 
