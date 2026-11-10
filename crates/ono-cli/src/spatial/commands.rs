@@ -1568,7 +1568,9 @@ impl CommandImpl for Follow {
             // named `follow` still will not pay for by itself (§34.2, ADR-0495).
             let interest = crate::spatial::relations::Interest::here()
                 .along(Some(relation.clone()))
-                .complete(arguments.flag("resolve"));
+                .complete(arguments.flag("resolve"))
+                // §10.3: traversing needs a live place, and only asking finds one that has gone.
+                .revalidated();
             crate::spatial::relations::observe(
                 ctx.providers(),
                 &mut session,

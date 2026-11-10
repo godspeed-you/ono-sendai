@@ -316,7 +316,9 @@ async fn placed(
     let Some(place) = place.filter(|place| spatial.index().contains(place)) else {
         return frozen;
     };
-    let interest = crate::spatial::relations::Interest::here();
+    // §33.2: a change resolves and revalidates what it is about; it never plans on a recalled
+    // neighbourhood.
+    let interest = crate::spatial::relations::Interest::here().revalidated();
     let _ =
         crate::spatial::relations::observe(providers, &mut spatial, &place, &interest, now).await;
     frozen.at_place(place.as_str())

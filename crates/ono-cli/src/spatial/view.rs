@@ -1352,7 +1352,8 @@ pub async fn neighborhood_and_whole(
         .complete(request.is_complete())
         .along(request.named_relation().map(str::to_owned))
         .of_type(request.named_type());
-    crate::spatial::relations::observe(providers, session, &here, &interest, now).await?;
+    let recalled =
+        crate::spatial::relations::observe(providers, session, &here, &interest, now).await?;
     let pins = session.pins().clone();
     let neighborhood =
         ono_spatial_query::neighborhood_of(session.index(), &here, request, &pins, now);
@@ -1365,9 +1366,9 @@ pub async fn neighborhood_and_whole(
             now,
         )
     });
-    // An object place asks its relationship providers on every look — the edges of a process are
-    // not cached anywhere yet — so the honest word for it stays `polled` (§25.3, §2.17).
-    Ok((neighborhood, PermissionState::Available, false, complete))
+    // §25.3: `polled` for a view that asked its relationship providers, `cached` for one that
+    // recalled what an earlier view read inside its lifetime (§33.1, ADR-0977).
+    Ok((neighborhood, PermissionState::Available, recalled, complete))
 }
 
 /// Why the host the session is standing on cannot be reached, where it cannot be (§35.4, §19.1).

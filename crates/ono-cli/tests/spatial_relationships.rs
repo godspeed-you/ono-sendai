@@ -1399,3 +1399,72 @@ fn should_leave_the_owner_of_a_file_on_request_when_a_default_look_reads_the_pla
          got {shown}"
     );
 }
+
+/// The JSON documents a script printed, one per line that opens an object.
+fn documents(run: &ono_testkit::Run) -> Vec<Value> {
+    run.stdout()
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
+        .map(|line| {
+            serde_yaml_ng::from_str(line)
+                .unwrap_or_else(|error| panic!("§29.1: a JSON document, got {line:?} ({error})"))
+        })
+        .collect()
+}
+
+#[test]
+fn should_answer_a_repeated_look_at_an_object_place_from_the_edges_it_already_read() {
+    // §33.1 makes the index a cache of the "known relationship summary", and §34 budgets a
+    // cached `look` at 50 ms: looking twice at one process inside its freshness lifetime reads
+    // its relationship providers once. The second view is the same view, and it says it was
+    // read from the index — §25.3's `cached`, never `polled` for an answer nobody asked for
+    // again (§33.4, ADR-0977).
+    let child = SleepChild::spawn();
+    let run = ono(&format!(
+        "enter process {}; look --json; look --json",
+        child.pid()
+    ));
+    run.assert_success();
+    let views = documents(&run);
+    assert_eq!(
+        views.len(),
+        2,
+        "two looks are two views, got {:?}",
+        run.stdout()
+    );
+
+    let freshness = |view: &Value| view["freshness"].as_str().unwrap_or_default().to_owned();
+    assert_eq!(
+        freshness(&views[0]),
+        "polled",
+        "§25.3: the first look asked the providers"
+    );
+    assert_eq!(
+        freshness(&views[1]),
+        "cached",
+        "§25.3/§33.4: the second look inside the lifetime read the index, and says so"
+    );
+    assert_eq!(
+        rendered(&views[0]["groups"]),
+        rendered(&views[1]["groups"]),
+        "§33.1: the recalled exits are the exits that were read"
+    );
+}
+
+#[test]
+fn should_ask_again_when_a_later_view_wants_more_than_the_earlier_one_read() {
+    // §32.2: an exit a default `look` left unloaded is loaded when it is asked for. A recalled
+    // expansion answers only what it covered — the look below did not pay for the holders of the
+    // file, so the `near --type process` after it asks, and finds the one holding it (ADR-0977).
+    let holder = FileHolder::spawn();
+    let run = ono(&format!(
+        "enter {}; look --json; near --type process | select display_name | to json",
+        holder.path()
+    ));
+    run.assert_success();
+    assert!(
+        run.stdout().contains("sleep"),
+        "§32.2: the request the look did not cover reached the provider, got {:?}",
+        run.stdout()
+    );
+}

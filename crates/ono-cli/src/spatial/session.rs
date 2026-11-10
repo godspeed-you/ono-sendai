@@ -72,6 +72,27 @@ pub struct SpatialSessionState {
     /// `local` says nothing about `process` on a link, and reading one for the other would be
     /// the accidental merge across a host boundary §43.7 forbids (ADR-0186, ADR-0190).
     targets: BTreeMap<String, TargetObservation>,
+    /// What the last expansion of each object place's relationships asked for, and when — the
+    /// "known relationship summary" §33.1 makes part of the index. Keyed like `targets`, in the
+    /// scope it was read in (ADR-0977).
+    expansions: BTreeMap<String, Expansion>,
+}
+
+/// One expansion of a place's relationship providers: when it was made, how much it asked for,
+/// and the kinds of place it reached (§32.1, §33.1, §33.3).
+#[derive(Debug, Clone)]
+pub struct Expansion {
+    /// When the providers were asked.
+    pub at: Timestamp,
+    /// Whether every relation was asked, however it had to be answered (`--all`).
+    pub complete: bool,
+    /// The one relation the caller named, where it named one.
+    pub label: Option<String>,
+    /// The one kind of neighbour the caller named, where it named one.
+    pub object_type: Option<ono_spatial_core::SpatialType>,
+    /// The kinds of place the answer is about: the place's own and its neighbours'. The
+    /// expansion is as fresh as the most volatile of them (§33.3).
+    pub kinds: std::collections::BTreeSet<ono_spatial_core::SpatialType>,
 }
 
 /// A linked host the session can stand on (§19.1, §19.2).
@@ -267,6 +288,7 @@ impl SpatialSessionState {
             records: BTreeMap::new(),
             last_map: None,
             targets: BTreeMap::new(),
+            expansions: BTreeMap::new(),
         }
     }
 
@@ -692,6 +714,32 @@ impl SpatialSessionState {
     /// it live (§25.2, ADR-0190).
     pub fn forget_targets(&mut self) {
         self.targets.clear();
+        self.expansions.clear();
+    }
+
+    /// The last expansion of the relationships of `id`, while every kind of place it is about is
+    /// still fresh (§33.1, §33.3).
+    ///
+    /// The lifetime is the index's TTL policy, shortest first, as for a target: the openers of a
+    /// file are processes, and what is known about them goes stale as fast as processes do,
+    /// whatever the file's own lifetime is.
+    #[must_use]
+    pub fn recall_expansion(&self, id: &SpatialId, now: Timestamp) -> Option<&Expansion> {
+        let seen = self.expansions.get(&self.scoped(id.as_str()))?;
+        let policy = self.index.freshness_policy();
+        seen.kinds
+            .iter()
+            .all(|kind| {
+                policy.freshness(*kind, Some(seen.at), false, now)
+                    != ono_spatial_core::Freshness::Stale
+            })
+            .then_some(seen)
+    }
+
+    /// Records that the relationships of `id` were just read, and how much was asked (§33.1).
+    pub fn remember_expansion(&mut self, id: &SpatialId, expansion: Expansion) {
+        let key = self.scoped(id.as_str());
+        self.expansions.insert(key, expansion);
     }
 
     /// The recall key for `key` on the host this session is standing on (§43.7, ADR-0190).

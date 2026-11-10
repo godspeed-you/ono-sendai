@@ -1,0 +1,66 @@
+# An object place — a process, a socket, a file — expanded its relationship providers on every
+# `look` and said `polled` (#216). ADR-0977 makes the session remember what an expansion read: a
+# repeated orientation view inside the lifetime of what it is about recalls the neighbourhood and
+# says `cached` (v0.4 §25.3, §33.1, §33.4), a request the earlier view did not pay for still asks
+# (§32.2), and the place itself is asked about every time, so a process that has gone is found
+# gone (§10.3, §33.2).
+case: the edges of an object place are recalled inside their lifetime
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  mkdir -p /tmp/recall-137
+  printf 'listen 8080;\n' > /tmp/recall-137/held.conf
+  sh -c 'exec 3< /tmp/recall-137/held.conf; exec sleep 60' &
+  holder=$!
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -e "/proc/$holder/fd/3" ] && break
+    sleep 0.2
+  done
+
+  echo "== a repeated look reads the index and says so (§25.3, §33.1, §33.4) =="
+  ono -c "enter process/$holder; look --json; look --json" > /tmp/recall-137/twice.json
+  prove r1 "the first look asked the providers" \
+    "sed -n 1p /tmp/recall-137/twice.json | grep -qF '\"freshness\":\"polled\"'"
+  prove r2 "the second look recalled the neighbourhood" \
+    "sed -n 2p /tmp/recall-137/twice.json | grep -qF '\"freshness\":\"cached\"'"
+  prove r3 "and shows the file the process holds, as the first did" \
+    "sed -n 2p /tmp/recall-137/twice.json | grep -qF 'held.conf'"
+
+  echo "== a request the look did not pay for still asks (§32.2) =="
+  prove r4 "near --type process after a look at the file finds its holder" \
+    "ono -c 'enter /tmp/recall-137/held.conf; look --json; near --type process | select display_name | to text' | grep -qx sleep"
+
+  echo "== the place itself is asked about every time (§10.3, §33.2) =="
+  # The sleeper's parent waits for it, so killing it removes it from /proc rather than leaving a
+  # zombie the case shell would have to reap.
+  sh -c 'sleep 30 & echo $! > /tmp/recall-137/pid; wait' &
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    [ -s /tmp/recall-137/pid ] && break
+    sleep 0.2
+  done
+  gone=$(cat /tmp/recall-137/pid)
+  ono -c "enter process/$gone; look --json; sh -c \"kill -9 $gone; for i in 1 2 3 4 5 6 7 8 9 10; do [ -d /proc/$gone ] || break; sleep 0.2; done\"; look --json" > /tmp/recall-137/gone.json 2>&1
+  prove r5 "a process that exited between two looks is a tombstone on the second" \
+    "tail -1 /tmp/recall-137/gone.json | grep -qE '\"tombstone\":\{' && sed -n 1p /tmp/recall-137/gone.json | grep -qF '\"tombstone\":null'"
+
+  kill "$holder" 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: PROVED r1
+stdout-contains: PROVED r2
+stdout-contains: PROVED r3
+stdout-contains: PROVED r4
+stdout-contains: PROVED r5
+stdout-contains: done=ok
+stdout-not-contains: FAILED

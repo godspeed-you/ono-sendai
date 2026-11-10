@@ -34,6 +34,7 @@ pub struct Interest {
     complete: bool,
     label: Option<String>,
     object_type: Option<SpatialType>,
+    revalidate: bool,
 }
 
 impl Interest {
@@ -62,6 +63,36 @@ impl Interest {
     pub fn of_type(mut self, object_type: Option<SpatialType>) -> Self {
         self.object_type = object_type;
         self
+    }
+
+    /// Asks the providers whatever the session remembers (§33.2).
+    ///
+    /// An orientation view may read the relationships it read a moment ago. A traversal and a
+    /// change may not: §33.2 has actions resolve and revalidate live objects, and §10.3 keeps a
+    /// place that has gone from being walked through.
+    #[must_use]
+    pub fn revalidated(mut self) -> Self {
+        self.revalidate = true;
+        self
+    }
+
+    /// Whether an earlier expansion already read everything this interest asks for (§32.2).
+    ///
+    /// A complete expansion covers any interest. Short of that, an expansion covers the
+    /// relations it named: a default look covers a default look, and a look that named a
+    /// relation or a kind of neighbour covers the default one and the same request again.
+    fn covered_by(&self, earlier: &crate::spatial::session::Expansion) -> bool {
+        if earlier.complete {
+            return true;
+        }
+        !self.complete
+            && self
+                .label
+                .as_ref()
+                .is_none_or(|label| earlier.label.as_ref() == Some(label))
+            && self
+                .object_type
+                .is_none_or(|wanted| earlier.object_type == Some(wanted))
     }
 
     /// Whether a provider that has to enumerate a whole target to answer is worth asking.
@@ -407,11 +438,45 @@ fn reference_value(session: &SpatialSessionState, id: &SpatialId, field: &str) -
     })
 }
 
-/// Reads the relationship edges of the object at `id` and registers them (§11.2, §12–§18).
+/// Reads the relationship edges of the object at `id` and registers them (§11.2, §12–§18), and
+/// answers whether they were recalled rather than read.
 ///
 /// Idempotent by construction: every edge carries a stable identity, so asking twice in one
 /// session adds nothing the first answer did not (§33.1, §42.1).
+///
+/// §33.1 keeps the "known relationship summary" in the index, and §34 budgets a cached `look` at
+/// 50 ms: an expansion made inside the freshness lifetime of what it is about, and covering what
+/// this interest asks for, is the answer, and no relationship provider is asked. `true` says so,
+/// and the caller reports the view as `cached` (§25.3, §33.4, ADR-0977).
 pub async fn observe(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    id: &SpatialId,
+    interest: &Interest,
+    now: Timestamp,
+) -> Result<bool, ErrorValue> {
+    if !interest.revalidate
+        && session.index().contains(id)
+        && session
+            .recall_expansion(id, now)
+            .is_some_and(|earlier| interest.covered_by(earlier))
+    {
+        // §33.2: the provider stays the authority on whether the place exists, so the object
+        // itself is asked about again — one pinned query — and only its neighbourhood is
+        // recalled. A place that has gone is handled by the full path, which is what finds it
+        // gone (§10.3).
+        let alive = refresh(providers, session, id, now).await.is_some()
+            && session.tombstone_of(id, now).is_none();
+        if alive {
+            return Ok(true);
+        }
+    }
+    expand(providers, session, id, interest, now).await?;
+    Ok(false)
+}
+
+/// Asks the providers about the relationships of the object at `id`, and remembers that it did.
+async fn expand(
     providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
     id: &SpatialId,
@@ -698,6 +763,30 @@ pub async fn observe(
         };
         index.record_withheld(id, label, state, &detail);
     }
+    // §33.1: what was just read is what the next view inside its lifetime may recall. The
+    // lifetime is that of the most volatile kind of place the answer is about (§33.3).
+    let mut kinds: BTreeSet<SpatialType> = BTreeSet::from([object_type]);
+    if let Some(entry) = session.index().get(id) {
+        for edge in entry.edges() {
+            if let Some(kind) = edge
+                .other_end(id)
+                .and_then(|other| session.index().get(other))
+                .map(|other| other.object().object_type())
+            {
+                kinds.insert(kind);
+            }
+        }
+    }
+    session.remember_expansion(
+        id,
+        crate::spatial::session::Expansion {
+            at: now,
+            complete: interest.complete,
+            label: interest.label.clone(),
+            object_type: interest.object_type,
+            kinds,
+        },
+    );
     Ok(())
 }
 
