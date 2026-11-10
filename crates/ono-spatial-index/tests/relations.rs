@@ -348,6 +348,80 @@ fn should_link_a_connection_to_the_endpoint_at_its_far_end() {
 }
 
 #[test]
+fn should_lead_from_a_process_to_the_endpoint_its_connection_reaches() {
+    // §11.2 puts `process.connects_to` in the graph, and the socket record states both halves:
+    // the process that holds the socket and the peer the socket is connected to. The process is
+    // therefore joined to the same endpoint place its connection leads to (ADR-0972).
+    let owner = process(1842, "curl", &[]);
+    let mut socket = socket_with(9_100, Some("established"), Some("10.0.0.5"));
+    socket = common::with(socket, "process", Value::Int(1842));
+    let (index, bridge) = absorb(vec![owner, socket]);
+    let process_id = bridge
+        .resolve(SpatialType::Process, "1842")
+        .expect("the process is a place")
+        .clone();
+    let connection = bridge
+        .resolve(SpatialType::Connection, "9100")
+        .expect("the connection is a place")
+        .clone();
+
+    let reached = along(&index, &process_id, "process.connects_to");
+    assert_eq!(
+        reached,
+        along(&index, &connection, "socket.connected_to"),
+        "the process reaches the endpoint its connection is connected to, and no other"
+    );
+    assert_eq!(reached.len(), 1);
+    let edge = index
+        .get(&process_id)
+        .expect("the process is in the index")
+        .edges()
+        .iter()
+        .find(|edge| edge.relation().as_str() == "process.connects_to")
+        .expect("the edge is recorded on the process")
+        .clone();
+    assert_eq!(edge.source(), &process_id, "the process is the source");
+    assert_eq!(edge.confidence(), Confidence::Exact);
+    assert!(edge.honours_declaration());
+}
+
+#[test]
+fn should_join_a_process_to_its_endpoint_when_the_process_is_observed_after_the_socket() {
+    // §42.3: no dangling ids. A socket listing read before the process listing names a pid that
+    // is no place yet; the assertion waits for the batch that brings the process.
+    let mut socket = socket_with(9_100, Some("established"), Some("10.0.0.5"));
+    socket = common::with(socket, "process", Value::Int(1842));
+    let mut index = index();
+    let mut bridge = bridge();
+    bridge.absorb(&mut index, &[socket], NOW);
+    assert!(
+        bridge.resolve(SpatialType::Process, "1842").is_none(),
+        "the socket alone does not make its owner a place"
+    );
+
+    bridge.absorb(&mut index, &[process(1842, "curl", &[])], NOW);
+    let process_id = bridge
+        .resolve(SpatialType::Process, "1842")
+        .expect("the process is a place")
+        .clone();
+    assert_eq!(along(&index, &process_id, "process.connects_to").len(), 1);
+}
+
+#[test]
+fn should_claim_no_endpoint_for_a_process_when_the_socket_names_no_owner() {
+    // An unprivileged listing shows other users' sockets without their owner. The connection
+    // still leads to its peer; nobody is said to hold it.
+    let owner = process(1842, "curl", &[]);
+    let socket = socket_with(9_100, Some("established"), Some("10.0.0.5"));
+    let (index, bridge) = absorb(vec![owner, socket]);
+    let process_id = bridge
+        .resolve(SpatialType::Process, "1842")
+        .expect("the process is a place")
+        .clone();
+    assert!(along(&index, &process_id, "process.connects_to").is_empty());
+}
+
+#[test]
 fn should_link_storage_from_the_device_through_the_filesystem_to_the_mount_and_the_directory() {
     // §15.2's storage hierarchy, end to end: DEVICES -> FILESYSTEMS -> MOUNTS -> DIRECTORY ROOTS.
     let device = record(

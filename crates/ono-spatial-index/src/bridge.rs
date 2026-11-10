@@ -298,7 +298,12 @@ enum FarEnd {
 #[derive(Debug, Clone)]
 struct Fact {
     subject: SpatialId,
-    /// Whether the record's own object is the relation's declared source or its target.
+    /// The place that stands at the record's end of the relation, where that is another place
+    /// the record names rather than the record's own object: a socket record says which process
+    /// holds a connection, so the process is the near end of `process.connects_to` (ADR-0972).
+    /// The fact lives and dies with `subject`, the object whose record asserted it.
+    near: Option<(SpatialType, String)>,
+    /// Whether the near end is the relation's declared source or its target.
     subject_is_source: bool,
     relation: &'static RelationSpec,
     far: FarEnd,
@@ -559,10 +564,14 @@ impl ProviderBridge {
                 object_type, key, ..
             } => self.resolve(*object_type, key)?,
         };
+        let near = match &fact.near {
+            Some((object_type, key)) => self.resolve(*object_type, key)?,
+            None => &fact.subject,
+        };
         let (source, target) = if fact.subject_is_source {
-            (fact.subject.clone(), far.clone())
+            (near.clone(), far.clone())
         } else {
-            (far.clone(), fact.subject.clone())
+            (far.clone(), near.clone())
         };
         let mut edge = RelationshipEdge::new(
             source,
@@ -683,9 +692,46 @@ impl Reader<'_> {
         );
     }
 
+    /// Records a relation that runs from another place the record names, `near`, to `far`.
+    fn push_from(
+        &mut self,
+        near: (SpatialType, String),
+        relation: &'static str,
+        far: FarEnd,
+        attributes: Vec<(&'static str, Value)>,
+    ) {
+        self.assert(
+            Some(near),
+            relation,
+            true,
+            far,
+            Confidence::Exact,
+            attributes,
+        );
+    }
+
     /// Records a relation the bridge asserts, once its far end is named.
     fn push(
         &mut self,
+        relation: &'static str,
+        subject_is_source: bool,
+        far: FarEnd,
+        confidence: Confidence,
+        attributes: Vec<(&'static str, Value)>,
+    ) {
+        self.assert(
+            None,
+            relation,
+            subject_is_source,
+            far,
+            confidence,
+            attributes,
+        );
+    }
+
+    fn assert(
+        &mut self,
+        near: Option<(SpatialType, String)>,
         relation: &'static str,
         subject_is_source: bool,
         far: FarEnd,
@@ -697,6 +743,7 @@ impl Reader<'_> {
         if let Some(spec) = relation::spec(relation) {
             self.out.facts.push(Fact {
                 subject: self.subject.clone(),
+                near,
                 subject_is_source,
                 relation: spec,
                 far,
@@ -854,18 +901,37 @@ fn facts_of(id: &SpatialId, object_type: SpatialType, record: &RecordValue) -> A
             if !reader.refused("remote", "peer")
                 && let Some(peer) = endpoint_name(record, "remote")
             {
+                let endpoint = || FarEnd::Composed {
+                    object_type: SpatialType::Endpoint,
+                    schema: "ono.endpoint/1",
+                    field: "endpoint",
+                    key: peer.clone(),
+                };
                 reader.push(
                     "socket.connected_to",
                     true,
-                    FarEnd::Composed {
-                        object_type: SpatialType::Endpoint,
-                        schema: "ono.endpoint/1",
-                        field: "endpoint",
-                        key: peer,
-                    },
+                    endpoint(),
                     Confidence::Exact,
                     Vec::new(),
                 );
+                // §11.2: the process that holds this socket reaches the same endpoint. The
+                // record states both halves — the owner and the peer — so the edge is `exact`
+                // and names the socket it was read from (§11.4, ADR-0972).
+                if let Some(owner) = reader
+                    .record
+                    .get("process")
+                    .and_then(|value| reference_key(value, SpatialType::Process))
+                {
+                    let via = text(record.get("inode"));
+                    reader.push_from(
+                        (SpatialType::Process, owner),
+                        "process.connects_to",
+                        endpoint(),
+                        via.map(|inode| ("socket", Value::string(&inode)))
+                            .into_iter()
+                            .collect(),
+                    );
+                }
             }
         }
         SpatialType::File | SpatialType::Directory => {

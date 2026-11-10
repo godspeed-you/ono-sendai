@@ -533,6 +533,46 @@ fn should_reach_the_accepted_connection_when_following_it_from_the_listening_soc
 }
 
 #[test]
+fn should_lead_from_a_process_to_the_endpoints_it_is_connected_to() {
+    // §11.2 declares `process.connects_to`, and §12 gives a process place its network reach: the
+    // far ends of the connections it holds. The socket table states both the process that holds
+    // a connection and the peer it is connected to, so the process's `endpoints` exit lists that
+    // peer as a place (ADR-0972).
+    let (listening, port) = listener();
+    let client = TcpStream::connect(("127.0.0.1", port)).expect("connect to the test's listener");
+    let (_accepted, _peer) = listening
+        .accept()
+        .expect("accept the test's own connection");
+    let pid = std::process::id();
+
+    let run = ono(&format!("enter process {pid}; near endpoints | to json"));
+    let neighbors = rows(&run, "near endpoints");
+    let server = format!("127.0.0.1:{port}");
+    let reached = neighbors
+        .iter()
+        .find(|neighbor| rendered(neighbor).contains(&server))
+        .unwrap_or_else(|| {
+            panic!(
+                "spec §11.2: this process holds a connection to {server}, so that endpoint is \
+                 among its `endpoints`; got {neighbors:?}"
+            )
+        });
+    let shown = rendered(reached);
+    assert!(
+        shown.contains("group: endpoints") && shown.contains("confidence: exact"),
+        "spec §11.4, §11.5: the neighbour names the exit it was reached along and the \
+         confidence the socket table gives it; got {shown}"
+    );
+
+    let followed = ono(&format!(
+        "enter process {pid}; follow endpoint {server}; look --json"
+    ));
+    let view = place_view(&followed);
+    assert_place_is(&view, "endpoint", &server, "spec v0.4 §6.4, §11.2");
+    drop(client);
+}
+
+#[test]
 fn should_name_the_acceptance_edge_between_a_real_listener_and_the_connection_it_accepted() {
     // §14.4: the kernel states a listening socket and an established socket sharing its local
     // endpoint, and never states the acceptance itself, so the bridge composes

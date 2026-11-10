@@ -1,0 +1,65 @@
+# `process.connects_to` — a process to the far end of a connection it holds — was declared in the
+# relation registry and nothing served it: a process place's `endpoints` exit answered
+# `unsupported` (#206). ADR-0972 fills it from what is already read: the descriptor table says
+# which sockets a process holds, and a connection's own record names its peer (v0.4 §11.2, §11.4,
+# §12, §35.2).
+#
+# The connection is the case's own: an agent listens on loopback and a shell this case started
+# holds a connection to it, so the endpoint is a fact of the run. Case 202 uses the same agent.
+case: a process leads to the endpoints its connections reach
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  ono --agent --listen 127.0.0.1:7743 > "$HOME/agent-133.log" 2>&1 &
+  agent=$!
+  for _ in $(seq 50); do
+    if ono --no-config -c 'get connection | where state == "listen" | to json' | grep -q '7743'; then break; fi
+    sleep 0.2
+  done
+  bash -c 'exec 3<>/dev/tcp/127.0.0.1/7743; exec sleep 60' &
+  holder=$!
+  for _ in $(seq 50); do
+    [ -e "/proc/$holder/fd/3" ] && break
+    sleep 0.2
+  done
+  sleep 60 &
+  idle=$!
+
+  echo "== the endpoints exit is a list (v0.4 §11.2, §12, ADR-0972) =="
+  prove e1 "the process's endpoints hold the peer of its connection" \
+    "ono -c 'enter process/$holder; near endpoints | select display_name | to text' | grep -qF '127.0.0.1:7743'"
+  prove e2 "the exit is counted beside the sockets it was read with" \
+    "ono -c 'enter process/$holder; look' | grep -qE '^ +endpoints +1'"
+  prove e3 "the edge is exact and names the provider that read it (§11.4, §11.5)" \
+    "ono -c 'enter process/$holder; near endpoints | to json' | grep -qF '\"confidence\":\"exact\",\"provider\":\"linux.process-sockets\"'"
+  prove e4 "\`follow endpoint\` reaches the endpoint place (§6.4)" \
+    "ono -c 'enter process/$holder; follow endpoint; look --json' | grep -qF '\"type\":\"endpoint\"'"
+  prove e5 "and the endpoint's clients lead back to the process" \
+    "ono -c 'enter process/$holder; follow endpoint; near clients | to json' | grep -qF '\"pid\":$holder'"
+
+  echo "== a process with no connection has none, which is an answer (§35.2) =="
+  prove e6 "an idle process's endpoints are an empty list, never unsupported" \
+    "ono -c 'enter process/$idle; look' | grep -qE '^ +endpoints +0'"
+
+  kill "$holder" "$idle" "$agent" 2>/dev/null || true
+  wait 2>/dev/null || true
+  echo done=ok
+exit: 0
+stdout-contains: PROVED e1
+stdout-contains: PROVED e2
+stdout-contains: PROVED e3
+stdout-contains: PROVED e4
+stdout-contains: PROVED e5
+stdout-contains: PROVED e6
+stdout-contains: done=ok
+stdout-not-contains: FAILED

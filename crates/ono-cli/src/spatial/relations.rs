@@ -168,7 +168,9 @@ fn labels_of(provider: &str) -> &'static [&'static str] {
         "linux.process-tree" => &["parent", "children"],
         "linux.open-files" => &["files"],
         "linux.file-holders" => &["openers"],
-        "linux.process-sockets" => &["sockets"],
+        // A process's socket records name the peers of its connections as well, so the read
+        // that fills `sockets` is the one that fills `endpoints` (ADR-0972).
+        "linux.process-sockets" => &["sockets", "endpoints"],
         "linux.socket-owners" => &["process"],
         "linux.service-processes" => &["processes"],
         "linux.service-dependencies" => &["dependencies", "dependents"],
@@ -569,6 +571,11 @@ pub async fn observe(
             if &other == id {
                 continue;
             }
+            // §11.2: a socket this process holds, where it is a connection, reaches a peer —
+            // and so does the process (ADR-0972).
+            let held = (translation.relation == "process.owns_socket"
+                && translation.subject_is_source)
+                .then(|| other.clone());
             let (source, target_id) = if translation.subject_is_source {
                 (id.clone(), other)
             } else {
@@ -603,6 +610,9 @@ pub async fn observe(
             }
             let (index, _) = session.absorb_with();
             index.record_edge(edge);
+            if let Some(socket) = held {
+                reach_endpoints(session, id, &socket, &target, provider.id(), now);
+            }
         }
 
         for label in labels_of(provider.id()) {
@@ -666,6 +676,60 @@ pub async fn observe(
         index.record_withheld(id, label, state, &detail);
     }
     Ok(())
+}
+
+/// Records `process.connects_to` from the process at `process` to every endpoint the socket it
+/// holds is connected to (§11.2, ADR-0972).
+///
+/// The descriptor table says the process holds the socket, and the socket's own record says
+/// which peer it is connected to — the bridge made that peer a place when the record was
+/// absorbed. Both halves are observations, so the edge is `exact`, and it names the socket it
+/// was read through, which is the explanation §11.4 asks an edge to carry.
+fn reach_endpoints(
+    session: &mut SpatialSessionState,
+    process: &SpatialId,
+    socket: &SpatialId,
+    record: &RecordValue,
+    provider: &str,
+    now: Timestamp,
+) {
+    let (Some(connected), Some(spec)) = (
+        relation::spec("socket.connected_to"),
+        relation::spec("process.connects_to"),
+    ) else {
+        return;
+    };
+    let endpoints: Vec<SpatialId> = session.index().get(socket).map_or_else(Vec::new, |entry| {
+        entry
+            .edges()
+            .iter()
+            .filter(|edge| *edge.relation() == connected.relation_type() && edge.source() == socket)
+            .map(|edge| edge.target().clone())
+            .collect()
+    });
+    let schema = SchemaId::new("ono.spatial-relation", 1);
+    let host = session.current_scope();
+    let provenance = if host.is_remote() {
+        Provenance::remote(provider, host.host_scope().id(), schema)
+    } else {
+        Provenance::local(provider, schema)
+    }
+    .observed_at(now);
+    for endpoint in endpoints {
+        let mut edge = RelationshipEdge::new(
+            process.clone(),
+            endpoint,
+            spec.relation_type(),
+            Confidence::Exact,
+            provenance.clone(),
+            now,
+        );
+        if let Some(inode) = record.get("inode") {
+            edge = edge.with_attribute("socket", inode.clone());
+        }
+        let (index, _) = session.absorb_with();
+        index.record_edge(edge);
+    }
 }
 
 /// The exits of the place at `id` that something has actually said an answer for: an edge under
