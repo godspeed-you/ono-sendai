@@ -55,6 +55,8 @@ fn should_lay_a_redirected_table_out_at_the_width_the_environment_states() {
     );
 }
 
+// `map` and `look` belong to the spatial tier, which a core build leaves out (ADR-0925).
+#[cfg(feature = "spatial")]
 #[test]
 fn should_lay_every_redirected_view_out_by_the_same_rule() {
     // The map was the one view that honoured `COLUMNS` off a terminal (ADR-0166). It keeps doing
