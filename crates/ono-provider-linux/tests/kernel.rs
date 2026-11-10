@@ -1,6 +1,14 @@
 //! `get kernel`: the running kernel, the operating system it boots and the uptime, as one
 //! `ono.kernel/1` record read from the kernel's own files (spec §8.1, ADR-0964, #207).
 
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "helpers shared between the cases below sit outside a `#[test]` function, where a \
+              failed precondition should still abort loudly"
+)]
+
 mod common;
 
 use std::fs;
