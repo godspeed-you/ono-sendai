@@ -60,7 +60,7 @@ registration_checks:
   - {id: no-core-shadow, rule: "No contribution silently shadows a core command, target or schema id.", spec: "§31.65"}
   - {id: annotation-declared, rule: "Every annotation key the package emits is declared in its manifest.", spec: "§31.23"}
   - {id: view-has-fallback, rule: "Every view declares a deterministic non-interactive output for when stdout is redirected.", spec: "§31.28, §50"}
-  - {id: risk-metadata, rule: "Every mutating command and every assistant mutation tool declares its risk.", spec: "§31.46, §31.75"}
+  - {id: risk-metadata, rule: "Every mutating command and every assistant mutation tool declares its risk. A command needing a capability whose risk in `kuang_capabilities` is `mutate` or `destructive` and declaring no `risk` is `package.invalid`, naming the package, the command and that capability; a declared risk below the strongest such capability's is refused the same way — a package may raise the risk its capabilities carry, never lower it (ADR-1000).", spec: "§31.46, §31.75"}
 
 # ---------------------------------------------------------------------------------------------
 # Command contributions — spec §31.22. The declaration is the *same* metadata schema core
@@ -90,7 +90,7 @@ command:
     argument_mode: {type: string, required: true, doc: "From ADR-0009's table. A contributed command's mode comes from its registry entry (ADR-0012 §14, ADR-0009)."}
     selectors: {type: list<parameter>, nullable: true, doc: "As a core command declares them; see `parameter` below. Absent means the command declares no positional arguments, not that it takes none."}
     options: {type: list<parameter>, nullable: true, doc: "As a core command declares them; see `parameter` below."}
-    risk: {type: string, nullable: true, doc: "From `risk_levels` in `docs/contracts/capabilities.yaml`. Required for a mutating command."}
+    risk: {type: string, nullable: true, doc: "From `risk_levels` in `docs/contracts/capabilities.yaml`. Required for a mutating command — one needing a `mutate` or `destructive` capability — and never below the strongest capability's risk (`registration_checks.risk-metadata`, ADR-1000). `destructive` is the host's confirmation policy, not a label: the registry entry is `confirmation: always` and gains a `confirm` bool option where the package declared none, and every run — bare, qualified (`<package>:<command>`), in a background job, at a terminal or in a script — without `--confirm` is refused with `safety.confirmation_required` before any of the package's code runs, exactly as a core `confirmation: always` command is (spec §17.4, ADR-1001). The hello's own `risk` is read the same way for a command the package declares nowhere on disk."}
     examples: {type: list<string>, required: true, doc: "Each must parse and run under the test host (spec §31.22, §50)."}
     action: {type: action, nullable: true, doc: "The provider-action contract of `docs/architecture/external-system-provider.md` §21.1, for a command that acts on the system a provider fronts; see `action` below. Validated at load (ADR-0595)."}
   # The safety and type contract of a provider action, declared where the host reads it before any

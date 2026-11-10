@@ -1015,7 +1015,8 @@ pub fn invoke(
         ));
     };
 
-    let arguments = declared_arguments(declaration(&contributed_command_id(&id, command)), words);
+    let declared = declaration(&contributed_command_id(&id, command));
+    let arguments = declared_arguments(declared, words);
 
     session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
@@ -1045,6 +1046,17 @@ pub fn invoke(
                 .with_help("`get plugin` shows what a package contributes"),
             )
         })?;
+        // The qualified spelling is a second door to the same contribution, and it is held to
+        // the same confirmation: the declaration on disk where there is one, the running
+        // package's own hello where there is not (ADR-1001).
+        let spoken = declared.cloned().or_else(|| {
+            plugin
+                .commands()
+                .iter()
+                .find(|registered| registered.contribution.id == full)
+                .and_then(|registered| hello_contract(&id, &registered.contribution))
+        });
+        refuse_unconfirmed(spoken.as_ref(), words)?;
         runtime.block_on(async {
             let invocation = plugin
                 .invoke(&full, arguments)
@@ -1057,6 +1069,52 @@ pub fn invoke(
         .map_err(Flow::Failed)?
         .ok_or_else(crate::eval::interrupted_flow_now)?;
     delivered(events, &result)
+}
+
+/// Refuses a run of a contribution whose confirmation policy `words` do not satisfy.
+///
+/// The decision and the refusal are the registry entry's, the same ones a core command's
+/// `confirmation: always` gives (spec §17.4, `CommandContract::unconfirmed`): a contribution that
+/// declared itself `destructive` needs `--confirm` on every run, at a terminal as in a script, and
+/// without it nothing of the package runs (ADR-1001).
+fn refuse_unconfirmed(
+    contract: Option<&CommandContract>,
+    words: &[std::ffi::OsString],
+) -> Eval<()> {
+    let confirmed = json_arguments(words).get("confirm") == Some(&serde_json::Value::Bool(true));
+    match contract.and_then(|contract| contract.unconfirmed(confirmed)) {
+        Some(refusal) => Err(Flow::Failed(refusal)),
+        None => Ok(()),
+    }
+}
+
+/// The registry entry a command the running package declared in its hello would be, read for its
+/// confirmation policy only.
+///
+/// `None` where the hello says something the registry would refuse; the supervisor has already
+/// validated what it could (ADR-0595), and this is not the place a package learns its
+/// declaration is wrong. The version is not part of that decision, so it is left empty.
+fn hello_contract(
+    package: &str,
+    contribution: &ono_kuang_protocol::CommandContribution,
+) -> Option<CommandContract> {
+    ono_command::ContributedCommand {
+        id: contribution.id.clone(),
+        verb: contribution.verb.clone(),
+        target: contribution.target.clone(),
+        summary: contribution.summary.clone(),
+        input: contribution.input.clone(),
+        output: contribution.output.clone(),
+        capabilities: contribution.capabilities.clone(),
+        argument_mode: contribution.argument_mode.clone(),
+        selectors: Vec::new(),
+        options: Vec::new(),
+        risk: contribution.risk.clone(),
+        examples: Vec::new(),
+        origin: ono_command::Origin::plugin(package, ""),
+    }
+    .into_contract()
+    .ok()
 }
 
 /// The full contributed id for a short command name, such as `emit`.
@@ -1262,6 +1320,9 @@ pub fn invoke_contributed(
             format!("`{}` names no package to run it", contract.spelling()),
         ))
     })?;
+    // A destructive contribution is confirmed before its package is even started: the refusal
+    // is the host's, so nothing of the package's needs to run to give it (ADR-1001).
+    refuse_unconfirmed(Some(contract), words)?;
     if loaded_package(session, package).is_none() {
         load_plugin_with(
             session,

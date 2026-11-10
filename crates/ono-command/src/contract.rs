@@ -856,6 +856,30 @@ impl CommandContract {
         self.confirmation
     }
 
+    /// The refusal a run of this command gets when its confirmation policy asks for `--confirm`
+    /// on every run and `confirmed` says it was not written, or `None` when the run may go on.
+    ///
+    /// A destructive command needs `--confirm` every time (spec §17.4): a script never waits for
+    /// a prompt, so without the flag it acts on nothing and says so (ADR-0088 §3). One refusal
+    /// for every command that carries the policy, so the code, the wording and the remedy cannot
+    /// drift between them.
+    #[must_use]
+    pub fn unconfirmed(&self, confirmed: bool) -> Option<ErrorValue> {
+        if self.confirmation != Confirmation::Always || confirmed {
+            return None;
+        }
+        let spelling = self.spelling();
+        Some(
+            ErrorValue::new(
+                ErrorCode::SafetyConfirmationRequired,
+                format!("`{spelling}` is destructive and was not confirmed"),
+            )
+            .with_help(format!(
+                "nothing was changed. Write `{spelling} --confirm` to act (spec §17.4)"
+            )),
+        )
+    }
+
     /// Whether the entry records a `?` cell of the §52 matrix whose usefulness must be validated
     /// before it is implemented.
     #[must_use]
@@ -1510,6 +1534,78 @@ impl ContributedCommand {
                 )
             })?),
         };
+        // What the package said is held against what it asked for. A capability's risk is the
+        // least the host knows the command can do with it, so a command needing a `mutate` or
+        // `destructive` capability must say its risk, and may raise that risk but never lower it
+        // (`registration_checks.risk-metadata`, K11P §6.6, ADR-1000). The declaration is the one
+        // the host's confirmation policy reads, which is why silence is refused rather than read
+        // as `read`.
+        if let Some((capability, floor)) = strongest_capability(&self.capabilities) {
+            match declared_risk {
+                None if floor >= ono_provider_api::Risk::Mutate => {
+                    return Err(contributed_error(
+                        &id,
+                        format!(
+                            "package `{package}` declares no `risk:` for it, and it needs \
+                             `{capability}`, whose risk is `{}`",
+                            floor.as_str()
+                        ),
+                    )
+                    .with_help(format!(
+                        "a mutating command declares its risk: add `risk: {}` (or higher) to \
+                         its contribution (spec §31.22, §31.75; contributions.v1.yaml → \
+                         registration_checks.risk-metadata)",
+                        floor.as_str()
+                    )));
+                }
+                Some(declared) if declared < floor => {
+                    return Err(contributed_error(
+                        &id,
+                        format!(
+                            "package `{package}` declares `risk: {}`, and it needs \
+                             `{capability}`, whose risk is `{}`",
+                            declared.as_str(),
+                            floor.as_str()
+                        ),
+                    )
+                    .with_help(format!(
+                        "a package may raise the risk its capabilities carry, never lower it: \
+                         declare `risk: {}` or higher (K11P §6.6, ADR-1000)",
+                        floor.as_str()
+                    )));
+                }
+                _ => {}
+            }
+        }
+        // A declared `destructive` is what a core command's `confirmation: always` is: the host
+        // asks for `--confirm` on every run (spec §17.4; external-system-provider §21.5 —
+        // confirmation is the host's policy, applied to the risk the provider declares). The flag
+        // is then part of the command's declared surface, so `help` and completion offer it as
+        // they do for `protect` (ADR-1001).
+        let destructive = declared_risk == Some(ono_provider_api::Risk::Destructive);
+        let mut options = options;
+        if destructive && !options.iter().any(|option| option.name() == "confirm") {
+            options.extend(parameters_with(
+                vec![RawParameter {
+                    name: "confirm".to_owned(),
+                    declared_type: "bool".to_owned(),
+                    doc: "Required on every run: the contribution declares itself destructive \
+                          (spec §17.4)."
+                        .to_owned(),
+                    repeatable: false,
+                    optional_value: false,
+                    default: None,
+                    execution: None,
+                    values: Vec::new(),
+                }],
+                &refuse,
+            )?);
+        }
+        let confirmation = if destructive {
+            Confirmation::Always
+        } else {
+            Confirmation::Bulk
+        };
         let output = IoType { text: self.output };
         Ok(CommandContract {
             id: self.id,
@@ -1525,7 +1621,7 @@ impl ContributedCommand {
             // what it promises, and says so in its version.
             stability: Stability::Experimental,
             validation_required: false,
-            confirmation: Confirmation::Bulk,
+            confirmation,
             argument_mode,
             input: IoType {
                 text: self.input.unwrap_or_else(|| "null".to_owned()),
@@ -1575,6 +1671,26 @@ fn risk_level(word: &str) -> Option<ono_provider_api::Risk> {
         "destructive" => Some(ono_provider_api::Risk::Destructive),
         _ => None,
     }
+}
+
+/// The capability among `capabilities` whose risk is highest, with that risk, as
+/// `kuang_capabilities` in `docs/contracts/capabilities.yaml` classes it.
+///
+/// An id that is no capability is passed over here: the load refuses it (`capabilities-exist`),
+/// and a floor computed from a word nobody defined would be a guess.
+fn strongest_capability(capabilities: &[String]) -> Option<(&str, ono_provider_api::Risk)> {
+    capabilities
+        .iter()
+        .filter_map(|id| {
+            let risk = match ono_kuang_protocol::Capability::from_id(id)?.risk() {
+                ono_kuang_protocol::Risk::Read => ono_provider_api::Risk::Read,
+                ono_kuang_protocol::Risk::Observe => ono_provider_api::Risk::Observe,
+                ono_kuang_protocol::Risk::Mutate => ono_provider_api::Risk::Mutate,
+                ono_kuang_protocol::Risk::Destructive => ono_provider_api::Risk::Destructive,
+            };
+            Some((id.as_str(), risk))
+        })
+        .max_by_key(|(_, risk)| *risk)
 }
 
 fn contributed_error(id: &str, detail: impl fmt::Display) -> ErrorValue {

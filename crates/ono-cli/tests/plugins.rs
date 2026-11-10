@@ -1129,3 +1129,266 @@ fn should_refuse_a_contributed_command_whose_risk_is_not_a_risk_level() {
         listed.output()
     );
 }
+
+#[test]
+fn should_refuse_and_report_a_mutating_contributed_command_that_declares_no_risk() {
+    // #156: `network.connect` is a `mutate` capability. A command needing it that said nothing
+    // about its risk used to register, and `help` showed no risk at all. It is refused now, and
+    // `get plugin` says which package, which command and what is missing (ADR-1000).
+    let home = risk_declaring_home("destructive");
+    let text = std::fs::read_to_string(
+        home.path()
+            .join("dev.example.echo/contributions/commands.yaml"),
+    )
+    .expect("the declaration");
+    home.write(
+        "dev.example.echo/contributions/commands.yaml",
+        text.replace("    risk: destructive\n", ""),
+    );
+    let run = ono(&home, "get plugin");
+    assert!(
+        run.stderr().contains("dev.example.echo.command.emit")
+            && run.stderr().contains("network.connect")
+            && run.stderr().contains("risk:"),
+        "the refusal names the command, the capability and the missing `risk:`, got {:?}",
+        run.stderr()
+    );
+    let listed = ono(
+        &home,
+        r#"get command | where id == "dev.example.echo.command.emit" | count"#,
+    );
+    assert!(
+        listed.stdout().contains('0'),
+        "a refused declaration does not reach the registry, got {:?}",
+        listed.output()
+    );
+}
+
+// --- a declared `destructive` is confirmed as a core command is (spec §17.4, ADR-1001) --------
+
+/// The example package declaring its `audit` command — whose one effect is an entry in the
+/// host's audit trail — as `remove echo-record`, `destructive`, beside a `read` `emit`.
+///
+/// The audit trail is how a test sees whether the package's code ran at all: the entry is written
+/// by the handler and by nothing else.
+fn destructive_declaring_home() -> ono_testkit::Scratch {
+    let scratch = declaring_plugin_home();
+    scratch.write(
+        "dev.example.echo/contributions/commands.yaml",
+        r#"
+commands:
+  - id: dev.example.echo.command.emit
+    verb: get
+    target: echo-item
+    summary: Emit a counted stream of integers.
+    output: stream<int>
+    argument_mode: expression
+    capabilities: []
+    risk: read
+    examples:
+      - get echo-item --count 3
+  - id: dev.example.echo.command.audit
+    verb: remove
+    target: echo-record
+    summary: Remove the record the package keeps, and say so in the audit trail.
+    output: stream<string>
+    argument_mode: expression
+    capabilities: []
+    risk: destructive
+    examples:
+      - remove echo-record --confirm
+"#,
+    );
+    scratch
+}
+
+/// `ono -c script` over the packages in `home`, with every XDG directory in a scratch of its own.
+///
+/// The audit trail is persisted under `XDG_STATE_HOME`, so a test reading it must not read — or
+/// write — anybody else's.
+fn ono_isolated(home: &ono_testkit::Scratch, script: &str) -> ono_testkit::Run {
+    let state = ono_testkit::scratch();
+    let mut shell = Shell::new()
+        .args(["-c", script])
+        .env("ONO_PLUGIN_PATH", home.path().display().to_string());
+    for (variable, directory) in [
+        ("XDG_STATE_HOME", "state"),
+        ("XDG_CONFIG_HOME", "config"),
+        ("XDG_DATA_HOME", "data"),
+        ("XDG_CACHE_HOME", "cache"),
+    ] {
+        shell = shell.env(variable, state.path().join(directory).display().to_string());
+    }
+    shell.run()
+}
+
+/// How many entries the example package's `audit` handler has written, read in the same session.
+const RECORDED: &str = r#"get audit --plugin dev.example.echo | where action == "audit.event:credential-plugin" | count | to json"#;
+
+/// How many entries the `--destructive` mode's `wipe` handler has written.
+const WIPED: &str =
+    r#"get audit --plugin dev.example.echo | where action == "audit.event:wipe" | count | to json"#;
+
+#[test]
+fn should_refuse_an_unconfirmed_destructive_contribution_without_reaching_the_package() {
+    let home = destructive_declaring_home();
+    let run = ono_isolated(&home, &format!("remove echo-record; {RECORDED}"));
+    assert!(
+        run.stderr().contains("safety.confirmation_required")
+            && run.stderr().contains("remove echo-record --confirm"),
+        "spec §17.4: a destructive command without --confirm is the structured refusal a core \
+         one gives, naming the remedy, got {:?}",
+        run.stderr()
+    );
+    assert!(
+        run.stdout().contains("[0]"),
+        "the package's code never ran: nothing reached its audit trail, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_run_a_destructive_contribution_once_it_is_confirmed() {
+    let home = destructive_declaring_home();
+    let run = ono_isolated(
+        &home,
+        &format!("remove echo-record --confirm | to json; {RECORDED}"),
+    );
+    run.assert_success();
+    assert!(
+        run.stdout().contains("recorded") && run.stdout().contains("[1]"),
+        "with --confirm the command runs and its effect is there, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_an_unconfirmed_destructive_contribution_by_its_qualified_name_too() {
+    // A loaded package's `<package>:<command>` is a second door to the same contribution; it is
+    // held to the same declaration (spec §31.66).
+    let home = destructive_declaring_home();
+    let run = ono_isolated(
+        &home,
+        &format!("load plugin dev.example.echo; echo:audit; {RECORDED}"),
+    );
+    assert!(
+        run.stderr().contains("safety.confirmation_required"),
+        "the qualified spelling is refused as the bare one is, got {:?}",
+        run.stderr()
+    );
+    assert!(
+        run.stdout().contains("[0]"),
+        "the package's code never ran, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_leave_a_reading_contribution_unconfirmed_beside_a_destructive_one() {
+    let home = destructive_declaring_home();
+    let run = ono_isolated(&home, "get echo-item --count 2 | to json");
+    run.assert_success();
+    assert!(
+        run.stdout().contains("[1,2]"),
+        "a `read` contribution runs as it did, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_an_unconfirmed_destructive_command_a_package_declares_only_in_its_hello() {
+    // A package with no declaration on disk still says what its commands are when it starts.
+    // `destructive` there is the same statement, and the host's confirmation policy acts on it
+    // the same way (external-system-provider §21.5, ADR-1001).
+    let home = plugin_home();
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    let entry = home.path().join("dev.example.echo/runtime/echo");
+    std::fs::remove_file(&entry).expect("the copied runtime");
+    std::fs::write(
+        &entry,
+        format!("#!/bin/sh\nexec '{}' --destructive\n", binary.display()),
+    )
+    .expect("the runtime wrapper");
+    let mut permissions = std::fs::metadata(&entry).expect("written").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&entry, permissions).expect("executable");
+
+    let refused = ono_isolated(
+        &home,
+        &format!("load plugin dev.example.echo; echo:wipe; {WIPED}"),
+    );
+    assert!(
+        refused.stderr().contains("safety.confirmation_required"),
+        "a destructive command declared in the hello is confirmed like any other, got {:?}",
+        refused.stderr()
+    );
+    assert!(
+        refused.stdout().contains("[0]"),
+        "the package's code never ran, got {:?}",
+        refused.output()
+    );
+    let confirmed = ono_isolated(
+        &home,
+        &format!("load plugin dev.example.echo; echo:wipe --confirm | to json; {WIPED}"),
+    );
+    assert!(
+        confirmed.stdout().contains("wiped") && confirmed.stdout().contains("[1]"),
+        "with --confirm it runs, got {:?}",
+        confirmed.output()
+    );
+}
+
+#[test]
+fn should_refuse_an_unconfirmed_destructive_contribution_at_a_terminal_as_a_core_command_does() {
+    // A core `confirmation: always` command does not prompt at a terminal either: it acts on
+    // nothing and names `--confirm` (spec §17.4, ADR-0088 §3). A contribution is confirmed by the
+    // same policy, so it behaves the same way there (ADR-1001).
+    let packages = destructive_declaring_home();
+    let directory = ono_testkit::scratch();
+    let mut shell = support::interactive_shell_with_plugins(&directory, packages.path());
+    let _ = support::read_until(&mut shell, "> ", std::time::Duration::from_secs(10));
+    shell
+        .write_all(b"remove echo-record\n")
+        .expect("the command line");
+    let seen = support::read_until(
+        &mut shell,
+        "--confirm` to act",
+        std::time::Duration::from_secs(10),
+    );
+    assert!(
+        seen.contains("safety.confirmation_required") && !seen.contains("[y/N]"),
+        "at a terminal the refusal is the structured one, not a question; saw:\n{seen}"
+    );
+    shell.write_all(b"exit\n").expect("input");
+    let _ = shell.wait();
+}
+
+#[test]
+fn should_refuse_an_unconfirmed_destructive_contribution_run_as_a_background_job() {
+    // `&` hands the line to a job of its own (spec §18.4). The job is still the shell running the
+    // contribution, so it is confirmed exactly as the foreground is (ADR-1001).
+    let home = destructive_declaring_home();
+    let refused = ono_isolated(&home, &format!("remove echo-record &; fg %1; {RECORDED}"));
+    assert!(
+        refused.stderr().contains("safety.confirmation_required"),
+        "the job is refused, got {:?}",
+        refused.stderr()
+    );
+    assert!(
+        refused.stdout().contains("[0]"),
+        "the package's code never ran in the job either, got {:?}",
+        refused.output()
+    );
+    let confirmed = ono_isolated(
+        &home,
+        &format!("remove echo-record --confirm &; fg %1; {RECORDED}"),
+    );
+    assert!(
+        confirmed.stdout().contains("[1]"),
+        "a confirmed job runs, got {:?}",
+        confirmed.output()
+    );
+}

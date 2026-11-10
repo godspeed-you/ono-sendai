@@ -1,0 +1,92 @@
+# #156, ADR-1001 (spec §17.4, §18.4, §31.66; external-system-provider §21.5): a contribution that
+# declares itself `destructive` is confirmed by the gate a core `confirmation: always` command is.
+# Without `--confirm` it is refused with `safety.confirmation_required` — bare, qualified or as a
+# background job — and none of the package's code runs: the entry its handler writes to the audit
+# trail is absent. With `--confirm` it runs. A `read` contribution beside it is unaffected.
+case: a destructive contribution needs --confirm, and without it the package never runs
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/commands.yaml" <<'CONTRIB'
+  commands:
+    - id: dev.example.echo.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      risk: read
+      examples:
+        - get echo-item --count 3
+    - id: dev.example.echo.command.audit
+      verb: remove
+      target: echo-record
+      summary: Remove the record the package keeps, and say so in the audit trail.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: []
+      risk: destructive
+      examples:
+        - remove echo-record --confirm
+  CONTRIB
+  recorded='get audit --plugin dev.example.echo | where action == "audit.event:credential-plugin" | count | to json'
+
+  echo "== help offers the confirmation the declaration requires =="
+  ono -c 'help remove echo-record' | grep -E -- '--confirm'
+
+  echo "== without --confirm: the core refusal, and the package never ran (§17.4) =="
+  ono -c "remove echo-record; $recorded" 2>&1 | sed 's/^/bare: /'
+  echo "== the qualified spelling of a loaded package is the same contribution (§31.66) =="
+  ono -c "load plugin dev.example.echo; echo:audit; $recorded" 2>&1 | grep -v 'loaded\|answerable' | sed 's/^/qualified: /'
+  echo "== a background job is the shell running it too (§18.4) =="
+  ono -c "remove echo-record &; fg %1; $recorded" 2>&1 | sed 's/^/job: /'
+
+  echo "== with --confirm it runs =="
+  ono -c "remove echo-record --confirm | to json; $recorded" 2>&1 | sed 's/^/confirmed: /'
+
+  echo "== a read contribution beside it is unaffected =="
+  ono -c 'get echo-item --count 2 | to json' | sed 's/^/read: /'
+exit: 0
+stdout-contains: --confirm
+stdout-contains: safety.confirmation_required `remove echo-record` is destructive and was not confirmed
+stdout-contains: nothing was changed. Write `remove echo-record --confirm` to act (spec §17.4)
+stdout-contains: bare: [0]
+stdout-contains: qualified: ono: Ono-Sendai-E0701 safety.confirmation_required
+stdout-contains: qualified: [0]
+stdout-contains: job: ono: Ono-Sendai-E0701 safety.confirmation_required
+stdout-contains: job: [0]
+stdout-contains: confirmed: ["recorded"]
+stdout-contains: confirmed: [1]
+stdout-contains: read: [1,2]
+stdout-not-contains: panicked

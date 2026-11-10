@@ -51,6 +51,10 @@ fn main() {
         // A package written for the old model: it never says its handlers may run beside one
         // another, so the SDK's default of one at a time applies (ADR-0586).
         Some("--serial") => honest_at_most(1).run(),
+        // A package that declares a `destructive` command in its hello and nowhere on disk, so the
+        // host's confirmation policy has only the running package's own word to act on (#156,
+        // ADR-1001). Kept apart from the default for the same reason as `--change-provider`.
+        Some("--destructive") => destructive().run(),
         // The v0.6 §48 surface, kept apart from the default so that every existing conformance
         // assertion about what this package contributes stays exactly as true as it was.
         Some("--change-provider") => change_provider(None).run(),
@@ -610,6 +614,31 @@ fn emit_text(ctx: &mut Ctx<'_>, text: &str) -> Outcome {
         // The host cancelled or the stream is gone; neither is a failure of the call.
         Err(_) => Outcome::Cancelled,
     }
+}
+
+/// The honest package plus `remove echo-record`, declared `destructive` in the hello alone.
+///
+/// Its one effect is an entry in the host's audit trail, which is how a test sees whether the
+/// handler ran at all.
+fn destructive() -> Plugin {
+    honest()
+        .contribute_command(CommandContribution {
+            verb: "remove".to_owned(),
+            target: "echo-record".to_owned(),
+            risk: Some("destructive".to_owned()),
+            ..command_declaring(
+                "wipe",
+                "Remove the record the package keeps, and say so in the audit trail.",
+                "stream<string>",
+                &[],
+            )
+        })
+        .command(&format!("{PACKAGE}.command.wipe"), |ctx| {
+            match ctx.audit_event(json!({"action": "wipe", "detail": "the record was removed"})) {
+                Ok(()) => emit_text(ctx, "wiped"),
+                Err(error) => Outcome::Failed(error),
+            }
+        })
 }
 
 fn honest() -> Plugin {

@@ -20,7 +20,7 @@ use ono_provider_api::{Action, ActionOutcome, ObjectId, ObjectRef, Selector};
 use ono_value::{ErrorValue, SchemaId, Value};
 
 use crate::bind::BoundArguments;
-use crate::contract::{Confirmation, DeclaredType};
+use crate::contract::DeclaredType;
 use crate::invoke::{CommandImpl, Invocation, Outcome, OutcomeFuture, must_be_awaited};
 
 /// The bulk threshold of spec §11.6 when `safety.confirm.bulk_threshold` is not configured.
@@ -163,14 +163,8 @@ impl ProviderMutation {
         // §17.4): a script never waits for a prompt, so without the flag it acts on nothing
         // and says so (ADR-0088 §3).
         let confirmed = written.option("confirm") == Some(&Value::Bool(true));
-        if contract.confirmation() == Confirmation::Always && !confirmed {
-            return Err(ErrorValue::new(
-                ErrorCode::SafetyConfirmationRequired,
-                format!("`{spelling}` is destructive and was not confirmed"),
-            )
-            .with_help(format!(
-                "nothing was changed. Write `{spelling} --confirm` to act (spec §17.4)"
-            )));
+        if let Some(refusal) = contract.unconfirmed(confirmed) {
+            return Err(refusal);
         }
 
         // The bulk guard of spec §11.6 and §17.4: a selection above the threshold mutates
