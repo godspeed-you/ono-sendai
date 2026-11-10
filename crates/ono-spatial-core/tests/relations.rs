@@ -400,3 +400,68 @@ fn should_tell_another_packages_schema_from_one_of_its_own_and_from_a_type_name(
         "dev.example.echo"
     ));
 }
+
+#[test]
+fn should_not_register_a_waiting_relation_of_a_withdrawn_package_when_its_kind_arrives() {
+    // An unloaded package contributes nothing (lifecycle.v1 `unload`): a shape it left waiting
+    // must not be registered when another package later contributes the kind it named.
+    relation::await_shape(relation::Awaiting {
+        package: "dev.example.gone".to_owned(),
+        from: "process".to_owned(),
+        to: "dev.example.shelves.shelf/1".to_owned(),
+        attributes: relation::ShapeAttributes {
+            name: Some("shelved-on".to_owned()),
+            cost: None,
+        },
+    });
+    relation::withdraw("dev.example.gone");
+    ono_spatial_core::types::contribute(
+        "dev.example.shelves.shelf/1",
+        "Shelf",
+        "shelf",
+        &["serial"],
+        "dev.example.shelves",
+        &[],
+        None,
+    );
+    relation::settle();
+    assert!(
+        relation::spec("dev.example.gone.process_to_shelf").is_none(),
+        "the withdrawn package's relation is not registered"
+    );
+    assert!(
+        relation::awaiting_from(SpatialType::Process, "shelved-on").is_none(),
+        "nor does it still wait"
+    );
+}
+
+#[test]
+fn should_register_a_relation_with_what_its_package_declares_after_it_was_withdrawn() {
+    // A reload withdraws the package's relations and contributes them again: the second
+    // declaration is the one that holds, not the first one the session saw.
+    let declare = |cost: CostClass| {
+        relation::shape_spec(
+            "dev.example.again",
+            "process",
+            "process",
+            SpatialType::Process,
+            SpatialType::Process,
+            &relation::ShapeAttributes {
+                name: Some("watches".to_owned()),
+                cost: Some(cost),
+            },
+        )
+    };
+    relation::contribute(declare(CostClass::Normal), "dev.example.again");
+    relation::withdraw("dev.example.again");
+    assert!(
+        relation::spec("dev.example.again.process_to_process").is_none(),
+        "a withdrawn package's relation is gone"
+    );
+    relation::contribute(declare(CostClass::Expensive), "dev.example.again");
+    assert_eq!(
+        relation::spec("dev.example.again.process_to_process").map(|spec| spec.cost_class),
+        Some(CostClass::Expensive),
+        "the relation carries the cost declared now"
+    );
+}

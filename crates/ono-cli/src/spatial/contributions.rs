@@ -152,11 +152,14 @@ pub fn awaiting_refusal(kind: SpatialType, word: &str) -> Option<ono_value::Erro
     )
 }
 
-/// Forgets a package's contributions when it is unloaded.
+/// Forgets a package's contributions — when it is unloaded, and before it is adopted again on a
+/// reload: the package is no longer asked for edges, and the relations it registered and the
+/// shapes it left waiting are withdrawn, so a reload registers what its manifest declares now.
 pub fn forget(id: &str) {
     if let Ok(mut registry) = contributors().lock() {
         registry.remove(id);
     }
+    ono_spatial_core::relation::withdraw(id);
 }
 
 /// Asks the contributing packages for the edges of the relations in `wanted`, and records the

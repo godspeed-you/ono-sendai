@@ -508,3 +508,52 @@ fn should_not_ask_the_package_for_an_expensive_relation_when_a_one_hop_map_is_dr
         "a one-hop map does not ask for the expensive relation, got {asked:?}"
     );
 }
+
+#[test]
+fn should_forget_a_waiting_relation_once_its_package_is_unloaded() {
+    // ADR-1008's waiting shape outlived the package that declared it: after `unload plugin` the
+    // relation still said what it waited for, and the moment another package contributed the
+    // kind, the unloaded package's relation would have been registered. An unloaded package
+    // contributes nothing (lifecycle.v1 `unload`), so the word means nothing here any more —
+    // `spatial.unsupported` is the answer for a relation that exists and waits (ADR-1008).
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[SHAPE, FOREIGN_SHAPE]);
+    let run = ono_with_plugins(
+        &home,
+        &at_the_place(&format!("unload plugin {ECHO} | count; follow racked-in")),
+    );
+    assert!(!run.status().is_success(), "there is nowhere to go");
+    let said = run.stderr();
+    assert!(
+        !said.contains("spatial.unsupported") && !said.contains("dev.example.racks.rack/1"),
+        "the unloaded package's waiting relation is gone: the word is refused as one nothing \
+         declares, not as a relation still waiting for its kind, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_follow_the_cost_a_reloaded_package_declares_now() {
+    // A reload replaces the package (spec §31.72), and with it what its manifest declares: the
+    // first declaration of a relation was kept for the rest of the session, so a package that
+    // changed `cost=` on reload went on being treated by the cost it had before (ADR-1006).
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[EXPENSIVE_SHAPE]);
+    let manifest = home.path().join("plugins").join(ECHO).join("manifest.yaml");
+    let run = ono_with_plugins(
+        &home,
+        &format!(
+            "load plugin {ECHO} --grant relation.write; \
+             sed -i 's/; cost=expensive//' {}; \
+             load plugin {ECHO} --grant relation.write; \
+             get echo-place | where uid == \"u-3\" | enter; look | to json",
+            manifest.display()
+        ),
+    );
+    run.assert_success();
+    let exit = &rows(&run)[0]["exits"]["sits-in"];
+    assert_eq!(
+        (exit["detail"].as_str(), exit["count"].as_i64()),
+        (None, Some(1)),
+        "the reloaded package declares the relation `normal`, so a default look reads it, got \
+         {exit:?}"
+    );
+}
