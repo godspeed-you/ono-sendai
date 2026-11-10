@@ -460,7 +460,8 @@ impl RelationSpec {
     /// `follow parent` and `follow children` are opposite directions of `process.parent_of`.
     #[must_use]
     pub fn group_for(&self, from: SpatialType, word: &str) -> Option<&'static str> {
-        if from.is_a(self.source) && (word == self.canonical_label || word == self.canonical_group)
+        if from.is_a(self.source)
+            && (word == self.canonical_label || word == self.canonical_group || word == self.id)
         {
             return Some(self.canonical_group);
         }
@@ -478,6 +479,12 @@ impl RelationSpec {
             if !words.contains(&group) {
                 words.push(group);
             }
+        }
+        // The id is the relation's identity and stays typeable from its source end, so a
+        // contributed relation that declares a shorter name keeps answering to the id it was
+        // followed by before (ADR-1006).
+        if from.is_a(self.source) && !words.contains(&self.id) {
+            words.push(self.id);
         }
         words.into_iter()
     }
@@ -805,11 +812,96 @@ pub fn spec(id: &str) -> Option<&'static RelationSpec> {
 /// v0.2 §31.7 gives a package's `contributions.relations` this spelling and nothing else, so a
 /// manifest entry that is not a pair is a declaration nobody can act on rather than one to be
 /// quietly dropped.
+///
+/// Whatever follows the first `;` is the shape's attributes ([`shape_attributes`]) and is not
+/// part of either end, so the id a shape registers under is the same with or without them.
 #[must_use]
 pub fn parse_shape(shape: &str) -> Option<(&str, &str)> {
-    let (from, to) = shape.split_once("->")?;
+    let head = shape.split_once(';').map_or(shape, |(head, _)| head);
+    let (from, to) = head.split_once("->")?;
     let (from, to) = (from.trim(), to.trim());
     (!from.is_empty() && !to.is_empty()).then_some((from, to))
+}
+
+/// What a shape declares about its relation beside the two ends (spec §31.26; ADR-1006).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShapeAttributes {
+    /// The relation's own word — §31.26's `name` — which `follow` takes and `look` prints at the
+    /// shape's source end. `None` where the shape declares none, and the id is the word.
+    pub name: Option<String>,
+    /// What answering the relation costs (§32.1). `None` where the shape declares none, and the
+    /// relation is [`CostClass::Normal`].
+    pub cost: Option<CostClass>,
+}
+
+/// The attributes a `<from>-><to>; name=<word>; cost=<class>` shape declares (ADR-1006).
+///
+/// v0.2 §31.7 writes a relation contribution as one string in the manifest, and §31.26 gives a
+/// relation a name; the attributes are written into that string after the ends, `;`-separated, so
+/// the manifest keeps the shape §31.7 gives it and a shape without attributes means what it always
+/// meant.
+///
+/// # Errors
+///
+/// A sentence naming the attribute that is not one of `name` and `cost`, is declared twice, or
+/// whose value is not a kebab-case word or a cost class.
+pub fn shape_attributes(shape: &str) -> Result<ShapeAttributes, String> {
+    let mut attributes = ShapeAttributes::default();
+    let Some((_, rest)) = shape.split_once(';') else {
+        return Ok(attributes);
+    };
+    for part in rest.split(';') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let Some((key, value)) = part.split_once('=') else {
+            return Err(format!(
+                "`{part}` is not an attribute: an attribute is written `name=<word>` or \
+                 `cost=<class>`"
+            ));
+        };
+        let (key, value) = (key.trim(), value.trim());
+        match key {
+            "name" if attributes.name.is_some() => {
+                return Err("the relation name is declared twice".to_owned());
+            }
+            "name" => {
+                let word = value.starts_with(|c: char| c.is_ascii_lowercase())
+                    && value
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+                if !word {
+                    return Err(format!(
+                        "the relation name `{value}` is not a word: a name is what `follow` \
+                         takes, one kebab-case word such as `sits-in`"
+                    ));
+                }
+                attributes.name = Some(value.to_owned());
+            }
+            "cost" if attributes.cost.is_some() => {
+                return Err("the relation cost is declared twice".to_owned());
+            }
+            "cost" => {
+                attributes.cost = Some(CostClass::from_name(value).ok_or_else(|| {
+                    format!(
+                        "the relation cost `{value}` is not a cost class: the classes are {}",
+                        CostClass::ALL
+                            .iter()
+                            .map(|class| class.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })?);
+            }
+            other => {
+                return Err(format!(
+                    "`{other}` is not a relation attribute: a shape declares `name` and `cost`"
+                ));
+            }
+        }
+    }
+    Ok(attributes)
 }
 
 /// Whether a shape endpoint names a kind of place, reading only what is on disk (§3.3, §36.1).

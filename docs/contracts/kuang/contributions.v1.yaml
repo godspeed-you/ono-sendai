@@ -259,10 +259,17 @@ relation:
   # the rest of the rule: the id, the labels, the confidence, the cost and the origin.
   manifest_shape:
     manifest_field: contributions.relations
-    document: "[\"<from>-><to>\", …]"
+    document: "[\"<from>-><to>[; name=<word>][; cost=<class>]\", …]"
     read_without_running: true
     endpoint: "a declared spatial type, in any case, or a schema id one of `contributions.targets` declares"
-    registered_as: "`<package.id>.<from>_to_<to>`, a schema id contributing its local name"
+    registered_as: "`<package.id>.<from>_to_<to>`, a schema id contributing its local name; the attributes never change the id"
+    # §31.26 gives a relation a `name`, and v0.4 §32.1 a cost class. Both are written into the
+    # shape string after its ends, `;`-separated, so a shape without them means what it always
+    # meant and the manifest field keeps the one shape v0.2 §31.7 gives it (ADR-1006).
+    attributes:
+      name: {type: string, nullable: true, doc: "The relation's own word, one kebab-case word such as `sits-in` or `scheduled-on` (spec §31.26's `name`). `follow` takes it and `look`/`near` print it at the shape's source end; the id stays typeable beside it. Absent: the id is the word, as before."}
+      cost: {type: "enum<cheap|normal|expensive|privileged|remote>", nullable: true, doc: "What answering the relation costs (v0.4 §32.1, `docs/contracts/spatial/spatial.yaml` → `cost_classes`). A default `look` or `map` asks the package for a relation beyond `normal` only when the caller asks for it — `--all`, `near --type`, or `follow` by name — and shows it as `available on request` otherwise. Absent: `normal`."}
+    attribute_refused_at: "load, as `package.invalid` naming the shape: an attribute that is not `name` or `cost`, one declared twice, a name that is not a kebab-case word, or a cost that is not a class"
     refused_at: "load, as `package.invalid` (spec §31.22's registration checks, §31.7)"
     capability: "relation.write, never granted by default (v0.4 §35.5)"
   declaration:

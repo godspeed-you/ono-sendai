@@ -80,26 +80,32 @@ pub fn adopt(id: &str, plugin: &Arc<LoadedPlugin>, shapes: &[String]) {
             continue;
         };
         let relation = ono_spatial_core::relation::contributed_id(id, from, to);
+        // Checked at load by [`check_shapes`]; a shape that got this far declares them well.
+        let attributes = ono_spatial_core::relation::shape_attributes(shape).unwrap_or_default();
         if let Some(allowed) = &allowed
             && !allowed.iter().any(|name| name == &relation || name == "*")
         {
             continue;
         }
         let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
+        // §31.26's `name` is the word `follow` takes and `look` prints at the source end; a shape
+        // that declares none is called by its id, as it always was (ADR-1006).
+        let word = attributes.name.unwrap_or_else(|| relation.clone());
         ono_spatial_core::relation::contribute(
             RelationSpec {
                 id: leak(relation.clone()),
                 source,
                 target,
                 direction: Direction::Outbound,
-                canonical_label: leak(relation.clone()),
+                canonical_label: leak(word.clone()),
                 inverse_label: leak(format!("{relation}.inverse")),
-                canonical_group: leak(relation.clone()),
+                canonical_group: leak(word),
                 inverse_group: leak(format!("{relation}.inverse")),
                 // §36.2: a contributed edge may say how sure the package is, and the host never
                 // raises it — the host did not observe the edge.
                 confidence: ConfidenceClaim::ProviderDeclared,
-                cost_class: CostClass::Normal,
+                // §32.1: what answering the relation costs, as the package declared it (ADR-1006).
+                cost_class: attributes.cost.unwrap_or(CostClass::Normal),
             },
             id,
         );
@@ -306,8 +312,18 @@ pub fn check_shapes(
     shapes: &[String],
     package_schemas: &[String],
 ) -> Result<(), ono_value::ErrorValue> {
-    use ono_spatial_core::relation::{parse_shape, shape_endpoint_is_known};
+    use ono_spatial_core::relation::{parse_shape, shape_attributes, shape_endpoint_is_known};
     for shape in shapes {
+        if let Err(problem) = shape_attributes(shape) {
+            return Err(ono_value::ErrorValue::new(
+                ono_core::ErrorCode::KuangPackageInvalid,
+                format!("`{package}` declares the relation shape `{shape}`, and {problem}"),
+            )
+            .with_help(
+                "a shape is `<from>-><to>`, optionally followed by `; name=<word>` and \
+                 `; cost=<cheap|normal|expensive|privileged|remote>` (spec §31.26, v0.4 §32.1)",
+            ));
+        }
         let Some((from, to)) = parse_shape(shape) else {
             return Err(ono_value::ErrorValue::new(
                 ono_core::ErrorCode::KuangPackageInvalid,

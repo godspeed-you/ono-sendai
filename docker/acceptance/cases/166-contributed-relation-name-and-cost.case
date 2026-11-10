@@ -1,0 +1,105 @@
+# #224 parts (2) and (3) in the container: a contributed relation shape declares its own word and
+# its cost. Spec §31.26 (a relation's `name`), v0.2 §31.7 (the shape), v0.4 §6.4 (`follow`), §24.2
+# (the word a place shows is a word a user can type), §32.1 (a default `look` avoids an expensive
+# relation). ADR-1006.
+#
+# The package is the conformance fixture the container ships, declaring two kinds of place and the
+# shape between them with `name=sits-in` and `cost=expensive`. Its relation command asserts that
+# the resource `ledger` sits in the zone `west`.
+case: a contributed relation is followed by its declared name and keeps its declared cost
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  package="$home/plugins/dev.example.echo"
+  mkdir -p "$package/runtime" "$package/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$package/runtime/echo"
+  write_manifest() {
+    cat > "$package/manifest.yaml" <<MANIFEST
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Answers for a few resources and the zones they sit in.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - relation.write
+  contributions:
+    targets: [contributions/targets.yaml]
+    relations: ["$1"]
+  network:
+    outbound: none
+  MANIFEST
+  }
+  cat > "$package/contributions/targets.yaml" <<'TARGETS'
+  targets:
+    - name: echo-place
+      schema: dev.example.echo.place/1
+      summary: Resources the example package answers for.
+      identity_doc: Two observations are the same resource when their `uid` matches.
+    - name: echo-zone
+      schema: dev.example.echo.zone/1
+      summary: Zones the resources sit in.
+      identity_doc: Two observations are the same zone when their `uid` matches.
+  TARGETS
+  at_ledger='load plugin dev.example.echo --grant relation.write; get echo-place | where uid == "u-3" | enter'
+
+  echo "== §31.26, §6.4: the declared name is the word =="
+  write_manifest "dev.example.echo.place/1->dev.example.echo.zone/1; name=sits-in"
+  prove 166-a "\`follow sits-in\` arrives at the zone the package named" \
+    'ono -c "$at_ledger; follow sits-in; look --json" | tail -1 | grep -q "\"uid\":\"z-1\""'
+  prove 166-b "\`near\` shows the exit by its declared name" \
+    'ono -c "$at_ledger; near | to json" | tail -1 | grep -q "\"relation\":\"sits-in\""'
+  prove 166-c "the id still follows the same relation" \
+    'ono -c "$at_ledger; follow dev.example.echo.place_to_zone; look --json" | tail -1 | grep -q "\"uid\":\"z-1\""'
+
+  echo "== §32.1: a relation declared expensive is left on request by a default look =="
+  write_manifest "dev.example.echo.place/1->dev.example.echo.zone/1; name=sits-in; cost=expensive"
+  prove 166-d "a default \`look\` shows the exit as available on request" \
+    'ono -c "$at_ledger; look --json" | tail -1 | grep -q "available on request"'
+  prove 166-e "\`follow sits-in\` asks for it and arrives" \
+    'ono -c "$at_ledger; follow sits-in; look --json" | tail -1 | grep -q "\"uid\":\"z-1\""'
+
+  echo "== §31.22: an attribute nobody can use is refused at load =="
+  write_manifest "dev.example.echo.place/1->dev.example.echo.zone/1; cost=pricey"
+  prove 166-f "a cost outside §32.1's classes is \`package.invalid\`" \
+    'ono -c "load plugin dev.example.echo" 2>&1 | grep -q "the relation cost \`pricey\` is not a cost class"'
+
+  echo "contributed relation checks done"
+exit: 0
+stdout-contains: PROVED 166-a
+stdout-contains: PROVED 166-b
+stdout-contains: PROVED 166-c
+stdout-contains: PROVED 166-d
+stdout-contains: PROVED 166-e
+stdout-contains: PROVED 166-f
+stdout-contains: contributed relation checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

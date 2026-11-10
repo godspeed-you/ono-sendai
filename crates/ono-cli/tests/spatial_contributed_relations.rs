@@ -226,3 +226,128 @@ fn should_refuse_a_relation_shape_whose_endpoint_nobody_contributes() {
         "the refusal names the shape it came from, got {said:?}"
     );
 }
+
+/// The same shape, with the word spec §31.26 gives a relation declared beside it.
+const NAMED_SHAPE: &str = "dev.example.echo.place/1->dev.example.echo.zone/1; name=sits-in";
+
+#[test]
+fn should_follow_a_contributed_relation_by_the_name_its_shape_declares() {
+    // Spec §31.26: a relation has a `name` — `opens`, `emits`, `reaches`. #224 (2): without one a
+    // user typed `follow dev.example.echo.place_to_zone`. A shape that declares its name is
+    // followed by that word, and arrives where the long id arrived.
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[NAMED_SHAPE]);
+    let run = ono_with_plugins(&home, &at_the_place("follow sits-in; look | to json"));
+    run.assert_success();
+    let place = &rows(&run)[0]["place"];
+    assert_eq!(
+        place["identity"]["uid"].as_str(),
+        Some("z-1"),
+        "the declared word traverses the relation to the zone, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_show_the_declared_name_of_a_contributed_relation_among_the_exits() {
+    // §24.2: the word a place shows is a word a user can type, so the exit carries the name.
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[NAMED_SHAPE]);
+    let run = ono_with_plugins(&home, &at_the_place("near | to json"));
+    run.assert_success();
+    let found = rows(&run);
+    assert!(
+        found
+            .iter()
+            .any(|row| row["relation"].as_str() == Some("sits-in")),
+        "the exit is shown by its declared name, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_still_follow_a_named_contributed_relation_by_its_id() {
+    // The id is the relation's identity, and a script written before the name was declared keeps
+    // working: the name is a second word for the relation, never a rename of it.
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[NAMED_SHAPE]);
+    let run = ono_with_plugins(
+        &home,
+        &at_the_place(&format!("follow {RELATION}; look | to json")),
+    );
+    run.assert_success();
+    assert_eq!(
+        rows(&run)[0]["place"]["identity"]["uid"].as_str(),
+        Some("z-1"),
+        "the id still traverses the relation, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_a_relation_name_that_is_not_a_word() {
+    // A name is typed after `follow`, so it is one kebab-case word; anything else is a
+    // declaration nobody can use, refused at load with the shape named (§31.22's registration
+    // checks).
+    let shape = "dev.example.echo.place/1->dev.example.echo.zone/1; name=Sits In";
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[shape]);
+    let run = ono_with_plugins(&home, &format!("load plugin {ECHO}"));
+    assert!(
+        !run.status().is_success(),
+        "a name that is not a word does not load, got {:?}",
+        run.output()
+    );
+    assert!(
+        run.output().contains("package.invalid")
+            && run.output().contains("the relation name `Sits In`"),
+        "the refusal is `package.invalid` and names what was declared, got {:?}",
+        run.output()
+    );
+}
+
+/// The named shape, declared `expensive` (v0.4 §32.1).
+const EXPENSIVE_SHAPE: &str =
+    "dev.example.echo.place/1->dev.example.echo.zone/1; name=sits-in; cost=expensive";
+
+#[test]
+fn should_leave_an_expensive_contributed_relation_on_request_in_a_default_look() {
+    // v0.4 §32.1: "Default `look` and `map` MUST avoid expensive relationships unless cached or
+    // already available." #224 (3): a contributed relation was always `normal`, so a package
+    // whose edges cost a cluster-wide scan had no way to say so. Declared `expensive`, the exit is
+    // shown and left for the caller to ask for.
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[EXPENSIVE_SHAPE]);
+    let run = ono_with_plugins(&home, &at_the_place("look | to json"));
+    run.assert_success();
+    let exit = &rows(&run)[0]["exits"]["sits-in"];
+    assert_eq!(
+        exit["detail"].as_str(),
+        Some("available on request"),
+        "the expensive exit is not read by a default look, got {exit:?}"
+    );
+}
+
+#[test]
+fn should_read_an_expensive_contributed_relation_when_it_is_asked_for() {
+    // The same exit is one word away: naming it is asking for it (§6.4, §32.1).
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[EXPENSIVE_SHAPE]);
+    let run = ono_with_plugins(&home, &at_the_place("follow sits-in; look | to json"));
+    run.assert_success();
+    assert_eq!(
+        rows(&run)[0]["place"]["identity"]["uid"].as_str(),
+        Some("z-1"),
+        "following the expensive relation asks for it, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_a_relation_cost_that_is_not_a_cost_class() {
+    let shape = "dev.example.echo.place/1->dev.example.echo.zone/1; cost=pricey";
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[shape]);
+    let run = ono_with_plugins(&home, &format!("load plugin {ECHO}"));
+    assert!(
+        !run.status().is_success()
+            && run
+                .output()
+                .contains("the relation cost `pricey` is not a cost class"),
+        "a cost outside §32.1's classes does not load, got {:?}",
+        run.output()
+    );
+}
