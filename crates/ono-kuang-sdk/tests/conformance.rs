@@ -2944,6 +2944,93 @@ async fn should_refuse_a_view_that_names_no_invocation_while_several_are_open() 
         .await;
 }
 
+#[tokio::test]
+async fn should_name_the_sdk_upgrade_when_a_view_names_no_invocation_while_several_are_open() {
+    // v0.6.5 review R-F6: only the 0.6.5 SDK names the invocation a view belongs to, and since
+    // jobs share instances (ADR-0995) and invocations wait for slots (ADR-1027) several open
+    // invocations are ordinary. A package built before cannot be told apart from a wrong one by
+    // the host, so the refusal says what makes it work: the SDK that names the owner, or a
+    // ceiling of one, under which the host keeps a single invocation open (ADR-1028).
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    let holder = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("count", json!(1))]),
+        )
+        .await
+        .expect("the first invocation starts");
+    wait_until(|| views.is_open(0), "the first view").await;
+    let (_, result) = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("invocation", json!(null))]),
+        )
+        .await
+        .expect("starts")
+        .collect()
+        .await;
+    let error = result.error.expect("a structured refusal");
+    assert_eq!(error.name, "view.protocol_error");
+    let said = format!("{} {}", error.message, error.help.unwrap_or_default());
+    assert!(
+        said.contains("ono-kuang-sdk 0.6.5"),
+        "the refusal names the SDK that names a view's invocation: {said}"
+    );
+    assert!(
+        said.contains("max_concurrent_invocations: 1"),
+        "and the ceiling under which an older package's views stay unambiguous: {said}"
+    );
+    views.press_on(0, "q");
+    let (_, result) = holder.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_give_an_unnamed_view_its_invocation_when_another_waits_at_a_ceiling_of_one() {
+    // The way an older package keeps its views (ADR-1028): with `max_concurrent_invocations: 1`
+    // the host never has a second invocation open beside it (ADR-1027), so a view that names no
+    // invocation has exactly one owner even while another invocation waits for the slot.
+    let views = ono_kuang_testhost::RecordingViews::terminal();
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest_with_concurrency(1)))
+        .views(views.clone())
+        .grant(Capability::UiView)
+        .load()
+        .await
+        .expect("loads");
+    let viewer = plugin
+        .invoke(
+            "dev.example.echo.command.browse",
+            args(&[("invocation", json!(null))]),
+        )
+        .await
+        .expect("starts");
+    let waiting = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("accepted to wait for the slot");
+    let (events, result) = viewer.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(strings(&events), ["opened"]);
+    let (values, result) = waiting.collect().await;
+    assert_eq!(result.status, InvokeStatus::Completed, "{:?}", result.error);
+    assert_eq!(values_of(&values), vec![Value::Int(1), Value::Int(2)]);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
 // --- one channel carries the whole answer (issue #154, ADR-0992) -----------------------------
 
 /// Everything a consumer that reads only the stream learns: the events up to its end, and never

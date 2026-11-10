@@ -397,7 +397,10 @@ host_calls:
       A view belongs to exactly one invocation, as every handle does: the host closes it when
       that invocation ends, however it ends, and never when another one does. A named invocation
       that is not open, or no name while several are open, is `view.protocol_error` — the host
-      will not guess whose terminal it is (ADR-0991).
+      will not guess whose terminal it is (ADR-0991). The refusal of a nameless open names the
+      way out for a package built before the name existed: the 0.6.5 SDK, which names it, or a
+      manifest ceiling of one, under which the host never has a second invocation open beside it
+      (ADR-1028).
 
   - id: views.submit
     domain: views

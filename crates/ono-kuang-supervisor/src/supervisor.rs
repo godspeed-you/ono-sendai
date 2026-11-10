@@ -5160,18 +5160,24 @@ impl Actor {
                     self.invocations.len()
                 ),
             };
-            self.reply_err(
-                seq,
-                KuangError::new(
-                    KuangErrorCode::ViewProtocolError,
-                    format!(
-                        "a view belongs to the invocation that opens it, and this one has none: \
-                         {why}"
-                    ),
-                )
-                .into(),
-            )
-            .await;
+            let mut refusal = KuangError::new(
+                KuangErrorCode::ViewProtocolError,
+                format!(
+                    "a view belongs to the invocation that opens it, and this one has none: {why}"
+                ),
+            );
+            // Only a package built before the owner was named sends none, and the host cannot
+            // guess whose terminal it would hand out; it says what makes the package work again
+            // (ADR-1028).
+            if open.invocation.is_none() {
+                refusal = refusal.with_help(
+                    "a package built with ono-kuang-sdk 0.6.5 or later names the invocation its \
+                     view belongs to; rebuild it with that SDK, or declare \
+                     `runtime.max_concurrent_invocations: 1` in its manifest so the host keeps \
+                     one invocation open at a time and the view's owner is never in doubt",
+                );
+            }
+            self.reply_err(seq, refusal.into()).await;
             return Ok(());
         };
         let Some(contribution) = self
