@@ -197,6 +197,164 @@ fn package_history_policy() -> ono_history::Policy {
         .max_entries(PACKAGE_HISTORY_ENTRIES)
 }
 
+/// A relation key as the spatial layer finds a place by it: an integer's digits, or the text.
+fn key_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.to_string()),
+        other => other.as_int().ok().map(|number| number.to_string()),
+    }
+}
+
+impl ShellHost {
+    /// The object of kind `kind` the canonical provider answers for under `key`, if any.
+    async fn object_by_key(
+        &self,
+        kind: ono_spatial_core::SpatialType,
+        key: &str,
+    ) -> Option<ObjectId> {
+        let (target, field) = crate::spatial::relations::target_of(kind)?;
+        let value = key
+            .parse::<i64>()
+            .map_or_else(|_| Value::string(key), |number| Value::Int(number.into()));
+        let query = Query::target(target).with(Selector::field(field, value.clone()));
+        let collected = self.registry.snapshot(&query).ok()?.collect().await;
+        collected.values().iter().find_map(|found| match found {
+            Value::Record(record) if record.get(field) == Some(&value) => ObjectId::of(record),
+            _ => None,
+        })
+    }
+
+    /// One edge of a `relations.contribute` call, held to `ono.graph-edge/1` and to the
+    /// relations `package` declared, or the reason it is refused (spec §31.26, ADR-1014).
+    fn pushed_edge(
+        &self,
+        package: &str,
+        edge: &Json,
+    ) -> Result<crate::spatial::contributions::Pushed, HostError> {
+        let Some(fields) = edge.as_object() else {
+            return Err(schema_violation(
+                "an edge is an `ono.graph-edge/1` record `{from, to, relation, confidence}`",
+            ));
+        };
+        for name in fields.keys() {
+            match name.as_str() {
+                "from" | "to" | "relation" | "direction" | "confidence" | "metadata" => {}
+                "provider" => {
+                    return Err(schema_violation(
+                        "an edge's `provider` is set by the host to the package that contributes \
+                         it, and cannot be supplied (spec §31.26, §31.80)",
+                    ));
+                }
+                other => {
+                    return Err(schema_violation(format!(
+                        "`{other}` is not a field of `ono.graph-edge/1`"
+                    )));
+                }
+            }
+        }
+        let relation_id = fields
+            .get("relation")
+            .and_then(Json::as_str)
+            .ok_or_else(|| schema_violation("an edge names its `relation`"))?;
+        let relation = crate::spatial::contributions::relation_of(package, relation_id)
+            .ok_or_else(|| {
+                schema_violation(format!(
+                    "`{relation_id}` is not a relation `{package}` contributes: a package's edges \
+                     run along the relations its manifest declares in `contributions.relations` \
+                     (spec §31.7, ADR-1014)"
+                ))
+            })?;
+        match fields.get("direction").map(|value| value.as_str()) {
+            None | Some(Some("directed")) => {}
+            Some(Some("undirected")) => {
+                return Err(schema_violation(format!(
+                    "`{relation_id}` runs one way, from its source to its target"
+                )));
+            }
+            Some(_) => {
+                return Err(schema_violation(
+                    "an edge's `direction` is `directed` or `undirected`",
+                ));
+            }
+        }
+        let claimed = match fields.get("confidence").and_then(Json::as_str) {
+            Some("exact") => ono_spatial_core::Confidence::Exact,
+            Some("inferred") => ono_spatial_core::Confidence::Inferred,
+            _ => {
+                return Err(schema_violation(
+                    "an edge states its `confidence`, `exact` or `inferred` — required, never \
+                     defaulted (spec §22.2)",
+                ));
+            }
+        };
+        let metadata = match fields.get("metadata") {
+            None | Some(Json::Null) => serde_json::Map::new(),
+            Some(Json::Object(metadata)) => metadata.clone(),
+            Some(_) => return Err(schema_violation("an edge's `metadata` is a record")),
+        };
+        Ok(crate::spatial::contributions::Pushed {
+            relation,
+            source_key: self.end_key(fields.get("from"), "from", relation, relation.source)?,
+            target_key: self.end_key(fields.get("to"), "to", relation, relation.target)?,
+            confidence: crate::spatial::contributions::held_below_exact(claimed),
+            metadata,
+        })
+    }
+
+    /// The key one end of a contributed edge is found by: the end is an object id of the kind of
+    /// place the relation runs between, carrying the identity field that kind is found by.
+    fn end_key(
+        &self,
+        end: Option<&Json>,
+        side: &str,
+        relation: &ono_spatial_core::relation::RelationSpec,
+        kind: ono_spatial_core::SpatialType,
+    ) -> Result<String, HostError> {
+        let schema_text = end
+            .and_then(|end| end.get("schema"))
+            .and_then(Json::as_str)
+            .ok_or_else(|| {
+                schema_violation(format!(
+                    "an edge's `{side}` is an object id that names its `schema`"
+                ))
+            })?;
+        let schema: SchemaId = schema_text
+            .parse()
+            .map_err(|_| schema_violation(format!("`{schema_text}` is not a schema id")))?;
+        let (target, field) = crate::spatial::relations::target_of(kind).ok_or_else(|| {
+            schema_violation(format!(
+                "`{}` leads to a kind of place no target answers for",
+                relation.id
+            ))
+        })?;
+        if self.target_of(&schema).as_deref() != Some(target) {
+            return Err(schema_violation(format!(
+                "an edge's `{side}` is a `{schema}`, and `{}` runs between places that `{target}` \
+                 answers for",
+                relation.id
+            )));
+        }
+        let end = end.unwrap_or(&Json::Null);
+        let value = end.get(field).cloned().or_else(|| {
+            let position = builtin_schemas()
+                .get(&schema)?
+                .identity()
+                .iter()
+                .position(|name| name.as_ref() == field)?;
+            end.get("values")?.as_array()?.get(position).cloned()
+        });
+        value
+            .and_then(|value| from_json(&value, builtin_schemas()).ok())
+            .as_ref()
+            .and_then(key_text)
+            .ok_or_else(|| {
+                schema_violation(format!(
+                    "an edge's `{side}` names the `{field}` its `{schema}` is found by"
+                ))
+            })
+    }
+}
+
 /// An `ErrorValue` as the wire carries it.
 fn host_error(error: &ErrorValue) -> HostError {
     HostError {
@@ -511,15 +669,69 @@ impl HostServices for ShellHost {
                 }));
             }
         }
+        // The edges packages contributed from this object, read from the one store `map` and
+        // `follow` read too (ADR-1014). The host never observed them, so none is exact, and
+        // one whose far end nothing answers to is no edge (§36.2).
+        for (package, pushed) in crate::spatial::contributions::pushed_edges() {
+            if relations
+                .as_ref()
+                .is_some_and(|wanted| !wanted.iter().any(|name| name == pushed.relation.id))
+            {
+                continue;
+            }
+            let starts_here = crate::spatial::relations::target_of(pushed.relation.source)
+                .filter(|(answering, _)| *answering == target)
+                .and_then(|(_, field)| record.get(field))
+                .and_then(key_text)
+                .is_some_and(|key| key == pushed.source_key);
+            if !starts_here {
+                continue;
+            }
+            let Some(far) = self
+                .object_by_key(pushed.relation.target, &pushed.target_key)
+                .await
+            else {
+                continue;
+            };
+            if to.as_ref().is_some_and(|to| far != *to) {
+                continue;
+            }
+            edges.push(json!({
+                "from": object_id_json(&from),
+                "to": object_id_json(&far),
+                "relation": pushed.relation.id,
+                "direction": "directed",
+                "confidence": match pushed.confidence {
+                    ono_spatial_core::Confidence::Exact => "exact",
+                    _ => "inferred",
+                },
+                "provider": package,
+                "metadata": Json::Object(pushed.metadata),
+            }));
+        }
         Ok(ready_stream(edges))
     }
 
     async fn relations_contribute(
         &self,
-        _package: &str,
-        _edges: Vec<Json>,
+        package: &str,
+        edges: Vec<Json>,
     ) -> Result<u64, HostError> {
-        Err(HostError::unavailable("store for contributed relations"))
+        // All or none: one edge outside the contract refuses the call, and nothing of it is kept.
+        let mut accepted = Vec::with_capacity(edges.len());
+        for edge in &edges {
+            accepted.push(self.pushed_edge(package, edge)?);
+        }
+        let bound = crate::spatial::contributions::PUSHED_EDGES;
+        crate::spatial::contributions::keep(package, accepted)
+            .map(|count| u64::try_from(count).unwrap_or(u64::MAX))
+            .map_err(|held| HostError {
+                code: ono_core::ErrorCode::ResourceItemLimit,
+                message: format!(
+                    "`{package}` would hold {held} contributed edges, and a package holds at most \
+                     {bound} in a session; nothing of this call was kept (ADR-1014)"
+                ),
+            })
     }
 
     async fn history_query(

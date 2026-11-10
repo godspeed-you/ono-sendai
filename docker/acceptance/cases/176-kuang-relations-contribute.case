@@ -1,0 +1,76 @@
+# Spec §31.26 and v0.4 §36.1/§36.2, issue #203, ADR-1014: a package may add graph edges along the
+# relation its manifest declares, and the host keeps them in the spatial layer's contributed
+# registry for the session. `look` counts the edge, `follow` walks it, and `relations.query` hands
+# it back with the package as its `provider` and `inferred` as its confidence — the host observed
+# nothing, so even a package's `exact` is not passed on. An edge naming its own provider is
+# refused whole, and an unloaded package's edges leave with it.
+case: a package's contributed edge is followed, attributed and never exact
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit, and knows one relation.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  contributions:
+    relations: ["process->process; name=feeds"]
+  capabilities:
+    optional:
+      - relation.write
+      - relation.read
+      - object.read
+  network:
+    outbound: none
+  MANIFEST
+  sleep 120 & from=$!
+  tail -f /dev/null & to=$!
+
+  echo "== the edge is accepted, counted at its source, and followed to its target =="
+  ono -c "load plugin dev.example.echo; echo:relate --from $from --to $to | to json; enter process $from; follow feeds; look --json" > "$home/follow.out"
+  grep -q 'contributed 1' "$home/follow.out" && echo "edge-accepted"
+  grep -q "\"pid\":$to" "$home/follow.out" && echo "edge-followed"
+
+  echo "== relations.query hands it back attributed to the package, and inferred though it claimed exact =="
+  ono -c "grant capability object.read --plugin dev.example.echo | count; grant capability relation.read --plugin dev.example.echo | count; load plugin dev.example.echo; echo:relate --from $from --to $to --confidence exact --query true | to json" > "$home/query.out"
+  grep -q '\\"provider\\":\\"dev.example.echo\\"' "$home/query.out" && echo "edge-attributed"
+  grep -q '\\"confidence\\":\\"inferred\\"' "$home/query.out" && ! grep -q '\\"confidence\\":\\"exact\\"' "$home/query.out" && echo "edge-never-exact"
+
+  echo "== an edge naming its own provider is refused, and nothing of it can be followed =="
+  ono -c "load plugin dev.example.echo; try { echo:relate --edges '[{\"from\": {\"schema\": \"ono.process/1\", \"pid\": $from}, \"to\": {\"schema\": \"ono.process/1\", \"pid\": $to}, \"relation\": \"dev.example.echo.process_to_process\", \"confidence\": \"exact\", \"provider\": \"linux.procfs\"}]' } catch e { \$e | select name | to json }; enter process $from; try { follow feeds } catch e { \$e | select name | to json }; look --json" > "$home/forged.out"
+  grep -q 'runtime.schema_violation' "$home/forged.out" && echo "forged-provider-refused"
+  grep -q "\"pid\":$from" "$home/forged.out" && ! grep -q "\"pid\":$to" "$home/forged.out" && echo "forged-edge-not-kept"
+
+  echo "== an unloaded package's edges leave with it =="
+  ono -c "load plugin dev.example.echo; echo:relate --from $from --to $to | count; unload plugin dev.example.echo | count; enter process $from; try { follow feeds } catch e { \$e | select name | to json }; look --json" > "$home/unloaded.out"
+  grep -q "\"pid\":$from" "$home/unloaded.out" && ! grep -q "\"pid\":$to" "$home/unloaded.out" && echo "edges-withdrawn-on-unload"
+  kill "$from" "$to"
+exit: 0
+stdout-contains: edge-accepted
+stdout-contains: edge-followed
+stdout-contains: edge-attributed
+stdout-contains: edge-never-exact
+stdout-contains: forged-provider-refused
+stdout-contains: forged-edge-not-kept
+stdout-contains: edges-withdrawn-on-unload
+stdout-not-contains: panicked
