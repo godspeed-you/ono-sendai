@@ -523,6 +523,9 @@ impl Supervisor {
             next_handle: 1,
             invocation_counter: 0,
             invocations: HashMap::new(),
+            waiting: std::collections::VecDeque::new(),
+            endings: 0,
+            slot_wait: Duration::from_millis(limits.slot_wait_ms),
             frame_limits,
             shutting_down: false,
             schemas,
@@ -1440,17 +1443,51 @@ enum ActorMsg {
     ForceCloseView {
         view: u64,
     },
+    /// The wait of the invocation writing to `output` for a slot may be over (ADR-1027).
+    SlotWaitExpired {
+        output: u64,
+    },
 }
 
 enum Pending {
     Invocation {
-        result: oneshot::Sender<InvokeResult>,
-        output: u64,
-        invocation: u64,
+        admission: Admission,
+        /// How many invocations had ended when this one was sent.
+        endings_at_send: u64,
     },
     Probe(oneshot::Sender<Result<ProbeResult, WireError>>),
     Shutdown(oneshot::Sender<()>),
     FireAndForget,
+}
+
+/// An invocation as the host asks for it: enough to ask again when the instance had no room for
+/// it (ADR-1027).
+struct Admission {
+    method: &'static str,
+    params: Json,
+    label: String,
+    output: u64,
+    invocation: u64,
+    result: oneshot::Sender<InvokeResult>,
+    /// When the wait for a slot ends in a refusal.
+    deadline: tokio::time::Instant,
+}
+
+/// Why an invocation could not be sent.
+enum Undispatched {
+    /// The instance is in no state to run it; nothing was sent.
+    NotLoadable(Admission, WireError),
+    /// The pipe broke; the instance has already been failed, and the invocation with it.
+    Transport(KuangError),
+}
+
+/// Whether an invocation's answer is the package saying it has no room for it (ADR-0586 §3).
+fn refused_for_room(outcome: &InvokeResult) -> bool {
+    outcome.status == InvokeStatus::Failed
+        && outcome
+            .error
+            .as_ref()
+            .is_some_and(|error| error.name == KuangErrorCode::RuntimeConcurrencyLimit.name())
 }
 
 struct OutStream {
@@ -1672,6 +1709,14 @@ struct Actor {
     next_handle: u64,
     invocation_counter: u64,
     invocations: HashMap<u64, String>,
+    /// Invocations waiting for a slot, oldest first: beyond the negotiated ceiling, or refused by
+    /// the package for a ceiling of its own while another invocation was open (ADR-1027).
+    waiting: std::collections::VecDeque<Admission>,
+    /// How many invocations have ended, so a refusal can tell whether a slot came free between
+    /// the asking and the answer.
+    endings: u64,
+    /// How long an invocation waits for a slot before it is refused (ADR-1027).
+    slot_wait: Duration,
     frame_limits: FrameLimits,
     shutting_down: bool,
     schemas: SchemaRegistry,
@@ -2018,6 +2063,12 @@ impl Actor {
     }
 
     fn close_everything(&mut self, error: &KuangError) {
+        for admission in self.waiting.drain(..) {
+            let _ = admission.result.send(InvokeResult {
+                status: InvokeStatus::Failed,
+                error: Some(error.into()),
+            });
+        }
         for (_, stream) in self.streams.drain() {
             let _ = stream.tx.send(StreamEvent::Failed(error.into()));
         }
@@ -2026,8 +2077,8 @@ impl Actor {
         }
         for (_, pending) in self.pending.drain() {
             match pending {
-                Pending::Invocation { result, .. } => {
-                    let _ = result.send(InvokeResult {
+                Pending::Invocation { admission, .. } => {
+                    let _ = admission.result.send(InvokeResult {
                         status: InvokeStatus::Failed,
                         error: Some(error.into()),
                     });
@@ -2114,7 +2165,32 @@ impl Actor {
                 }
                 LoopStep::Continue
             }
+            ActorMsg::SlotWaitExpired { output } => {
+                if let Some(position) = self.waiting.iter().position(|waiting| {
+                    waiting.output == output && tokio::time::Instant::now() >= waiting.deadline
+                }) && let Some(admission) = self.waiting.remove(position)
+                {
+                    let refusal = self.slot_refusal(&admission.label);
+                    self.refuse_admission(admission, refusal);
+                }
+                LoopStep::Continue
+            }
             ActorMsg::CancelStream { handle } => {
+                // An invocation still waiting for a slot has not reached the package: it ends
+                // here, as the cancellation it was asked for, and nothing of it ever runs.
+                if let Some(position) = self
+                    .waiting
+                    .iter()
+                    .position(|waiting| waiting.output == handle)
+                    && let Some(admission) = self.waiting.remove(position)
+                {
+                    self.streams.remove(&handle);
+                    let _ = admission.result.send(InvokeResult {
+                        status: InvokeStatus::Cancelled,
+                        error: None,
+                    });
+                    return LoopStep::Continue;
+                }
                 if let Some(stream) = self.streams.get_mut(&handle) {
                     stream.cancelled = true;
                     stream.cancel_requested = true;
@@ -2326,16 +2402,6 @@ impl Actor {
                 return Err(error.into());
             }
         }
-        {
-            let mut shared = lock(&self.shared);
-            if shared.lifecycle.begin_invocation().is_err() {
-                return Err(KuangError::new(
-                    KuangErrorCode::RuntimeTrap,
-                    "the instance is not in a loadable state for invocations",
-                )
-                .into());
-            }
-        }
         self.invocation_counter += 1;
         let invocation = self.invocation_counter;
         let output = self.next_handle;
@@ -2352,7 +2418,6 @@ impl Actor {
                 expected,
             },
         );
-        self.invocations.insert(invocation, label.clone());
         let (result_tx, result_rx) = oneshot::channel();
         let params = match params_builder {
             ParamsBuilder::Command(command) => serde_json::to_value(InvokeParams {
@@ -2371,19 +2436,29 @@ impl Actor {
             }),
         }
         .unwrap_or(Json::Null);
-        let seq = self.next_seq(Pending::Invocation {
-            result: result_tx,
+        let admission = Admission {
+            method: method_name,
+            params,
+            label,
             output,
             invocation,
-        });
-        let envelope = Envelope::Request {
-            seq,
-            method: method_name.to_owned(),
-            params,
+            result: result_tx,
+            deadline: tokio::time::Instant::now() + self.slot_wait,
         };
-        if let Err(error) = self.send(&envelope).await {
-            self.fail_instance(error.clone()).await;
-            return Err(error.into());
+        // Beyond the negotiated ceiling the package would refuse it, so it waits for a slot here
+        // instead of being sent; and behind another that waits, so the wait is in order
+        // (ADR-1027).
+        if self.invocations.len() >= self.ceiling() || !self.waiting.is_empty() {
+            self.wait_for_slot(admission, false);
+        } else {
+            match self.dispatch(admission).await {
+                Ok(()) => {}
+                Err(Undispatched::NotLoadable(_, error)) => {
+                    self.streams.remove(&output);
+                    return Err(error);
+                }
+                Err(Undispatched::Transport(error)) => return Err(error.into()),
+            }
         }
         Ok(RunningInvocation {
             handle: output,
@@ -2391,6 +2466,129 @@ impl Actor {
             result: result_rx,
             to_actor: self.handle_sender(),
         })
+    }
+
+    /// How many invocations the instance may have open at once, as negotiated (spec §31.15).
+    fn ceiling(&self) -> usize {
+        usize::try_from(self.contract.limits.max_concurrent_invocations.max(1)).unwrap_or(1)
+    }
+
+    /// Sends an invocation to the package and counts it as open.
+    async fn dispatch(&mut self, admission: Admission) -> Result<(), Undispatched> {
+        {
+            let mut shared = lock(&self.shared);
+            if shared.lifecycle.begin_invocation().is_err() {
+                drop(shared);
+                return Err(Undispatched::NotLoadable(
+                    admission,
+                    KuangError::new(
+                        KuangErrorCode::RuntimeTrap,
+                        "the instance is not in a loadable state for invocations",
+                    )
+                    .into(),
+                ));
+            }
+        }
+        self.invocations
+            .insert(admission.invocation, admission.label.clone());
+        let method = admission.method;
+        let params = admission.params.clone();
+        let seq = self.next_seq(Pending::Invocation {
+            admission,
+            endings_at_send: self.endings,
+        });
+        let envelope = Envelope::Request {
+            seq,
+            method: method.to_owned(),
+            params,
+        };
+        if let Err(error) = self.send(&envelope).await {
+            self.fail_instance(error.clone()).await;
+            return Err(Undispatched::Transport(error));
+        }
+        Ok(())
+    }
+
+    /// Puts an invocation in line for a slot — at the front when it is one the package has just
+    /// refused, so it keeps its place — and arranges for its wait to end at its deadline.
+    fn wait_for_slot(&mut self, admission: Admission, front: bool) {
+        let output = admission.output;
+        let deadline = admission.deadline;
+        if front {
+            self.waiting.push_front(admission);
+        } else {
+            self.waiting.push_back(admission);
+        }
+        // A weak sender, so a pending expiry never keeps an instance nobody holds alive.
+        let sender = self.msg_sender.downgrade();
+        tokio::spawn(async move {
+            tokio::time::sleep_until(deadline).await;
+            if let Some(sender) = sender.upgrade() {
+                let _ = sender.send(ActorMsg::SlotWaitExpired { output }).await;
+            }
+        });
+    }
+
+    /// Sends the waiting invocations there is room for now, oldest first.
+    async fn resume_waiting(&mut self) {
+        while self.invocations.len() < self.ceiling() {
+            let Some(admission) = self.waiting.pop_front() else {
+                return;
+            };
+            match self.dispatch(admission).await {
+                Ok(()) => {}
+                Err(Undispatched::NotLoadable(admission, error)) => {
+                    self.refuse_admission(admission, error);
+                }
+                Err(Undispatched::Transport(_)) => return,
+            }
+        }
+    }
+
+    /// Ends an invocation that never ran with `error`, on its stream and in its result.
+    fn refuse_admission(&mut self, admission: Admission, error: WireError) {
+        if let Some(stream) = self.streams.remove(&admission.output) {
+            let _ = stream.tx.send(StreamEvent::Failed(error.clone()));
+        }
+        let _ = admission.result.send(InvokeResult {
+            status: InvokeStatus::Failed,
+            error: Some(error),
+        });
+    }
+
+    /// The refusal of an invocation whose wait for a slot is over: it names what holds the slots,
+    /// because that is what the operator can end (ADR-1027).
+    fn slot_refusal(&self, label: &str) -> WireError {
+        let mut holders: Vec<&str> = self.invocations.values().map(String::as_str).collect();
+        holders.sort_unstable();
+        let named = if holders.is_empty() {
+            "nothing the host still counts".to_owned()
+        } else {
+            holders
+                .iter()
+                .map(|holder| format!("`{holder}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        KuangError::new(
+            KuangErrorCode::RuntimeConcurrencyLimit,
+            format!(
+                "`{label}` waited {:.1} s for a free invocation slot of `{}` and none came free; \
+                 the slots are held by {named}",
+                self.slot_wait.as_secs_f64(),
+                self.package_id
+            ),
+        )
+        .with_help(
+            "end what holds the slot — `kill %N` for a job — or bound it with `take`; a package \
+             that is safe to run several invocations at once raises its ceiling with \
+             `concurrent_invocations` and `runtime.max_concurrent_invocations` (spec §31.15)",
+        )
+        .with_metadata(
+            "holders",
+            Json::Array(holders.iter().map(|holder| json!(holder)).collect()),
+        )
+        .into()
     }
 
     fn handle_sender(&self) -> mpsc::Sender<ActorMsg> {
@@ -2608,11 +2806,10 @@ impl Actor {
                 };
                 match pending {
                     Pending::Invocation {
-                        result: result_tx,
-                        output,
-                        invocation,
+                        admission,
+                        endings_at_send,
                     } => {
-                        let outcome: InvokeResult = if let Some(error) = error {
+                        let mut outcome: InvokeResult = if let Some(error) = error {
                             InvokeResult {
                                 status: InvokeStatus::Failed,
                                 error: Some(error),
@@ -2625,7 +2822,39 @@ impl Actor {
                             let mut shared = lock(&self.shared);
                             let _ = shared.lifecycle.end_invocation();
                         }
-                        self.invocations.remove(&invocation);
+                        self.invocations.remove(&admission.invocation);
+                        let refused = refused_for_room(&outcome);
+                        if refused {
+                            let asked = self
+                                .streams
+                                .get(&admission.output)
+                                .is_some_and(|stream| stream.cancel_requested);
+                            let freed = self.endings > endings_at_send;
+                            if asked {
+                                // Nothing of it ran, and its consumer had stopped wanting it.
+                                outcome = InvokeResult {
+                                    status: InvokeStatus::Cancelled,
+                                    error: None,
+                                };
+                            } else if tokio::time::Instant::now() < admission.deadline
+                                && (freed || !self.invocations.is_empty())
+                            {
+                                // The package had no room for it while another invocation was
+                                // open: it waits for that one to end and is asked again — at
+                                // once, when one already ended since it was sent (ADR-1027).
+                                self.wait_for_slot(admission, true);
+                                if freed {
+                                    self.resume_waiting().await;
+                                }
+                                return Ok(LoopStep::Continue);
+                            } else if !self.invocations.is_empty() {
+                                outcome.error = Some(self.slot_refusal(&admission.label));
+                            }
+                        } else {
+                            self.endings += 1;
+                        }
+                        let (result_tx, output, invocation) =
+                            (admission.result, admission.output, admission.invocation);
                         // One channel carries the whole answer (ADR-0992): the stream's last
                         // event says how the invocation ended whenever that is not "completed"
                         // or "cancelled because the consumer asked", so a consumer that reads
@@ -2645,6 +2874,10 @@ impl Actor {
                         // invocation's view stays where it is (ADR-0991).
                         self.close_views_of(invocation).await;
                         let _ = result_tx.send(outcome);
+                        // A slot came free: the oldest invocation waiting for one is sent.
+                        if !refused {
+                            self.resume_waiting().await;
+                        }
                         Ok(LoopStep::Continue)
                     }
                     Pending::Probe(respond) => {

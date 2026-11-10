@@ -3114,6 +3114,16 @@ fn one_value_of_credit() -> HostLimits {
     }
 }
 
+/// One value of credit, and a short wait for an invocation slot: a test that holds the only slot
+/// open and asks for another sees the wait end in its refusal without waiting the host's default
+/// (ADR-1027).
+fn one_value_of_credit_and_a_short_wait() -> HostLimits {
+    HostLimits {
+        slot_wait_ms: 200,
+        ..one_value_of_credit()
+    }
+}
+
 /// The same manifest asking for a concurrency ceiling of its own (spec §31.15).
 fn manifest_with_concurrency(ceiling: u32) -> String {
     manifest().replace(
@@ -3285,8 +3295,10 @@ async fn should_keep_the_other_invocation_running_when_one_is_cancelled() {
 
 #[tokio::test]
 async fn should_refuse_an_invocation_beyond_the_negotiated_concurrency_ceiling() {
+    // The two open invocations are only read after the third has been answered, so no slot can
+    // come free while it waits: its bounded wait ends in the refusal (ADR-1027).
     let plugin = fully_granted(TestHost::new(PLUGIN, &manifest_with_concurrency(2)))
-        .limits(one_value_of_credit())
+        .limits(one_value_of_credit_and_a_short_wait())
         .load()
         .await
         .expect("loads");
@@ -3322,7 +3334,8 @@ async fn should_refuse_an_invocation_beyond_the_negotiated_concurrency_ceiling()
     assert_eq!(
         refused.error.expect("a structured refusal").name,
         "runtime.concurrency_limit",
-        "a ceiling an operator agreed to is refused visibly, not queued silently"
+        "a ceiling an operator agreed to is refused visibly once the wait for a slot is over, \
+         not queued without bound"
     );
     assert!(
         values_of(&refused_events).is_empty(),
@@ -3349,9 +3362,11 @@ async fn should_refuse_an_invocation_beyond_the_negotiated_concurrency_ceiling()
 
 #[tokio::test]
 async fn should_keep_serving_a_package_that_answers_one_invocation_at_a_time() {
+    // The first invocation is only read after the second has been answered, so the second's
+    // bounded wait for a slot ends in the refusal (ADR-1027).
     let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
         .args(&["--serial"])
-        .limits(one_value_of_credit())
+        .limits(one_value_of_credit_and_a_short_wait())
         .load()
         .await
         .expect("a package that never opted in still loads");
@@ -3395,6 +3410,183 @@ async fn should_keep_serving_a_package_that_answers_one_invocation_at_a_time() {
         .await;
     assert_eq!(result.status, InvokeStatus::Completed);
     assert_eq!(values_of(&later), vec![Value::Int(1), Value::Int(2)]);
+    assert_eq!(plugin.state(), PluginState::Loaded);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+// --- an invocation beyond the ceiling waits for a slot (v0.6.5 review R-F2/R-F3, ADR-1027) ------
+
+#[tokio::test]
+async fn should_start_an_invocation_beyond_the_negotiated_ceiling_once_the_open_one_ends() {
+    // A job and the shell share one instance (ADR-0995), so an instance at its ceiling is an
+    // ordinary moment, not a misuse. The second invocation waits for the first to end and then
+    // runs, rather than being refused while the first is still answering.
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest_with_concurrency(1)))
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    let first = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("starts");
+    let second = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(3))]),
+        )
+        .await
+        .expect("the second invocation is accepted to wait for a slot");
+    let (first_out, second_out) = tokio::join!(first.collect(), second.collect());
+    assert_eq!(first_out.1.status, InvokeStatus::Completed);
+    assert_eq!(
+        second_out.1.status,
+        InvokeStatus::Completed,
+        "the waiting invocation ran once the slot came free: {:?}",
+        second_out.1.error
+    );
+    assert_eq!(
+        values_of(&second_out.0),
+        (1..=3).map(Value::Int).collect::<Vec<_>>()
+    );
+    assert_eq!(plugin.state(), PluginState::Loaded);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_start_an_invocation_the_package_refused_for_its_own_ceiling_once_a_slot_frees() {
+    // The SDK's default is one invocation at a time and the host cannot see it: the contract says
+    // four. The package refuses the second; the host waits for the first to end and asks again.
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest()))
+        .args(&["--serial"])
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    let first = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("starts");
+    let second = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(3))]),
+        )
+        .await
+        .expect("starts");
+    let (first_out, second_out) = tokio::join!(first.collect(), second.collect());
+    assert_eq!(first_out.1.status, InvokeStatus::Completed);
+    assert_eq!(
+        second_out.1.status,
+        InvokeStatus::Completed,
+        "the invocation the package had no room for ran once it had: {:?}",
+        second_out.1.error
+    );
+    assert_eq!(
+        values_of(&second_out.0),
+        (1..=3).map(Value::Int).collect::<Vec<_>>()
+    );
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_end_an_invocation_waiting_for_a_slot_as_cancelled_when_its_consumer_cancels() {
+    // Ctrl-C and `kill %N` cancel the invocation a line is reading (ADR-0998). An invocation that
+    // is still waiting for a slot ends at once, as cancelled, and nothing of it ever runs.
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest_with_concurrency(1)))
+        .limits(one_value_of_credit())
+        .load()
+        .await
+        .expect("loads");
+    let mut holder = plugin
+        .invoke("dev.example.echo.command.count-forever", args(&[]))
+        .await
+        .expect("starts");
+    assert_eq!(
+        holder.next().await,
+        Some(StreamEvent::Value(Value::Int(1))),
+        "the holder is running before anybody waits for its slot"
+    );
+    let waiter = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("accepted to wait");
+    waiter.cancel().await;
+    let (events, result) = waiter.collect().await;
+    assert_eq!(
+        result.status,
+        InvokeStatus::Cancelled,
+        "a cancelled wait ends as a cancellation: {:?}",
+        result.error
+    );
+    assert!(
+        values_of(&events).is_empty(),
+        "nothing of it ran: {events:?}"
+    );
+    holder.cancel().await;
+    while holder.next().await.is_some() {}
+    assert_eq!(holder.finish().await.status, InvokeStatus::Cancelled);
+    assert_eq!(plugin.state(), PluginState::Loaded);
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_an_invocation_whose_wait_for_a_slot_expires_naming_what_holds_it() {
+    // A slot held by an invocation that never ends is not waited on for ever: when the bound
+    // expires the waiting invocation is refused, and the refusal names what holds the slot so the
+    // operator knows what to end.
+    let plugin = fully_granted(TestHost::new(PLUGIN, &manifest_with_concurrency(1)))
+        .limits(one_value_of_credit_and_a_short_wait())
+        .load()
+        .await
+        .expect("loads");
+    let mut holder = plugin
+        .invoke("dev.example.echo.command.count-forever", args(&[]))
+        .await
+        .expect("starts");
+    assert_eq!(holder.next().await, Some(StreamEvent::Value(Value::Int(1))));
+    let (events, result) = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(2))]),
+        )
+        .await
+        .expect("accepted to wait")
+        .collect()
+        .await;
+    assert_eq!(result.status, InvokeStatus::Failed);
+    let error = result.error.expect("a structured refusal");
+    assert_eq!(error.name, "runtime.concurrency_limit");
+    assert!(
+        error.message.contains("count-forever"),
+        "the refusal names the invocation holding the slot: {}",
+        error.message
+    );
+    assert_eq!(
+        failure_names(&events),
+        ["runtime.concurrency_limit"],
+        "and the stream says so itself (ADR-0992)"
+    );
+    holder.cancel().await;
+    while holder.next().await.is_some() {}
+    assert_eq!(holder.finish().await.status, InvokeStatus::Cancelled);
     assert_eq!(plugin.state(), PluginState::Loaded);
     plugin
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)

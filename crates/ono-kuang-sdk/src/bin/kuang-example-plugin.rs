@@ -819,6 +819,29 @@ fn honest_at_most(at_once: u32) -> Plugin {
             roles: Vec::new(),
             parent: None,
         })
+        // A bounded answer that takes its time and then ends: `count` items, `pace-ms` apart. It
+        // holds an invocation slot for a while and gives it back on its own, which is the shape a
+        // slow enumeration has and what a test of waiting for a slot needs (ADR-1027).
+        .contribute_target(TargetContribution {
+            name: "echo-slow".to_owned(),
+            schema: ITEM_SCHEMA.to_owned(),
+            summary: "Counted items, paced, then the end.".to_owned(),
+            identity_doc: "Two observations are the same item when their `seq` matches.".to_owned(),
+            options: vec![
+                count_option(),
+                ParameterContribution {
+                    name: "pace-ms".to_owned(),
+                    declared_type: "int".to_owned(),
+                    doc: "Milliseconds between two items.".to_owned(),
+                    repeatable: false,
+                    optional_value: false,
+                    default: None,
+                },
+            ],
+            answer: Answer::Bounded,
+            roles: Vec::new(),
+            parent: None,
+        })
         .contribute_command(command(
             "emit",
             "Emit counted integers.",
@@ -2159,6 +2182,20 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 }
                 seq += 1;
             }
+        })
+        .provider("echo-slow", |ctx| {
+            let count = int_argument(ctx, "count", 3).clamp(0, 1000);
+            let pace =
+                std::time::Duration::from_millis(int_argument(ctx, "pace-ms", 50).clamp(0, 10_000) as u64);
+            for seq in 1..=count {
+                if seq > 1 {
+                    std::thread::sleep(pace);
+                }
+                if ctx.cancelled() || ctx.emit(&item_record(seq, "slow")).is_err() {
+                    return Outcome::Cancelled;
+                }
+            }
+            Outcome::Completed
         })
         .provider("echo-hold", |ctx| {
             if ctx.emit(&item_record(1, "held")).is_err() {

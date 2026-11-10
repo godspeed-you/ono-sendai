@@ -32,6 +32,9 @@ pub struct HostLimits {
     /// How many invocations one instance may have open at once. A package may ask for fewer and
     /// never more (spec §31.15).
     pub max_concurrent_invocations: u32,
+    /// How long an invocation beyond the instance's concurrency ceiling waits for a slot before it
+    /// is refused, in milliseconds (ADR-1027). Host-side only: it is not part of the contract.
+    pub slot_wait_ms: u64,
 }
 
 impl Default for HostLimits {
@@ -47,6 +50,9 @@ impl Default for HostLimits {
             // reason concurrency exists here at all, and small enough that a package cannot
             // turn one instance into a thread farm.
             max_concurrent_invocations: 4,
+            // Long enough for an ordinary invocation ahead of it to finish, short enough that an
+            // endless one holding the slot is named rather than waited on for ever.
+            slot_wait_ms: 10_000,
         }
     }
 }
