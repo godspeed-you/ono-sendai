@@ -214,3 +214,109 @@ fn should_unload_the_instance_in_order_when_the_shell_leaves_with_a_job_still_ru
         "spec §31.37: the instance the job was still using ended with its unload"
     );
 }
+
+/// The rows `get job` answered last, as `id` and `state`.
+fn job_states(run: &ono_testkit::Run) -> Vec<(i64, String)> {
+    support::last_json_rows(run)
+        .iter()
+        .map(|row| {
+            (
+                row.get("id")
+                    .and_then(serde_yaml_ng::Value::as_i64)
+                    .expect("a job row names its number"),
+                support::text(row, "state"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn should_end_a_killed_jobs_invocation_and_leave_the_instance_loaded_and_usable() {
+    // ADR-0952, ADR-0995: a job runs packages in the session's instance, so `kill %N` cannot end
+    // the job by ending an instance of its own. The job's cancellation is delivered to the
+    // invocation it has running (spec §31.14): the job ends, the instance goes back to `loaded`
+    // and answers the next invocation.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo\n\
+         echo:count-forever | count &\n\
+         while (get plugin | where id == \"dev.example.echo\" and state == \"active\" | count) == 0 { sleep 0.05 }\n\
+         kill %1\n\
+         get plugin | where id == \"dev.example.echo\" | select state | to json\n\
+         echo:emit --count 2 | to json\n\
+         get job | select id state | to json",
+    );
+
+    assert!(
+        !run.stderr().contains("has not stopped yet"),
+        "ADR-0959: `kill %N` ends a job whose line is in a package invocation: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().contains(r#"{"state":"loaded"}"#),
+        "spec §31.8: once the killed job's invocation has ended, nothing runs in the instance: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().contains("[1,2]"),
+        "the instance outlives the job's cancellation and answers the shell: {:?}",
+        run.output()
+    );
+    assert_eq!(
+        job_states(&run),
+        [],
+        "spec §18.4: a killed job that has ended leaves the table: {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_end_only_the_killed_jobs_invocation_when_another_job_and_the_shell_use_the_instance() {
+    // The cancellation is the killed job's alone: the instance and another job's invocation in it
+    // keep running, and the shell's own invocation is answered meanwhile (spec §31.14, ADR-0995).
+    // The shell waits until job 1's invocation has made the instance active, so job 1 is
+    // certainly streaming when job 2 is killed.
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo\n\
+         echo:count-forever | count &\n\
+         while (get plugin | where id == \"dev.example.echo\" and state == \"active\" | count) == 0 { sleep 0.05 }\n\
+         echo:count-forever | count &\n\
+         sleep 0.2\n\
+         kill %2\n\
+         echo:emit --count 3 | to json\n\
+         get plugin | where id == \"dev.example.echo\" | select state | to json\n\
+         get job | select id state | to json\n\
+         kill %1\n\
+         get job | select id state | to json",
+    );
+
+    assert!(
+        !run.stderr().contains("has not stopped yet"),
+        "ADR-0959: `kill %N` ends a job whose line is in a package invocation: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().contains("[1,2,3]"),
+        "the shell's invocation is answered while job 1 streams from the same instance: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().contains(r#"{"state":"active"}"#),
+        "spec §31.8: job 1's invocation still runs in the instance after job 2 was killed: {:?}",
+        run.output()
+    );
+    assert!(
+        run.stdout().contains(r#"[{"id":1,"state":"running"}]"#),
+        "job 2 has ended and job 1 runs on: {:?}",
+        run.output()
+    );
+    assert_eq!(
+        job_states(&run),
+        [],
+        "killing job 1 then ends it too: {:?}",
+        run.output()
+    );
+}

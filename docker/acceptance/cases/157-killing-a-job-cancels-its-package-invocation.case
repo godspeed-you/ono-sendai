@@ -1,0 +1,84 @@
+# Spec §31.8, §31.14, §18.4; ADR-0952, ADR-0959, ADR-0995, ADR-0998: a job runs packages in the
+# session's instance, so `kill %N` ends the job by cancelling the invocation it has running there.
+# The job leaves the table, the instance goes back to `loaded` and answers the shell, and a
+# second job streaming from the same instance runs on until it is killed in turn.
+case: killing a job cancels its package invocation and leaves the shared instance running
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/commands.yaml" <<'COMMANDS'
+  commands:
+    - id: dev.example.echo.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      options:
+        - name: count
+          type: int
+          doc: How many integers to emit.
+          default: 2
+  COMMANDS
+  # What a script printed, minus the load notice and the job numbers, on one line.
+  answers() { grep -v -e '^loaded ' -e '^  answerable' -e '^\[%' | tr '\n' ' '; }
+
+  echo "== kill %1 ends a job that streams from the instance; the instance stays usable =="
+  out=$(ono -c 'load plugin dev.example.echo
+  echo:count-forever | count &
+  while (get plugin | where id == "dev.example.echo" and state == "active" | count) == 0 { sleep 0.05 }
+  kill %1
+  get plugin | where id == "dev.example.echo" | select state | to json
+  echo:emit --count 2 | to json
+  get job | select id state | to json' 2>&1)
+  echo "after-kill: $(echo "$out" | answers)"
+
+  echo "== killing one job leaves another job's invocation in the instance running =="
+  out=$(ono -c 'load plugin dev.example.echo
+  echo:count-forever | count &
+  while (get plugin | where id == "dev.example.echo" and state == "active" | count) == 0 { sleep 0.05 }
+  echo:count-forever | count &
+  sleep 0.2
+  kill %2
+  echo:emit --count 3 | to json
+  get plugin | where id == "dev.example.echo" | select state | to json
+  get job | select id state | to json
+  kill %1
+  get job | select id state | to json' 2>&1)
+  echo "one-of-two-killed: $(echo "$out" | answers)"
+exit: 0
+stdout-contains: after-kill: [{"state":"loaded"}] [1,2] []
+stdout-contains: one-of-two-killed: [1,2,3] [{"state":"active"}] [{"id":1,"state":"running"}] []
+stdout-not-contains: has not stopped yet
+stdout-not-contains: panicked

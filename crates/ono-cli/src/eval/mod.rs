@@ -24,6 +24,7 @@ pub(crate) use expression::text_of;
 pub use expression::truthy;
 pub(crate) use function::called_function;
 pub use materialize::captured_text;
+pub(crate) use pipeline::interrupted_flow_now;
 pub(crate) use pipeline::is_explain;
 pub use pipeline::output_destination;
 pub use pipeline::run_adapted_segment;
