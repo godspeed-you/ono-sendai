@@ -573,3 +573,124 @@ async fn should_refuse_to_subscribe_to_a_contributed_target_and_say_why() {
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
 }
+
+// --- an action's own risk, confirmation and defaults (#224 review R-F7/S-F4, ADR-1024) ----------
+
+/// The example package in its `--destructive-action` mode, under `policy`.
+async fn load_destructive_action(
+    scratch: &ono_testkit::Scratch,
+    policy: Policy,
+) -> Arc<LoadedPlugin> {
+    let manifest =
+        Manifest::parse(&echo_package_manifest(ECHO)).expect("the fixture manifest is valid");
+    let private = scratch.path().join("state");
+    std::fs::create_dir_all(&private).expect("the private directory");
+    let mut config = LoadConfig::new(example_binary(), manifest);
+    config.args = vec!["--destructive-action".to_owned()];
+    config.private_dir = Some(private);
+    config.policy = policy;
+    Arc::new(
+        Supervisor::load(config)
+            .await
+            .expect("the example package loads"),
+    )
+}
+
+#[tokio::test]
+async fn should_refuse_a_destructive_action_on_a_contributed_object_that_was_not_confirmed() {
+    // The action a package declared `destructive` is confirmed by the gate a destructive command
+    // is (ADR-1001), whichever door reaches it: through the provider boundary as well as typed.
+    let scratch = ono_testkit::scratch();
+    let plugin = load_destructive_action(&scratch, granted_mutation()).await;
+    let registry = registry_of(&plugin);
+    let object = place(&registry, "u-3").await;
+
+    let refusal = registry
+        .act(&Action::new("echo-place", "remove", object.clone()))
+        .await
+        .expect_err("an unconfirmed destructive action is not attempted");
+    assert_eq!(
+        refusal.code().name(),
+        "safety.confirmation_required",
+        "got {refusal:?}"
+    );
+    assert!(
+        !plugin
+            .audit()
+            .iter()
+            .any(|event| event.capability == "provider.mutate"),
+        "nothing of the package ran: the broker never saw the invocation"
+    );
+
+    let confirmed = registry
+        .act(&Action::new("echo-place", "remove", object).with("confirm", Value::Bool(true)))
+        .await
+        .expect("a confirmed destructive action is attempted");
+    assert!(confirmed.is_success(), "got {confirmed:?}");
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_apply_an_actions_declared_defaults_and_honour_its_declared_dry_run_option() {
+    // `dry_run` (underscore, as the Kubernetes provider spells it) defaults to true. The host
+    // applies the default, so an action that does not say otherwise is a dry run and reports no
+    // change; an action asked as a dry run sets the option the package declared, whatever its
+    // spelling; `dry_run false` acts for real.
+    let scratch = ono_testkit::scratch();
+    let plugin = load_destructive_action(&scratch, granted_mutation()).await;
+    let registry = registry_of(&plugin);
+    let object = place(&registry, "u-3").await;
+    let confirmed =
+        || Action::new("echo-place", "remove", object.clone()).with("confirm", Value::Bool(true));
+
+    let defaulted = registry.act(&confirmed()).await.expect("attempted");
+    assert!(
+        defaulted.is_success() && !defaulted.changed(),
+        "the declared default `dry_run: true` arrived, so nothing changed, got {defaulted:?}"
+    );
+    let dry = registry
+        .act(&confirmed().as_dry_run())
+        .await
+        .expect("the action declares a dry-run option, in its own spelling");
+    assert!(dry.is_success() && !dry.changed(), "got {dry:?}");
+    let real = registry
+        .act(&confirmed().with("dry_run", Value::Bool(false)))
+        .await
+        .expect("attempted");
+    assert!(
+        real.is_success() && real.changed(),
+        "`dry_run false` is the real change, got {real:?}"
+    );
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
+
+#[tokio::test]
+async fn should_refuse_an_action_whose_hello_understates_its_risk() {
+    // The hello declares `restart echo-place` `mutate` while it needs `filesystem.write`, which is
+    // `destructive`. The registry refuses such a declaration (ADR-1000), and so does an action
+    // that resolves to it (ADR-1002), even with every capability granted.
+    let scratch = ono_testkit::scratch();
+    let plugin = load_destructive_action(
+        &scratch,
+        granted_mutation().grant(Capability::FilesystemWrite, None),
+    )
+    .await;
+    let registry = registry_of(&plugin);
+    let object = place(&registry, "u-3").await;
+
+    let refusal = registry
+        .act(&Action::new("echo-place", "restart", object).with("confirm", Value::Bool(true)))
+        .await
+        .expect_err("an understated action is refused before it is attempted");
+    assert_eq!(refusal.code().name(), "package.invalid", "got {refusal:?}");
+
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}

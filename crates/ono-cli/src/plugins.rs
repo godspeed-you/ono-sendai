@@ -1131,6 +1131,46 @@ fn hello_contract(
     package: &str,
     contribution: &ono_kuang_protocol::CommandContribution,
 ) -> Result<CommandContract, ErrorValue> {
+    hello_entry(package, contribution, false)
+}
+
+/// The registry entry a command the running package declared in its hello would be, with the
+/// options it declared there: what the provider path invokes it with — their types, their
+/// defaults, which of them is its dry run — as well as its confirmation policy (ADR-1024).
+///
+/// # Errors
+///
+/// The registry's own refusal of the declaration, as for [`hello_contract`].
+pub(crate) fn hello_declaration(
+    package: &str,
+    contribution: &ono_kuang_protocol::CommandContribution,
+) -> Result<CommandContract, ErrorValue> {
+    hello_entry(package, contribution, true)
+}
+
+fn hello_entry(
+    package: &str,
+    contribution: &ono_kuang_protocol::CommandContribution,
+    with_options: bool,
+) -> Result<CommandContract, ErrorValue> {
+    // A straight rename across the crate boundary, as the registry makes for a declaration on
+    // disk: `ono-kuang-protocol` owns the wire's shape, `ono-command` the registry's.
+    let options = if with_options {
+        contribution
+            .options
+            .iter()
+            .map(|parameter| ono_command::ContributedParameter {
+                name: parameter.name.clone(),
+                declared_type: parameter.declared_type.clone(),
+                doc: parameter.doc.clone(),
+                repeatable: parameter.repeatable,
+                optional_value: parameter.optional_value,
+                default: parameter.default_text(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     ono_command::ContributedCommand {
         id: contribution.id.clone(),
         verb: contribution.verb.clone(),
@@ -1141,7 +1181,7 @@ fn hello_contract(
         capabilities: contribution.capabilities.clone(),
         argument_mode: contribution.argument_mode.clone(),
         selectors: Vec::new(),
-        options: Vec::new(),
+        options,
         risk: contribution.risk.clone(),
         examples: Vec::new(),
         origin: ono_command::Origin::plugin(package, ""),
@@ -1549,7 +1589,7 @@ pub fn query(
 /// The declaration is read from the package's own documents before anything runs (spec §31.68),
 /// so it is available at the moment an invocation is being assembled — which is what lets the
 /// host type an argument and supply a default rather than forwarding whatever words arrived.
-fn declaration(id: &str) -> Option<&'static CommandContract> {
+pub(crate) fn declaration(id: &str) -> Option<&'static CommandContract> {
     crate::plugin_registry::registry().ok()?.get(id)
 }
 

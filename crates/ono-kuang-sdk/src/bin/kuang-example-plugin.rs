@@ -59,6 +59,11 @@ fn main() {
         // `filesystem.write`, a capability whose risk is `destructive`. The host must not take
         // the package at its lower word (#156, ADR-1000, ADR-1002).
         Some("--understated") => understated().run(),
+        // Two declared actions on `echo-place` for the provider path (ADR-1012, ADR-1024): a
+        // `destructive` removal whose dry run is its `dry_run` option, true by default — the shape
+        // the Kubernetes provider's `remove k8s-resource` has — and a restart whose hello declares
+        // `mutate` for a command needing `filesystem.write`.
+        Some("--destructive-action") => destructive_action().run(),
         // The v0.6 §48 surface, kept apart from the default so that every existing conformance
         // assertion about what this package contributes stays exactly as true as it was.
         Some("--change-provider") => change_provider(None).run(),
@@ -717,6 +722,76 @@ fn understated() -> Plugin {
                 Ok(()) => emit_text(ctx, "wiped"),
                 Err(error) => Outcome::Failed(error),
             }
+        })
+}
+
+/// The honest package plus `remove echo-place` (destructive) and an understated `restart
+/// echo-place`, both declared as actions on the place schema.
+fn destructive_action() -> Plugin {
+    let place_action = || ActionContribution {
+        targets: vec![PLACE_SCHEMA.to_owned()],
+        mutates: true,
+        idempotency: Idempotency::Idempotent,
+        result: None,
+        verification: Some("the place is read back".to_owned()),
+        effects: vec!["changes-state".to_owned()],
+        effect_classes: Vec::new(),
+    };
+    honest()
+        .contribute_command(CommandContribution {
+            verb: "remove".to_owned(),
+            target: "echo-place".to_owned(),
+            risk: Some("destructive".to_owned()),
+            options: vec![ParameterContribution {
+                name: "dry_run".to_owned(),
+                declared_type: "bool".to_owned(),
+                doc: "Say what would be removed without removing it. Default true.".to_owned(),
+                repeatable: false,
+                optional_value: false,
+                default: Some(json!(true)),
+            }],
+            action: Some(place_action()),
+            ..command_declaring(
+                "remove-place",
+                "Remove a place; a dry run unless `dry_run false` is given.",
+                "stream<string>",
+                &["provider.mutate"],
+            )
+        })
+        .command(&format!("{PACKAGE}.command.remove-place"), |ctx| {
+            // The declared default is the host's to apply: a handler that has to remember it is
+            // a handler that can forget it, so an absent `dry_run` is refused here, loudly.
+            match ctx
+                .arguments()
+                .get("dry_run")
+                .and_then(serde_json::Value::as_bool)
+            {
+                Some(true) => emit_text(ctx, "would remove"),
+                Some(false) => emit_text(ctx, "removed"),
+                None => Outcome::Failed(ono_kuang_sdk::protocol::WireError {
+                    code: "Ono-Sendai-E0401".to_owned(),
+                    name: "provider.unavailable".to_owned(),
+                    message: "no `dry_run` arrived, and its declared default is true".to_owned(),
+                    help: None,
+                    metadata: Box::default(),
+                }),
+            }
+        })
+        .contribute_command(CommandContribution {
+            verb: "restart".to_owned(),
+            target: "echo-place".to_owned(),
+            risk: Some("mutate".to_owned()),
+            action: Some(place_action()),
+            ..command_declaring(
+                "restart-place",
+                "Restart a place, declaring `mutate` while needing `filesystem.write` (a defect, \
+                 on purpose).",
+                "stream<string>",
+                &["provider.mutate", "filesystem.write"],
+            )
+        })
+        .command(&format!("{PACKAGE}.command.restart-place"), |ctx| {
+            emit_text(ctx, "restarted")
         })
 }
 
