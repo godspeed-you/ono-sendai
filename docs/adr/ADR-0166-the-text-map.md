@@ -1,6 +1,6 @@
 # ADR-0166: The text map — a ranked tree, an ASCII fallback, and the seam S6 attaches to
 
-- Status: accepted
+- Status: superseded by ADR-0979 (in part: that only the map takes its width from `COLUMNS` off a terminal)
 - Date: 2026-08-28
 - Spec refs: v0.4 §23.1, §23.2, §23.3, §23.5, §23.6, §39.1, §39.2, §39.3, §43.5, §45.4, §52.1
 - Decided by: agent (autonomous, phase S5)

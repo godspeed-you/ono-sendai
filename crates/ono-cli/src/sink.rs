@@ -180,13 +180,12 @@ impl Sink {
         }
         // Nor does a map (spec v0.4 §23.2): "Every terminal MUST have a non-fullscreen textual
         // map representation", and §39.3 makes that representation adapt to the width rather than
-        // wrap. The width is therefore the one the environment states even when stdout is a pipe,
-        // because a map laid out for a terminal nobody has is a map that does not fit.
+        // wrap — the width every view is laid out for (ADR-0979).
         if let [value] = values
             && let Ok(record) = value.as_record()
             && record.schema_id().to_string() == "ono.spatial-map/1"
         {
-            let width = map_width(self.width);
+            let width = self.width;
             // v0.6 §21.2, §21.3: `map --plan` is the same drawing with the plan laid over it, so
             // the overlay marks the lines the map drew rather than drawing a second map.
             if let Some(overlay) = record.extra().get("ono.change/plan-overlay") {
@@ -315,45 +314,32 @@ impl Sink {
     }
 }
 
-/// The terminal's width, or the width a redirected stream is laid out for.
+/// The width a view is laid out for: the one the environment states, the terminal's own, or the
+/// width a redirected stream gets when nobody stated one (ADR-0979).
 ///
-/// Redirected output is laid out at a fixed width so it is byte-for-byte reproducible: spec §4.6
-/// requires deterministic behaviour when output is not a terminal, and a table whose column
-/// widths depended on the terminal that happened to be attached would not be.
+/// A stated `COLUMNS` is the width wherever it is stated — on a terminal, where it is how a
+/// caller overrides a size the terminal reports wrongly, and off one, where it is the only way
+/// to say how wide the reader is. Without it a redirected stream is laid out at a fixed eighty
+/// columns, so its bytes do not depend on the terminal that happened to be attached (spec §4.6);
+/// the environment is part of a deterministic run, and a terminal is not.
 fn terminal_width(is_terminal: bool) -> usize {
     const REDIRECTED: usize = 80;
     const NARROWEST_USABLE: usize = 20;
 
-    if !is_terminal {
-        return REDIRECTED;
-    }
     if let Ok(columns) = std::env::var("COLUMNS")
         && let Ok(columns) = columns.parse::<usize>()
         && columns >= NARROWEST_USABLE
     {
         return columns;
     }
+    if !is_terminal {
+        return REDIRECTED;
+    }
     ono_editor::terminal_size()
         .ok()
         .map(|(columns, _)| columns)
         .filter(|columns| *columns >= NARROWEST_USABLE)
         .unwrap_or(REDIRECTED)
-}
-
-/// How wide a map may be drawn (spec v0.4 §39.3).
-///
-/// §39.3 is explicit that a map adapts to the terminal — "At narrow widths, maps MAY collapse
-/// into ranked tree/list projections" — and a map is the one view whose whole point is to fit.
-/// So `COLUMNS` is honoured wherever it is stated, including for redirected output, which stays
-/// deterministic because the environment is part of the run (spec v0.2 §4.6).
-#[cfg(feature = "spatial")]
-fn map_width(fallback: usize) -> usize {
-    const NARROWEST_USABLE: usize = 20;
-    std::env::var("COLUMNS")
-        .ok()
-        .and_then(|columns| columns.parse::<usize>().ok())
-        .filter(|columns| *columns >= NARROWEST_USABLE)
-        .unwrap_or(fallback)
 }
 
 /// Whether the terminal can be promised box-drawing characters (spec v0.4 §39.2).
