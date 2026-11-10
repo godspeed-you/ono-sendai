@@ -525,7 +525,9 @@ async fn expand(
             contributed_declined.extend(spec.groups_from(kind));
         }
         if !wanted.is_empty() {
-            for (edge, _, _) in crate::spatial::contributions::merge(providers, session, now).await
+            let ids: Vec<&str> = wanted.iter().map(|spec| spec.id).collect();
+            for (edge, _, _) in
+                crate::spatial::contributions::merge(providers, session, &ids, now).await
             {
                 let (index, _) = session.absorb_with();
                 index.record_edge(edge);

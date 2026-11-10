@@ -159,8 +159,14 @@ pub fn forget(id: &str) {
     }
 }
 
-/// Asks every contributing package for its edges and records the ones both of whose ends the
-/// canonical providers answer for (§35.5, §36.1, §2.16).
+/// Asks the contributing packages for the edges of the relations in `wanted`, and records the
+/// ones both of whose ends the canonical providers answer for (§35.5, §36.1, §2.16).
+///
+/// `wanted` is relation ids. v0.4 §32.1 lets a default `look` or `map` spend nothing on a relation
+/// a package declared beyond `normal` unless the caller asked for it, so a package is asked only
+/// for the relations of its own that are wanted — by name, in the `relations` argument — and a
+/// package none of whose relations is wanted is not invoked at all (ADR-1020). What a package
+/// answers beyond what it was asked for is already paid for, and is kept as any other edge.
 ///
 /// The answer is the edges, with the places they run between already registered — a caller that
 /// draws a map adds both to its horizon, and a caller that does not simply gains the edges in the
@@ -168,6 +174,7 @@ pub fn forget(id: &str) {
 pub async fn merge(
     providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
+    wanted: &[&str],
     now: Timestamp,
 ) -> Vec<(RelationshipEdge, SpatialId, SpatialId)> {
     let packages: Vec<(String, Arc<LoadedPlugin>)> = match contributors().lock() {
@@ -177,9 +184,18 @@ pub async fn merge(
             .collect(),
         Err(_) => return Vec::new(),
     };
+    let contributed = ono_spatial_core::relation::contributed_relations();
     let mut merged = Vec::new();
     for (id, plugin) in packages {
-        for record in asserted(&plugin).await {
+        let asked: Vec<&str> = contributed
+            .iter()
+            .filter(|entry| entry.origin == id && wanted.contains(&entry.spec.id))
+            .map(|entry| entry.spec.id)
+            .collect();
+        if asked.is_empty() {
+            continue;
+        }
+        for record in asserted(&plugin, &asked).await {
             if let Some(edge) = resolve(providers, session, &id, &record, now).await {
                 merged.push(edge);
             }
@@ -188,17 +204,27 @@ pub async fn merge(
     merged
 }
 
-/// What one package answers when asked for the edges it contributes.
-async fn asserted(plugin: &Arc<LoadedPlugin>) -> Vec<RecordValue> {
+/// What one package answers when asked for the edges of the relations `asked` names.
+async fn asserted(plugin: &Arc<LoadedPlugin>, asked: &[&str]) -> Vec<RecordValue> {
     let commands: Vec<String> = plugin
         .commands()
         .iter()
         .filter(|registered| registered.contribution.target == RELATION_TARGET)
         .map(|registered| registered.contribution.id.clone())
         .collect();
+    let mut arguments = serde_json::Map::new();
+    arguments.insert(
+        "relations".to_owned(),
+        serde_json::Value::Array(
+            asked
+                .iter()
+                .map(|id| serde_json::Value::String((*id).to_owned()))
+                .collect(),
+        ),
+    );
     let mut records = Vec::new();
     for command in commands {
-        let Ok(invocation) = plugin.invoke(&command, serde_json::Map::new()).await else {
+        let Ok(invocation) = plugin.invoke(&command, arguments.clone()).await else {
             continue;
         };
         let (events, _) = invocation.collect().await;
