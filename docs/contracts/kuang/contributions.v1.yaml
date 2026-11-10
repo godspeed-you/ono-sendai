@@ -169,6 +169,7 @@ parameter:
     - "A declaration is optional and additive. A contribution that declares nothing keeps the behaviour it had before there was anywhere to declare: the words the user typed reach the package unchanged (spec §31.22)."
     - "Declaring an argument does not close the argument set. The host still passes a word the contribution did not declare, because refusing it would refuse invocations that already work; what a declaration adds is help, completion, the declared type and the default."
     - "A declared default is applied by the host when the argument is absent, so a package's safe default is the shell's guarantee rather than each handler's memory. This is what lets a mutating contribution default to not mutating."
+    - "A flag — an option declared `bool`, or the host's own `--confirm` where the declaration does not declare it — takes the next word only when that word is `true` or `false`; otherwise it means `true` and the word binds where it would have without the flag, as the core binder binds a flag (ADR-0009). `remove echo-record --confirm r1` confirms and binds `r1` to the first selector; `--dry_run false` still turns a dry run off. Every other option takes the next word, or is written `--name=value`."
 
 schema:
   same_schema_as: docs/contracts/schemas/*.v1.yaml

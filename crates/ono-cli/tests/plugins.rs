@@ -1594,3 +1594,23 @@ fn should_refuse_a_hello_that_understates_its_risk_even_where_the_disk_declares_
         run.output()
     );
 }
+
+#[test]
+fn should_take_confirm_as_a_flag_and_bind_the_next_word_to_the_selector() {
+    // The refusal says "write `remove echo-record --confirm`", and a person writes the record
+    // after it. A core `confirmation: always` command reads `--confirm` as a flag wherever it is
+    // written, taking the next word only when it is `true` or `false` (ADR-0009); a contribution
+    // is confirmed by the same gate, so its words bind the same way (#156 review R-F4).
+    let home = wipe_declaring_home("destructive");
+    run_runtime_in_mode(&home, "--destructive");
+    let run = ono_isolated(
+        &home,
+        &format!("remove echo-record --confirm r1 | to json; {WIPED}"),
+    );
+    run.assert_success();
+    assert!(
+        run.stdout().contains("wiped r1") && run.stdout().contains("[1]"),
+        "the command ran once, confirmed, with `record` bound to `r1`, got {:?}",
+        run.output()
+    );
+}

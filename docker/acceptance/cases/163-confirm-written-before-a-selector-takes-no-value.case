@@ -1,0 +1,71 @@
+# #156 review R-F4 (spec §17.4, §31.22; ADR-0009, ADR-1001): `--confirm` is a flag on a
+# contributed command, as on a core `confirmation: always` command, wherever it is written. The
+# refusal says "write `remove echo-record --confirm`", and a person writes the record after it:
+# `remove echo-record --confirm r1` confirms and removes `r1` — once — rather than binding `r1` to
+# `confirm` and refusing. A flag followed by `true` or `false` still takes it.
+case: --confirm written before a selector confirms and leaves the selector its word
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  printf '#!/bin/sh\nexec /usr/local/bin/kuang-example-plugin --destructive\n' > "$home/plugins/dev.example.echo/runtime/echo"
+  chmod 755 "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/commands.yaml" <<'CONTRIB'
+  commands:
+    - id: dev.example.echo.command.wipe
+      verb: remove
+      target: echo-record
+      summary: Remove the record the package keeps, and say so in the audit trail.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: []
+      risk: destructive
+      selectors:
+        - name: record
+          type: string
+          doc: The record to remove.
+      examples:
+        - remove echo-record r1 --confirm
+  CONTRIB
+  wiped='get audit --plugin dev.example.echo | where action == "audit.event:wipe" | count | to json'
+
+  echo "== --confirm before the record: confirmed, and the record is r1 =="
+  ono -c "remove echo-record --confirm r1 | to json; $wiped" 2>&1 | sed 's/^/before: /'
+  echo "== --confirm after the record: the same =="
+  ono -c "remove echo-record r1 --confirm | to json" 2>&1 | sed 's/^/after: /'
+  echo "== --confirm false is no confirmation =="
+  ono -c "remove echo-record --confirm false r1" 2>&1 | sed 's/^/false: /'
+exit: 0
+stdout-contains: before: ["wiped r1"]
+stdout-contains: before: [1]
+stdout-contains: after: ["wiped r1"]
+stdout-contains: false: ono: Ono-Sendai-E0701 safety.confirmation_required
+stdout-not-contains: panicked

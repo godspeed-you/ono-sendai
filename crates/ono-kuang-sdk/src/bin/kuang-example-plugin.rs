@@ -680,8 +680,18 @@ fn destructive() -> Plugin {
             )
         })
         .command(&format!("{PACKAGE}.command.wipe"), |ctx| {
+            // The record it was asked to remove, when the words named one: how a test sees that
+            // the words bound where they were meant to.
+            let wiped = match ctx
+                .arguments()
+                .get("record")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some(record) => format!("wiped {record}"),
+                None => "wiped".to_owned(),
+            };
             match ctx.audit_event(json!({"action": "wipe", "detail": "the record was removed"})) {
-                Ok(()) => emit_text(ctx, "wiped"),
+                Ok(()) => emit_text(ctx, &wiped),
                 Err(error) => Outcome::Failed(error),
             }
         })

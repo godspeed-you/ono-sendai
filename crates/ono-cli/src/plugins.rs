@@ -1112,7 +1112,8 @@ fn refuse_unconfirmed(
     contract: Option<&CommandContract>,
     words: &[std::ffi::OsString],
 ) -> Eval<()> {
-    let confirmed = json_arguments(words).get("confirm") == Some(&serde_json::Value::Bool(true));
+    let confirmed =
+        json_arguments(words, contract).0.get("confirm") == Some(&serde_json::Value::Bool(true));
     match contract.and_then(|contract| contract.unconfirmed(confirmed)) {
         Some(refusal) => Err(Flow::Failed(refusal)),
         None => Ok(()),
@@ -1178,26 +1179,12 @@ fn declared_arguments(
     declaration: Option<&CommandContract>,
     words: &[std::ffi::OsString],
 ) -> serde_json::Map<String, serde_json::Value> {
-    let mut arguments = json_arguments(words);
+    // The bare words, in order, minus the ones that were an option's value, bind to the declared
+    // selectors positionally, exactly as a core command's do (ADR-0009).
+    let (mut arguments, positional) = json_arguments(words, declaration);
     let Some(declaration) = declaration else {
         return arguments;
     };
-    // The bare words, in order, minus the ones that were an option's value. They bind to the
-    // declared selectors positionally, exactly as a core command's do (ADR-0009).
-    let mut positional: Vec<String> = Vec::new();
-    let mut expecting_value = false;
-    for word in words {
-        let text = word.to_string_lossy().into_owned();
-        if let Some(rest) = text.strip_prefix("--") {
-            expecting_value = !rest.contains('=');
-            continue;
-        }
-        if expecting_value {
-            expecting_value = false;
-            continue;
-        }
-        positional.push(text);
-    }
     for (spec, word) in declaration.selectors().iter().zip(&positional) {
         arguments
             .entry(spec.name().to_owned())
@@ -1233,28 +1220,57 @@ fn json_of(value: &Value) -> serde_json::Value {
     ono_value::to_json(value)
 }
 
-fn json_arguments(words: &[std::ffi::OsString]) -> serde_json::Map<String, serde_json::Value> {
+/// The named arguments `words` carry, and the bare words left for the selectors.
+///
+/// A flag — an option the declaration types `bool`, or the host's own `--confirm` where the
+/// declaration says nothing of it — takes the next word only when that word is `true` or `false`,
+/// and otherwise means `true` and leaves the word where it was: the core binder's rule (ADR-0009),
+/// so `remove echo-record --confirm r1` confirms and removes `r1`, as a core `confirmation:
+/// always` command does wherever `--confirm` is written. Any other option takes the next word.
+fn json_arguments(
+    words: &[std::ffi::OsString],
+    declaration: Option<&CommandContract>,
+) -> (serde_json::Map<String, serde_json::Value>, Vec<String>) {
+    let is_flag = |name: &str| match declaration.and_then(|declared| declared.option(name)) {
+        Some(spec) => spec.declared_type().is_flag(),
+        None => name == "confirm",
+    };
     let mut arguments = serde_json::Map::new();
+    let mut positional = Vec::new();
     let mut pending: Option<String> = None;
+    let mut pending_flag: Option<String> = None;
     for word in words {
         let text = word.to_string_lossy();
         if let Some(rest) = text.strip_prefix("--") {
-            if let Some(name) = pending.take() {
+            for name in [pending.take(), pending_flag.take()].into_iter().flatten() {
                 arguments.insert(name, serde_json::Value::Bool(true));
             }
             if let Some((name, value)) = rest.split_once('=') {
                 arguments.insert(name.to_owned(), json_word(value));
+            } else if is_flag(rest) {
+                pending_flag = Some(rest.to_owned());
             } else {
                 pending = Some(rest.to_owned());
             }
-        } else if let Some(name) = pending.take() {
-            arguments.insert(name, json_word(&text));
+            continue;
         }
+        if let Some(name) = pending.take() {
+            arguments.insert(name, json_word(&text));
+            continue;
+        }
+        if let Some(name) = pending_flag.take() {
+            if let Ok(explicit) = text.parse::<bool>() {
+                arguments.insert(name, serde_json::Value::Bool(explicit));
+                continue;
+            }
+            arguments.insert(name, serde_json::Value::Bool(true));
+        }
+        positional.push(text.into_owned());
     }
-    if let Some(name) = pending.take() {
+    for name in [pending, pending_flag].into_iter().flatten() {
         arguments.insert(name, serde_json::Value::Bool(true));
     }
-    arguments
+    (arguments, positional)
 }
 
 fn json_word(text: &str) -> serde_json::Value {
