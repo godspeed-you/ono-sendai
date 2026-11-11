@@ -32,7 +32,9 @@ mod result;
 mod segment;
 
 pub(crate) use assemble::{function_shape, function_stages, run_assembled};
-pub(crate) use drive::{interrupted, run_background, run_evaluated_job};
+#[cfg(feature = "kuang")]
+pub(crate) use drive::interrupted;
+pub(crate) use drive::{run_background, run_evaluated_job};
 #[cfg(feature = "remote")]
 pub(crate) use remote::{literal_argv, remote_decision};
 pub(crate) use result::live_geometry;
