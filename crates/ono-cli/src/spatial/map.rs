@@ -454,7 +454,7 @@ async fn observe(
     } else {
         observe_object(providers, session, center, request, &mut horizon, now).await?;
     }
-    merge_contributions(providers, session, &mut horizon, now).await;
+    merge_contributions(providers, session, request, &mut horizon, now).await;
     Ok(horizon)
 }
 
@@ -469,11 +469,21 @@ async fn observe(
 async fn merge_contributions(
     providers: &ProviderRegistry,
     session: &mut SpatialSessionState,
+    request: &MapRequest,
     horizon: &mut MapHorizon,
     now: Timestamp,
 ) {
+    // §32.1: the map asks for what the expansion of its centre would — a relation beyond
+    // `normal` only where the request reads its neighbourhood completely or names it (ADR-1020).
+    let complete = request.is_complete() || request.horizon_depth() > 1;
+    let wanted: Vec<&str> = ono_spatial_core::relation::contributed_relations()
+        .into_iter()
+        .map(|entry| entry.spec)
+        .filter(|spec| complete || spec.cost_class.is_eager() || request.names_relation(spec.id))
+        .map(|spec| spec.id)
+        .collect();
     for (edge, source, target) in
-        crate::spatial::contributions::merge(providers, session, now).await
+        crate::spatial::contributions::merge(providers, session, &wanted, now).await
     {
         for end in [&source, &target] {
             horizon.place(place_at(session, end, 1, None));

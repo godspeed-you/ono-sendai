@@ -1200,10 +1200,10 @@ fn honest_at_most(at_once: u32) -> Plugin {
             Outcome::Completed
         })
         .command(&format!("{PACKAGE}.command.relations"), |ctx| {
-            // Two edges, and the manifest decides which of them becomes a relation: an assertion
+            // Three edges, and the manifest decides which of them becomes a relation: an assertion
             // whose shape the package never declared resolves to no relation and contributes
-            // nothing, which is why the fixture can assert both and be read by suites that
-            // declare either shape.
+            // nothing, which is why the fixture can assert all of them and be read by suites that
+            // declare any one shape.
             //
             // The first is between the two processes the package can honestly name — itself and
             // the shell that started it. Both are real, so the host can resolve both through the
@@ -1223,8 +1223,56 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 // The second runs between two kinds of place the package contributed itself,
                 // named by their schema ids — the resource `ledger` and the zone it sits in.
                 relation_record("sits-in", (PLACE_SCHEMA, "u-3"), (ZONE_SCHEMA, "z-1")),
+                // The third runs between two places of the same kind — `ledger` beside one of the
+                // two `checkout`s — so that one kind of place can carry two relations of
+                // different cost (ADR-1020).
+                relation_record("beside", (PLACE_SCHEMA, "u-3"), (PLACE_SCHEMA, "u-1")),
             ];
+            // The host names the relations it is asking for, by the ids `relations.yaml` derives
+            // from the shapes (ADR-1020); a relation it did not name is not computed. Without
+            // the argument the package answers for everything, as an older host expects.
+            let asked: Option<Vec<String>> = ctx
+                .arguments()
+                .get("relations")
+                .and_then(serde_json::Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(serde_json::Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                });
+            let id_of = |edge: &Value| -> String {
+                let Value::Record(record) = edge else {
+                    return String::new();
+                };
+                let end = |field: &str| {
+                    let name = record
+                        .get(field)
+                        .and_then(|value| value.as_str().ok())
+                        .unwrap_or_default();
+                    let local = name.split_once('/').map_or(name, |(id, _)| id);
+                    local.rsplit('.').next().unwrap_or(local).to_ascii_lowercase()
+                };
+                format!("{PACKAGE}.{}_to_{}", end("source_type"), end("target_type"))
+            };
             for edge in &edges {
+                if asked
+                    .as_ref()
+                    .is_some_and(|asked| !asked.contains(&id_of(edge)))
+                {
+                    continue;
+                }
+                // What the package computed is written down in its private working directory,
+                // one relation id per line, so a suite can tell a relation the host asked for
+                // from one it merely did not show.
+                if let Ok(mut log) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open("asserted.log")
+                {
+                    use std::io::Write as _;
+                    let _ = writeln!(log, "{}", id_of(edge));
+                }
                 match ctx.emit(edge) {
                     Ok(()) => {}
                     Err(ono_kuang_sdk::EmitError::Refused(error)) => {

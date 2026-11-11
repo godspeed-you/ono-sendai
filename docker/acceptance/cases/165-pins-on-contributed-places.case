@@ -1,10 +1,10 @@
 # #129 in the container: pins, `jump` and `find place` over the kinds of place an installed, lazy
 # KUANG/11 package contributes. Spec v0.4 §20.4 (a pin that cannot be resolved remains and reports
 # its own state), §6.5 (`jump`), §6.8 (`find place`), §11.2 (`<type>/<key>`), §36.1; spec §31.68
-# (an installed package is loaded by its first use). ADR-1005.
+# (an installed package is loaded by its first use). ADR-1005, ADR-1021.
 #
 # The package is the conformance fixture the container ships, declaring one kind of place with a
-# role on disk and nothing else. It is never loaded by hand: every command below that needs it
+# role on disk, and the name of its schema in a schema document (ADR-1021). It is never loaded by hand: every command below that needs it
 # loads it, exactly as `get echo-place` would.
 case: pins and searches reach the places a lazy package contributes, and a stale pin costs only itself
 timeout: 180
@@ -49,6 +49,7 @@ run: |
   roles: [provider]
   contributions:
     targets: [contributions/targets.yaml]
+    schemas: [contributions/schemas.yaml]
   network:
     outbound: none
   MANIFEST
@@ -60,6 +61,11 @@ run: |
       identity_doc: Two observations are the same resource when their `uid` matches.
       roles: [workload]
   TARGETS
+  cat > "$package/contributions/schemas.yaml" <<'SCHEMAS'
+  schemas:
+    - id: dev.example.echo.place/1
+      name: EchoPlace
+  SCHEMAS
 
   echo "== §6.8, §31.68: a lazy package's kinds and roles are searchable before anything loads it =="
   prove 165-a "\`find place --type\` names a kind the installed package contributes" \

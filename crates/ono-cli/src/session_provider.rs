@@ -364,6 +364,9 @@ impl SessionProvider {
         let instance = self.lock().kuang.remove_instance(id);
         match instance {
             Some(instance) => {
+                // An unloaded package contributes no relation (lifecycle.v1 `unload`).
+                #[cfg(feature = "spatial")]
+                crate::spatial::contributions::forget(id);
                 instance
                     .plugin
                     .shutdown(ono_kuang_protocol::ShutdownReason::Unload)

@@ -1,6 +1,6 @@
 # ADR-1005: A spatial command loads the lazy package whose kind of place it names, and a pin nobody can read costs only itself
 
-- Status: accepted
+- Status: superseded by ADR-1021 (in part: that a package declaring targets but no schema document is loaded for any unknown kind word)
 - Date: 2026-11-10
 - Spec refs: v0.4 §6.5, §6.8, §11.2, §20.4, §36.1, §46.1; v0.2 §31.68; external-system-provider
   §15.5; ADR-0584, ADR-0596

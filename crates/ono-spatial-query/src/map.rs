@@ -290,6 +290,13 @@ impl MapRequest {
         !self.expand.is_empty()
     }
 
+    /// Whether `--relations` names this relation, or the package that contributed it — the caller
+    /// asking for it by name (§6.9, §32.1). An empty list names nothing.
+    #[must_use]
+    pub fn names_relation(&self, relation: &str) -> bool {
+        !self.relations.is_empty() && keeps_relation(relation, self)
+    }
+
     /// Whether the caller asked for everything (§6.9, and §34.3's request path).
     #[must_use]
     pub fn is_complete(&self) -> bool {

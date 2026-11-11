@@ -1,0 +1,92 @@
+# v0.6.5 review finding F9 in the container: what a package contributed to the relation
+# vocabulary goes when the package goes. Lifecycle.v1 `unload` (an unloaded package contributes
+# nothing), spec §31.72 (a reload replaces the package), v0.4 §32.1 (the cost a relation declares),
+# ADR-1006, ADR-1008.
+#
+# The package is the conformance fixture the container ships, declaring two kinds of place, a
+# relation between them, and a relation to a kind of place another package would contribute.
+case: an unloaded package's relations are withdrawn and a reload declares them anew
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  package="$home/plugins/dev.example.echo"
+  mkdir -p "$package/runtime" "$package/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$package/runtime/echo"
+  write_manifest() {
+    cat > "$package/manifest.yaml" <<MANIFEST
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Answers for a few resources and the zones they sit in.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  capabilities:
+    optional:
+      - relation.write
+  contributions:
+    targets: [contributions/targets.yaml]
+    relations: ["$1"]
+  network:
+    outbound: none
+  MANIFEST
+  }
+  cat > "$package/contributions/targets.yaml" <<'TARGETS'
+  targets:
+    - name: echo-place
+      schema: dev.example.echo.place/1
+      summary: Resources the example package answers for.
+      identity_doc: Two observations are the same resource when their `uid` matches.
+    - name: echo-zone
+      schema: dev.example.echo.zone/1
+      summary: Zones the resources sit in.
+      identity_doc: Two observations are the same zone when their `uid` matches.
+  TARGETS
+  at_ledger='load plugin dev.example.echo --grant relation.write; get echo-place | where uid == "u-3" | enter'
+
+  echo "== lifecycle.v1 unload: a waiting relation goes with its package =="
+  write_manifest "dev.example.echo.place/1->dev.example.racks.rack/1; name=racked-in"
+  prove 170-a "before the unload, \`follow racked-in\` says what it waits for" \
+    'ono -c "$at_ledger; follow racked-in" 2>&1 | grep -q "spatial.unsupported"'
+  prove 170-b "after \`unload plugin\`, the word no longer names a waiting relation" \
+    'out=$(ono -c "$at_ledger; unload plugin dev.example.echo | count; follow racked-in" 2>&1); ! printf "%s" "$out" | grep -q "spatial.unsupported"'
+
+  echo "== §31.72, §32.1: a reload declares the relation's cost anew =="
+  write_manifest "dev.example.echo.place/1->dev.example.echo.zone/1; name=sits-in; cost=expensive"
+  prove 170-c "the relation reloaded without \`cost=expensive\` is read by a default \`look\`" \
+    'ono -c "load plugin dev.example.echo --grant relation.write; sed -i \"s/; cost=expensive//\" $package/manifest.yaml; $at_ledger; look --json" | tail -1 | grep -q "\"sits-in\":{[^}]*\"state\":\"available\""'
+
+  echo "relation withdrawal checks done"
+exit: 0
+stdout-contains: PROVED 170-a
+stdout-contains: PROVED 170-b
+stdout-contains: PROVED 170-c
+stdout-contains: relation withdrawal checks done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -407,3 +407,153 @@ fn should_still_refuse_a_shape_naming_a_schema_of_its_own_package_it_does_not_de
         run.output()
     );
 }
+
+/// Two relations from the same kind of place: a `normal` one to another resource, and the
+/// `expensive` one to the zone (#224 (3), v0.4 §32.1).
+const MIXED_SHAPES: [&str; 2] = [
+    "dev.example.echo.place/1->dev.example.echo.place/1; name=beside",
+    EXPENSIVE_SHAPE,
+];
+
+/// The relation ids the package computed, in the order it computed them.
+///
+/// The fixture writes each relation it answers for into its private working directory (spec
+/// §31.10's per-instance state), which is what lets a suite tell a relation the host *asked the
+/// package for* from one it only left out of what it showed.
+fn computed(home: &ono_testkit::Scratch) -> Vec<String> {
+    std::fs::read_to_string(
+        home.path()
+            .join("state/ono/kuang")
+            .join(ECHO)
+            .join("work/asserted.log"),
+    )
+    .unwrap_or_default()
+    .lines()
+    .map(str::to_owned)
+    .collect()
+}
+
+#[test]
+fn should_not_ask_the_package_for_an_expensive_relation_when_a_default_look_reads_a_normal_one() {
+    // v0.4 §32.1: "Default `look` and `map` MUST avoid expensive relationships unless cached or
+    // already available", and `contributions.v1.yaml` promises that a relation declared beyond
+    // `normal` is asked for only when the caller asks for it. With a `normal` relation beside the
+    // expensive one, the package was asked for every edge it had, and the expensive one was paid
+    // for on every default look while the exit still said "available on request".
+    let home = echo_plugin_home_with(ECHO, TARGETS, &MIXED_SHAPES);
+    let run = ono_with_plugins(&home, &at_the_place("look | to json"));
+    run.assert_success();
+    assert_eq!(
+        rows(&run)[0]["exits"]["sits-in"]["detail"].as_str(),
+        Some("available on request"),
+        "the expensive exit is left on request, got {:?}",
+        run.output()
+    );
+    let asked = computed(&home);
+    assert!(
+        asked
+            .iter()
+            .any(|id| id == "dev.example.echo.place_to_place"),
+        "the normal relation is read by the default look, got {asked:?}"
+    );
+    assert!(
+        !asked
+            .iter()
+            .any(|id| id == "dev.example.echo.place_to_zone"),
+        "the package is not asked for the expensive relation nobody asked for, got {asked:?}"
+    );
+}
+
+#[test]
+fn should_read_the_expensive_relation_of_a_mixed_package_when_it_is_followed() {
+    // The same expensive exit is one word away, beside a normal one: `follow sits-in` asks for
+    // it, and the package answers it (§6.4, §32.1).
+    let home = echo_plugin_home_with(ECHO, TARGETS, &MIXED_SHAPES);
+    let run = ono_with_plugins(&home, &at_the_place("follow sits-in; look | to json"));
+    run.assert_success();
+    assert_eq!(
+        rows(&run)[0]["place"]["identity"]["uid"].as_str(),
+        Some("z-1"),
+        "following the expensive relation arrives at the zone, got {:?}",
+        run.output()
+    );
+    assert!(
+        computed(&home)
+            .iter()
+            .any(|id| id == "dev.example.echo.place_to_zone"),
+        "the package was asked for the relation that was followed, got {:?}",
+        computed(&home)
+    );
+}
+
+#[test]
+fn should_not_ask_the_package_for_an_expensive_relation_when_a_one_hop_map_is_drawn() {
+    // §32.1 names `map` beside `look`: a map of the resource's immediate neighbourhood draws the
+    // normal relation and does not pay for the expensive one. (A map two hops deep reads its
+    // centre as completely as `look --all` does, for every relation alike.)
+    let home = echo_plugin_home_with(ECHO, TARGETS, &MIXED_SHAPES);
+    let run = ono_with_plugins(&home, &at_the_place("map --depth 1 | count"));
+    run.assert_success();
+    let asked = computed(&home);
+    assert!(
+        asked
+            .iter()
+            .any(|id| id == "dev.example.echo.place_to_place"),
+        "the map reads the normal relation, got {asked:?}"
+    );
+    assert!(
+        !asked
+            .iter()
+            .any(|id| id == "dev.example.echo.place_to_zone"),
+        "a one-hop map does not ask for the expensive relation, got {asked:?}"
+    );
+}
+
+#[test]
+fn should_forget_a_waiting_relation_once_its_package_is_unloaded() {
+    // ADR-1008's waiting shape outlived the package that declared it: after `unload plugin` the
+    // relation still said what it waited for, and the moment another package contributed the
+    // kind, the unloaded package's relation would have been registered. An unloaded package
+    // contributes nothing (lifecycle.v1 `unload`), so the word means nothing here any more —
+    // `spatial.unsupported` is the answer for a relation that exists and waits (ADR-1008).
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[SHAPE, FOREIGN_SHAPE]);
+    let run = ono_with_plugins(
+        &home,
+        &at_the_place(&format!("unload plugin {ECHO} | count; follow racked-in")),
+    );
+    assert!(!run.status().is_success(), "there is nowhere to go");
+    let said = run.stderr();
+    assert!(
+        !said.contains("spatial.unsupported") && !said.contains("dev.example.racks.rack/1"),
+        "the unloaded package's waiting relation is gone: the word is refused as one nothing \
+         declares, not as a relation still waiting for its kind, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_follow_the_cost_a_reloaded_package_declares_now() {
+    // A reload replaces the package (spec §31.72), and with it what its manifest declares: the
+    // first declaration of a relation was kept for the rest of the session, so a package that
+    // changed `cost=` on reload went on being treated by the cost it had before (ADR-1006).
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[EXPENSIVE_SHAPE]);
+    let manifest = home.path().join("plugins").join(ECHO).join("manifest.yaml");
+    let run = ono_with_plugins(
+        &home,
+        &format!(
+            "load plugin {ECHO} --grant relation.write; \
+             sed -i 's/; cost=expensive//' {}; \
+             load plugin {ECHO} --grant relation.write; \
+             get echo-place | where uid == \"u-3\" | enter; look | to json",
+            manifest.display()
+        ),
+    );
+    run.assert_success();
+    let exit = &rows(&run)[0]["exits"]["sits-in"];
+    assert_eq!(
+        (exit["detail"].as_str(), exit["count"].as_i64()),
+        (None, Some(1)),
+        "the reloaded package declares the relation `normal`, so a default look reads it, got \
+         {exit:?}"
+    );
+}

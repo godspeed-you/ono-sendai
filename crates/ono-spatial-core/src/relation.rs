@@ -979,8 +979,9 @@ fn contributions() -> &'static std::sync::RwLock<Vec<Contributed>> {
 /// it because §36.2 forbids "uninspectable phantom edges" and §53 settles that a plugin "cannot
 /// create untraceable truth" — an edge whose relation nobody can attribute would be exactly that.
 ///
-/// Contributing the same id twice keeps the first: a package is loaded once per session, and a
-/// second claim on a name is a conflict rather than a replacement (§31.5).
+/// Contributing the same id twice keeps the first: a second claim on a name is a conflict rather
+/// than a replacement (§31.5). A package that is loaded again is [`withdraw`]n first, so its own
+/// second declaration is not such a claim.
 ///
 /// The declared vocabulary of `docs/contracts/spatial/relations.yaml` is deliberately unchanged by
 /// this — [`relations`] still answers the relations this build ships, which is what `spec-check`
@@ -1201,6 +1202,20 @@ pub fn forget_awaiting(package: &str) {
     if let Ok(mut registry) = awaiting().write() {
         registry.retain(|shape| shape.package != package);
     }
+}
+
+/// Withdraws everything `package` contributed to the relation vocabulary: the relations it
+/// registered and the shapes it left waiting (lifecycle.v1 `unload`; ADR-1008).
+///
+/// Called when the package is unloaded, and before it is loaded again, so that a reload
+/// registers what its manifest declares now — a changed `name=` or `cost=` included — and an
+/// unloaded package's waiting shape is never registered when another package contributes the
+/// kind it named. Relations of *other* packages that waited for this package's kinds stay theirs.
+pub fn withdraw(package: &str) {
+    if let Ok(mut registry) = contributions().write() {
+        registry.retain(|entry| entry.origin != package);
+    }
+    forget_awaiting(package);
 }
 
 /// The contributed relation with this id, or `None`.
