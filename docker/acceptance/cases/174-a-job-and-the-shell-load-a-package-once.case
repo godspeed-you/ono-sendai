@@ -4,7 +4,10 @@
 # it down under the invocation running in it (`runtime.trap the instance was shut down`). A lazy
 # load is one load per package: ten rounds, each starting from an unloaded package, each answer
 # arrives, and the trail holds one load and one unload per round.
-case: a job and the shell that lazily load one package at once start one instance
+# v0.6.5 review S-F3 (spec §18.4, §31.22; ADR-1001): a package's qualified command backgrounded
+# on its own is a job too — `echo:emit --count 2 &` runs and `fg` shows its values, and an
+# unconfirmed destructive one is refused in the job as in the foreground.
+case: a job and the shell share one package instance, loaded once and reached by its qualified name
 timeout: 240
 run: |
   home=$(mktemp -d)
@@ -75,9 +78,28 @@ run: |
     echo "an-instance-was-shut-down-under-an-invocation"
   fi
   echo "loads: $(ono -c "$trail")"
+
+  echo "== a qualified package command backgrounded alone is a job (S-F3) =="
+  ono -c 'load plugin dev.example.echo
+  echo:emit --count 2 &
+  fg %1' >"$home/alone.out" 2>"$home/alone.err"
+  echo "alone-values: $(grep -cxE ' *[12] *' "$home/alone.out")"
+  if grep -q command_not_found "$home/alone.err"; then echo "the-namespace-was-not-resolved"; fi
+  printf '#!/bin/sh\nexec /usr/local/bin/kuang-example-plugin --destructive\n' \
+    > "$home/plugins/dev.example.echo/runtime/echo"
+  chmod 755 "$home/plugins/dev.example.echo/runtime/echo"
+  ono -c 'load plugin dev.example.echo
+  echo:wipe &
+  fg %1' >"$home/wipe.out" 2>"$home/wipe.err"
+  if grep -q safety.confirmation_required "$home/wipe.err"; then echo "wipe-refused-in-the-job"; fi
+  if grep -q wiped "$home/wipe.out"; then echo "an-unconfirmed-wipe-ran"; fi
 exit: 0
 stdout-contains: shell-exit: 0
 stdout-contains: jobs-answered: 10
 stdout-contains: loads: [10]
 stdout-not-contains: an-instance-was-shut-down-under-an-invocation
+stdout-contains: alone-values: 2
+stdout-not-contains: the-namespace-was-not-resolved
+stdout-contains: wipe-refused-in-the-job
+stdout-not-contains: an-unconfirmed-wipe-ran
 stdout-not-contains: panicked

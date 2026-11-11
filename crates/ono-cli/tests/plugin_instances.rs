@@ -406,3 +406,76 @@ fn should_load_a_package_once_when_a_job_and_the_shell_both_load_it_lazily() {
          unload per round"
     );
 }
+
+#[test]
+fn should_run_a_qualified_package_command_backgrounded_alone_as_a_job() {
+    // v0.6.5 review S-F3: `echo:emit --count 2 | to json &` ran as a job, while the same command
+    // backgrounded on its own was handed to the program path and refused with `unknown namespace
+    // 'echo'`. A qualified package command is a job however many stages the line has (spec §18.4,
+    // §31.22).
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo\n\
+         echo:emit --count 2 &\n\
+         fg %1",
+    );
+
+    run.assert_success();
+    assert!(
+        !run.stderr().contains("command_not_found"),
+        "the namespace of a loaded package resolves in the background too: {:?}",
+        run.output()
+    );
+    let values: Vec<&str> = run
+        .stdout()
+        .lines()
+        .map(str::trim)
+        .filter(|line| *line == "1" || *line == "2")
+        .collect();
+    assert_eq!(
+        values,
+        ["1", "2"],
+        "`fg` shows what the job's invocation answered: {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_an_unconfirmed_destructive_package_command_backgrounded_alone() {
+    // The same door in the background is held to the same confirmation (ADR-1001): a
+    // destructive contribution without `--confirm` is refused in the job, and `fg` reports it.
+    let home = plugin_home();
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    let entry = home.path().join("plugins/dev.example.echo/runtime/echo");
+    std::fs::remove_file(&entry).expect("the copied runtime");
+    std::fs::write(
+        &entry,
+        format!("#!/bin/sh\nexec '{}' --destructive\n", binary.display()),
+    )
+    .expect("the runtime wrapper");
+    let mut permissions = std::fs::metadata(&entry).expect("written").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&entry, permissions).expect("executable");
+
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo\n\
+         echo:wipe &\n\
+         fg %1",
+    );
+
+    assert!(
+        run.stderr().contains("safety.confirmation_required"),
+        "an unconfirmed destructive command is refused in a job as in the foreground: {:?}",
+        run.output()
+    );
+    assert!(
+        !run.stdout().contains("wiped"),
+        "the package's code never ran: {:?}",
+        run.output()
+    );
+}
