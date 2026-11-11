@@ -391,9 +391,10 @@ host_calls:
       own `provider`, or one along a relation the package did not declare is
       `runtime.schema_violation` and nothing of the call is kept. The edges live for the session
       in the spatial layer's contributed-relation registry, so `map`, `look` and `follow` see
-      them; asserting an edge again replaces it; a package holds at most 1024 at once, and a call
-      that would exceed that is `resource.item_limit` with nothing kept. Unloading or removing
-      the package withdraws them (ADR-1014).
+      them; asserting an edge again replaces it; a package holds at most 1024 at once, an edge
+      written as JSON is at most 4096 bytes (ADR-1031), and a call that would exceed either is
+      `resource.item_limit` with nothing kept. Unloading or removing the package withdraws them
+      (ADR-1014).
 
   # --- views, spec §31.27 and §31.28 ----------------------------------------------------------
   - id: views.open

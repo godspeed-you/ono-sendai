@@ -172,6 +172,11 @@ pub fn forget(id: &str) {
 /// The most edges one package may hold in the session's store at once (ADR-1014).
 pub const PUSHED_EDGES: usize = 1024;
 
+/// The most bytes one pushed edge may take, written as the JSON the package sent (ADR-1031).
+/// With [`PUSHED_EDGES`] it bounds what one package can make the shell hold, whatever the edges
+/// carry in their keys and `metadata`.
+pub const PUSHED_EDGE_BYTES: usize = 4096;
+
 /// One edge a package asserted through `relations.contribute`, already validated by the host:
 /// it runs along a relation the package itself contributed, between the places the canonical
 /// providers find under `source_key` and `target_key` (§36.1, ADR-1014).

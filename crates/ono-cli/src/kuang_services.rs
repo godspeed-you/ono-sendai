@@ -719,7 +719,18 @@ impl HostServices for ShellHost {
     ) -> Result<u64, HostError> {
         // All or none: one edge outside the contract refuses the call, and nothing of it is kept.
         let mut accepted = Vec::with_capacity(edges.len());
+        let largest = crate::spatial::contributions::PUSHED_EDGE_BYTES;
         for edge in &edges {
+            let bytes = serde_json::to_vec(edge).map_or(usize::MAX, |written| written.len());
+            if bytes > largest {
+                return Err(HostError {
+                    code: ono_core::ErrorCode::ResourceItemLimit,
+                    message: format!(
+                        "an edge `{package}` contributes takes {bytes} bytes, and an edge takes at \
+                         most {largest}; nothing of this call was kept (ADR-1031)"
+                    ),
+                });
+            }
             accepted.push(self.pushed_edge(package, edge)?);
         }
         let bound = crate::spatial::contributions::PUSHED_EDGES;

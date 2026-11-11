@@ -579,6 +579,49 @@ fn should_bound_what_one_package_contributes_and_say_so() {
 }
 
 #[test]
+fn should_refuse_an_edge_larger_than_the_bound_and_keep_nothing_of_its_call() {
+    // The store is bounded in bytes as well as in edges: before, a package could keep 1024 edges
+    // whose `metadata` filled each frame, and grew the shell past its own `memory_max` (v0.6.5
+    // re-review F1). An edge beyond the per-edge bound refuses its whole call with a structured
+    // error, and an edge within it is kept (ADR-1031).
+    let home = scratch();
+    relation_home(&home);
+    let process = |pid: &str| format!(r#"{{\"schema\": \"ono.process/1\", \"pid\": {pid}}}"#);
+    let relation = "dev.example.echo.process_to_process";
+    let edge = |to: &str, bytes: usize| {
+        format!(
+            r#"{{\"from\": {}, \"to\": {}, \"relation\": \"{relation}\", \"confidence\": \"inferred\", \"metadata\": {{\"blob\": \"{}\"}}}}"#,
+            process("1"),
+            process(to),
+            "x".repeat(bytes)
+        )
+    };
+    let run = ono(
+        &home,
+        &format!(
+            "load plugin dev.example.echo; \
+             try {{ echo:relate --edges \"[{}, {}]\" }} catch e {{ $e | select name | to json }}; \
+             echo:relate --edges \"[{}]\" | to json",
+            edge("2", 16),
+            edge("3", 8192),
+            edge("4", 1024)
+        ),
+    );
+    let shown = run.stdout();
+    assert_eq!(
+        shown.matches("resource.item_limit").count(),
+        1,
+        "a call carrying an edge beyond the bound is refused whole; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+    assert!(
+        shown.contains("contributed 1"),
+        "an edge within the bound is kept; stdout {shown:?} stderr {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
 fn should_withdraw_a_packages_edges_when_it_is_unloaded() {
     let home = scratch();
     relation_home(&home);
