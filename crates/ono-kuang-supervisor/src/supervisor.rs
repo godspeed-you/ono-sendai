@@ -4736,11 +4736,19 @@ impl Actor {
         seq: u64,
         params: Json,
     ) -> Result<(), KuangError> {
-        let edges: Vec<Json> = params
-            .get("edges")
-            .and_then(Json::as_array)
-            .cloned()
-            .unwrap_or_default();
+        // A call without a list is not a call with no edges: it is refused as the contract's
+        // error says, rather than answered "none accepted" (ADR-1014).
+        let Some(edges) = params.get("edges").and_then(Json::as_array).cloned() else {
+            self.reply_err(
+                seq,
+                WireError::from_core(
+                    ono_core::ErrorCode::KuangRuntimeSchemaViolation,
+                    "`relations.contribute` takes `edges`, a list of `ono.graph-edge/1`",
+                ),
+            )
+            .await;
+            return Ok(());
+        };
         // Every edge's relation is a use the `relations` scope bounds (ADR-0600 §2): a grant
         // bounded to the package's own declared shapes covers exactly those ids.
         let uses: Vec<ScopeUse> = edges

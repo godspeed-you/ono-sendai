@@ -363,20 +363,33 @@ host_calls:
       depth: {type: int, nullable: true, doc: "Maximum traversal depth. Null means one hop; unbounded traversal is not offered."}
     returns: {type: handle<stream>, doc: "A stream of `ono.graph-edge/1`."}
     errors: []
-    doc: Reads edges from every source, core and contributed alike; `provider` says which.
+    doc: >-
+      Reads edges from every source, core and contributed alike; `provider` says which. An edge a
+      package contributed through `relations.contribute` is read from the same store `map`,
+      `look` and `follow` read, is `inferred` whatever the package claimed, and is answered only
+      while the provider still finds its far end (ADR-1014).
 
   - id: relations.contribute
     domain: relations
     direction: plugin->host
     capability: relation.write
     params:
-      edges: {type: list<ono.graph-edge/1>, required: true, doc: "The edges to add. `provider` is set by the host to the contributing package and cannot be supplied."}
-    returns: {type: int, doc: "How many edges were accepted."}
-    errors: [runtime.schema_violation]
+      edges: {type: list<ono.graph-edge/1>, required: true, doc: "The edges to add, each `{from, to, relation, confidence, direction?, metadata?}`. `relation` is one the package declares in `contributions.relations`; `from` and `to` are object ids of the kinds of place it runs between, carrying the identity field their target is found by (`{schema: ono.process/1, pid: 4419}` or the full `{schema, values}`); `direction`, when given, is `directed`. `provider` is set by the host to the contributing package and cannot be supplied (ADR-1014)."}
+    returns: {type: int, doc: "How many edges were accepted: all of them, or the call is refused."}
+    errors: [runtime.schema_violation, resource.item_limit]
     doc: >-
       A package may add edges without owning either endpoint schema (spec §31.26). An edge whose
       `confidence` is not `exact` is displayed as inferred, and spec §31.26 makes that mandatory
-      rather than polite: "Inferred relations MUST identify themselves as inferred."
+      rather than polite: "Inferred relations MUST identify themselves as inferred." The host
+      never observed a contributed edge, so it does not pass `exact` on either: `relations.query`
+      shows every contributed edge as `inferred`, and a map shows a claimed `exact` as `strong`
+      (spec v0.4 §36.2). The call is all or nothing: an edge outside this record, one naming its
+      own `provider`, or one along a relation the package did not declare is
+      `runtime.schema_violation` and nothing of the call is kept. The edges live for the session
+      in the spatial layer's contributed-relation registry, so `map`, `look` and `follow` see
+      them; asserting an edge again replaces it; a package holds at most 1024 at once, and a call
+      that would exceed that is `resource.item_limit` with nothing kept. Unloading or removing
+      the package withdraws them (ADR-1014).
 
   # --- views, spec §31.27 and §31.28 ----------------------------------------------------------
   - id: views.open
@@ -441,7 +454,7 @@ host_calls:
     params:
       window: {type: string, nullable: true, doc: "No wider than the granted scope. Null means the granted window."}
       filter: {type: record, nullable: true, doc: "A predicate over history entries."}
-    returns: {type: handle<stream>, doc: "A stream of history entries, secret-bearing values already redacted (spec §17.5, ADR-0015 T8)."}
+    returns: {type: handle<stream>, doc: "A stream of history entries, secret-bearing values already redacted (spec §17.5, ADR-0015 T8). Each is `{id, at, command, cwd, status, duration_ms, session, package}`, oldest first; `package` is the package that wrote the entry through `history.append`, or null for the operator's own, and `cwd` is null for a package's entry (ADR-1015)."}
     errors: []
     doc: Redaction happens before delivery, not at the plugin's discretion.
 
@@ -450,10 +463,16 @@ host_calls:
     direction: plugin->host
     capability: history.write
     params:
-      entry: {type: record, required: true, doc: "The entry to add. Attribution to the package is set by the host and cannot be supplied."}
+      entry: {type: record, required: true, doc: "`{command: string, status: int?, duration_ms: int?}` — what the package did, how it ended and how long it took. `command` is non-empty and at most 4096 bytes; `status` is 0–255. Attribution (`package`) and every field the host sets (`id`, `at`, `cwd`, `session`) cannot be supplied, and any other field is refused too (ADR-1015)."}
     returns: {type: "null"}
-    errors: []
-    doc: A package cannot write an entry attributed to the operator or to another package.
+    errors: [runtime.schema_violation, provider.unavailable]
+    doc: >-
+      A package cannot write an entry attributed to the operator or to another package: the host
+      sets `package` to the caller and refuses an entry that names one itself. The text is redacted
+      before it is written (spec §17.5). A package's entries are kept apart from the operator's, so
+      they are never offered for recall at the prompt and cannot crowd the operator's history out;
+      each package keeps its newest 1000, and `history.query` reads them beside the operator's
+      (ADR-1015). A session that keeps no history answers `provider.unavailable`.
 
   # --- temporal, v0.5 §30.7 and §37 -----------------------------------------------------------
   #
@@ -889,10 +908,16 @@ host_calls:
       name: {type: string, required: true, doc: "The secret's name. Must be in the granted `secrets` scope."}
       purpose: {type: string, required: true, doc: "Shown to the operator in the consent prompt, sanitised and attributed to the package."}
     returns: {type: handle<secret>, doc: "An opaque handle, e.g. spec §31.20's `secret#A72`. The material never crosses."}
-    errors: [io.not_found]
+    errors: [io.not_found, provider.unavailable]
     doc: >-
       There is deliberately no `secrets.list`. Spec §31.12: "request opaque secret handles, never
-      enumerate." A package learns nothing about the secrets it did not name.
+      enumerate." A package learns nothing about the secrets it did not name. This build keeps no
+      secret store: the operator has nowhere to put a secret, the environment is never one
+      (spec §31.20), and no call it serves would consume a handle (`network.request` and the
+      `tls` protocol of `network.connect` are not served, ADR-0573). So a request inside the
+      granted `secrets` scope is answered `provider.unavailable`, saying so, and no handle is
+      issued; one outside the scope is `capability.scope_violation` at the broker, audited with
+      the name asked for (ADR-1016).
 
   - id: secrets.release
     domain: secrets

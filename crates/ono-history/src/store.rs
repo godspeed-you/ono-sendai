@@ -146,7 +146,38 @@ impl History {
             cwd.to_path_buf(),
             Some(outcome),
         ));
+        self.trim();
+        Some(id)
+    }
 
+    /// Records an entry `package` wrote, attributed to it (spec §31.12 `history.append`,
+    /// ADR-1015). The caller is the host, which knows which package is asking; the text is
+    /// redacted by the policy exactly as the operator's own is (spec §17.5). Nothing collapses
+    /// and nothing is hidden: a package's entry is kept or refused, never quietly dropped.
+    ///
+    /// Returns the entry's identity.
+    pub fn record_for(
+        &mut self,
+        package: &str,
+        text: &str,
+        status: Option<ono_core::ExitStatus>,
+        duration: Option<std::time::Duration>,
+    ) -> String {
+        let id = self.ids.next_id();
+        self.entries.push(Entry::attributed(
+            id.clone(),
+            self.ids.session().to_owned(),
+            package,
+            self.policy.redact(text),
+            status,
+            duration,
+        ));
+        self.trim();
+        id
+    }
+
+    /// Drops the oldest entries beyond the policy's limit, marking the file for a rewrite.
+    fn trim(&mut self) {
         let limit = self.policy.entry_limit();
         if self.entries.len() > limit {
             let excess = self.entries.len() - limit;
@@ -154,7 +185,6 @@ impl History {
             self.persisted = self.persisted.saturating_sub(excess);
             self.stale = true;
         }
-        Some(id)
     }
 
     /// Writes everything not yet on disk.

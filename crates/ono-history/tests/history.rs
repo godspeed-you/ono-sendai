@@ -68,7 +68,7 @@ fn should_record_where_and_how_a_command_ran_rather_than_only_its_text() {
     );
 
     let entry = &history.entries()[0];
-    assert_eq!(entry.cwd(), Path::new("/tmp/work"));
+    assert_eq!(entry.cwd(), Some(Path::new("/tmp/work")));
     assert_eq!(entry.exit_status(), Some(ExitStatus::FAILURE));
     assert_eq!(entry.duration(), Some(Duration::from_millis(120)));
     assert!(
@@ -408,4 +408,68 @@ fn should_remember_that_a_command_was_adapted_and_explain_it() {
             && explained.contains("lsblk --json --list"),
         "the explanation names the adapter and the plan, got {explained:?}"
     );
+}
+
+// --- entries a KUANG/11 package writes (spec §31.12 `history.append`, ADR-1015) ---------------
+
+#[test]
+fn should_attribute_an_entry_to_the_package_that_wrote_it_and_keep_it_across_a_restart() {
+    // Spec §31.7's `history.write: {scope: plugin}` is attribution: every entry a package writes
+    // carries its package id, and the host — not the package — puts it there.
+    let dir = scratch();
+    let path = dir.path().join("dev.example.echo.jsonl");
+    {
+        let mut history = history_at(&path);
+        history.record_for(
+            "dev.example.echo",
+            "synced 3 objects",
+            Some(ExitStatus::SUCCESS),
+            None,
+        );
+        history.flush().expect("history must be written");
+    }
+    let reopened = history_at(&path);
+    let entry = &reopened.entries()[0];
+    assert_eq!(entry.command_text(), "synced 3 objects");
+    assert_eq!(
+        entry.package(),
+        Some("dev.example.echo"),
+        "the entry names the package that wrote it after a restart"
+    );
+    assert_eq!(
+        entry.cwd(),
+        None,
+        "a package's entry ran in no directory of the session's, and says so rather than inventing one"
+    );
+}
+
+#[test]
+fn should_read_an_entry_written_before_attribution_existed_as_the_operators_own() {
+    // The history file is extended compatibly: a line from an earlier build carries no `package`
+    // and is the operator's own entry, exactly as it was when it was written.
+    let dir = scratch();
+    let path = dir.path().join("history.jsonl");
+    std::fs::write(
+        &path,
+        "{\"id\":\"h1\",\"at\":\"2026-09-03T10:00:00Z\",\"command\":\"get process\",\"cwd\":\"/srv\",\"status\":0,\"session\":\"s1\"}\n",
+    )
+    .expect("an earlier build's line");
+    let history = history_at(&path);
+    let entry = &history.entries()[0];
+    assert_eq!(entry.package(), None, "an earlier line is the operator's");
+    assert_eq!(entry.cwd(), Some(Path::new("/srv")));
+}
+
+#[test]
+fn should_redact_a_packages_entry_before_writing_it() {
+    // Spec §17.5 holds for a package's entry as for the operator's: the secret never reaches the
+    // file, whoever wrote the line.
+    let dir = scratch();
+    let path = dir.path().join("dev.example.echo.jsonl");
+    let mut history = history_at(&path);
+    history.record_for("dev.example.echo", "login --token=hunter2 prod", None, None);
+    history.flush().expect("write");
+    let written = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(!written.contains("hunter2"), "{written:?}");
+    assert!(written.contains("prod"), "the rest survives: {written:?}");
 }

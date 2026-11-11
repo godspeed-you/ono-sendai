@@ -359,6 +359,8 @@ impl SessionProvider {
     /// Takes the instance of `id` out of the host and shuts it down (lifecycle.v1 `unload`).
     #[cfg(feature = "kuang")]
     async fn unload_instance(&self, id: &str) -> bool {
+        // Its contributed relations and the edges it pushed leave with it (ADR-1014).
+        crate::spatial::contributions::forget(id);
         let instance = self.lock().kuang.remove_instance(id);
         match instance {
             Some(instance) => {

@@ -152,11 +152,106 @@ pub fn awaiting_refusal(kind: SpatialType, word: &str) -> Option<ono_value::Erro
     )
 }
 
-/// Forgets a package's contributions when it is unloaded.
+/// Forgets a package's contributions when it is unloaded: the relations it answers for and the
+/// edges it pushed (ADR-1014).
 pub fn forget(id: &str) {
     if let Ok(mut registry) = contributors().lock() {
         registry.remove(id);
     }
+    if let Ok(mut store) = pushed().lock() {
+        store.remove(id);
+    }
+}
+
+// --- edges a package pushes through `relations.contribute` (spec §31.26, ADR-1014) -----------
+
+/// The most edges one package may hold in the session's store at once (ADR-1014).
+pub const PUSHED_EDGES: usize = 1024;
+
+/// One edge a package asserted through `relations.contribute`, already validated by the host:
+/// it runs along a relation the package itself contributed, between the places the canonical
+/// providers find under `source_key` and `target_key` (§36.1, ADR-1014).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pushed {
+    /// The relation, one the package declared in `contributions.relations`.
+    pub relation: &'static ono_spatial_core::relation::RelationSpec,
+    /// The source's key under the identity field its kind of place is found by.
+    pub source_key: String,
+    /// The target's key, the same way.
+    pub target_key: String,
+    /// What the package claimed, already held below `exact`: the host did not observe it.
+    pub confidence: Confidence,
+    /// Relationship-specific detail, as the package gave it.
+    pub metadata: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Pushed {
+    fn same_edge(&self, other: &Self) -> bool {
+        self.relation.id == other.relation.id
+            && self.source_key == other.source_key
+            && self.target_key == other.target_key
+    }
+}
+
+/// The edges packages pushed this session, by package id. Session-scoped: a package that wants
+/// its edges in the next session asserts them again when it is loaded there (ADR-1014).
+fn pushed() -> &'static Mutex<BTreeMap<String, Vec<Pushed>>> {
+    static PUSHED: OnceLock<Mutex<BTreeMap<String, Vec<Pushed>>>> = OnceLock::new();
+    PUSHED.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// The relation `id` if `package` contributed it, and only then (§31.5, ADR-1014).
+#[must_use]
+pub fn relation_of(
+    package: &str,
+    id: &str,
+) -> Option<&'static ono_spatial_core::relation::RelationSpec> {
+    ono_spatial_core::relation::contributed_relations()
+        .into_iter()
+        .find(|entry| entry.origin == package && entry.spec.id == id)
+        .map(|entry| entry.spec)
+}
+
+/// Keeps `edges` for `package`, all or none. An edge the package asserted before is replaced,
+/// not counted twice; a call that would leave the package holding more than [`PUSHED_EDGES`]
+/// keeps nothing and says how many the store would have held (ADR-1014).
+///
+/// # Errors
+///
+/// The number of edges the package would have held, when that is beyond the bound.
+pub fn keep(package: &str, edges: Vec<Pushed>) -> Result<usize, usize> {
+    let Ok(mut store) = pushed().lock() else {
+        return Err(0);
+    };
+    let mut held = store.get(package).cloned().unwrap_or_default();
+    let accepted = edges.len();
+    for edge in edges {
+        match held.iter_mut().find(|known| known.same_edge(&edge)) {
+            Some(known) => *known = edge,
+            None => held.push(edge),
+        }
+    }
+    if held.len() > PUSHED_EDGES {
+        return Err(held.len());
+    }
+    store.insert(package.to_owned(), held);
+    Ok(accepted)
+}
+
+/// Every edge every package pushed, with the package that pushed it.
+#[must_use]
+pub fn pushed_edges() -> Vec<(String, Pushed)> {
+    pushed().lock().map_or_else(
+        |_| Vec::new(),
+        |store| {
+            store
+                .iter()
+                .flat_map(|(package, edges)| {
+                    edges.iter().map(|edge| (package.clone(), edge.clone()))
+                })
+                .collect()
+        },
+    )
 }
 
 /// Asks every contributing package for its edges and records the ones both of whose ends the
@@ -183,6 +278,27 @@ pub async fn merge(
             if let Some(edge) = resolve(providers, session, &id, &record, now).await {
                 merged.push(edge);
             }
+        }
+    }
+    // The edges packages pushed are merged the same way: resolved through the canonical
+    // providers here, so one whose end nothing answers to is no edge at all (§36.2, ADR-1014).
+    for (package, edge) in pushed_edges() {
+        let ends = (
+            (edge.relation.source, edge.source_key.as_str()),
+            (edge.relation.target, edge.target_key.as_str()),
+        );
+        if let Some(edge) = edge_between(
+            providers,
+            session,
+            &package,
+            edge.relation,
+            ends,
+            edge.confidence,
+            now,
+        )
+        .await
+        {
+            merged.push(edge);
         }
     }
     merged
@@ -228,36 +344,52 @@ async fn resolve(
         &source_name,
         &target_name,
     ))?;
-    let source = place_of(
+    let claimed = text(record, "confidence")
+        .and_then(|name| Confidence::from_name(&name))
+        .unwrap_or(Confidence::Unknown);
+    let (mut edge, source, target) = edge_between(
         providers,
         session,
-        source_type,
-        &text(record, "source_key")?,
+        package,
+        relation,
+        (
+            (source_type, &text(record, "source_key")?),
+            (target_type, &text(record, "target_key")?),
+        ),
+        claimed,
         now,
     )
     .await?;
-    let target = place_of(
-        providers,
-        session,
-        target_type,
-        &text(record, "target_key")?,
-        now,
-    )
-    .await?;
+    if let Some(word) = text(record, "relation") {
+        edge = edge.with_attribute("provider_relation", Value::string(&word));
+    }
+    Some((edge, source, target))
+}
+
+/// The edge `package` asserts along `relation` between the places the canonical providers find
+/// under the two keys, attributed to the package and never exact (§36.2, §31.64, §53).
+async fn edge_between(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    package: &str,
+    relation: &'static ono_spatial_core::relation::RelationSpec,
+    ((source_type, source_key), (target_type, target_key)): (
+        (SpatialType, &str),
+        (SpatialType, &str),
+    ),
+    claimed: Confidence,
+    now: Timestamp,
+) -> Option<(RelationshipEdge, SpatialId, SpatialId)> {
+    let source = place_of(providers, session, source_type, source_key, now).await?;
+    let target = place_of(providers, session, target_type, target_key, now).await?;
     if source == target {
         return None;
     }
     // §36.2: an AI- or plugin-derived relationship must never "appear exact without provenance".
     // The host did not observe this edge, so `exact` is not a claim it can pass on however sure
     // the package is; everything weaker travels as the package stated it (§11.5).
-    let claimed = text(record, "confidence")
-        .and_then(|name| Confidence::from_name(&name))
-        .unwrap_or(Confidence::Unknown);
-    let confidence = match claimed {
-        Confidence::Exact => Confidence::Strong,
-        other => other,
-    };
-    let mut edge = RelationshipEdge::new(
+    let confidence = held_below_exact(claimed);
+    let edge = RelationshipEdge::new(
         source.clone(),
         target.clone(),
         relation.relation_type(),
@@ -268,10 +400,17 @@ async fn resolve(
         now,
     )
     .with_attribute("origin", Value::string(package));
-    if let Some(word) = text(record, "relation") {
-        edge = edge.with_attribute("provider_relation", Value::string(&word));
-    }
     Some((edge, source, target))
+}
+
+/// What a package's claim becomes on an edge the host did not observe: everything but `exact` as
+/// stated, and `exact` one step below it (§36.2, §11.5).
+#[must_use]
+pub fn held_below_exact(claimed: Confidence) -> Confidence {
+    match claimed {
+        Confidence::Exact => Confidence::Strong,
+        other => other,
+    }
 }
 
 /// The place the canonical provider answers with for the key a package named.

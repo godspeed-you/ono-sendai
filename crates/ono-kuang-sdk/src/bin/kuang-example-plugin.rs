@@ -977,6 +977,18 @@ fn honest_at_most(at_once: u32) -> Plugin {
             "stream<string>",
             &["history.read"],
         ))
+        .contribute_command(command(
+            "relate",
+            "Contribute edges along this package's own relation, attributed by the host.",
+            "stream<string>",
+            &["relation.write"],
+        ))
+        .contribute_command(command(
+            "history-append",
+            "Append one entry to the session's history, attributed by the host.",
+            "stream<string>",
+            &["history.write"],
+        ))
         .contribute_temporal_source(ono_kuang_protocol::TemporalSourceContribution {
             id: format!("{PACKAGE}.temporal-source.echoes"),
             summary: "The echoes this package has been asked for, as canonical events."
@@ -1501,15 +1513,114 @@ fn honest_at_most(at_once: u32) -> Plugin {
         .command(&format!("{PACKAGE}.command.history"), |ctx| {
             match ctx.host_call(method::HISTORY_QUERY, json!({"window": null, "filter": null})) {
                 Ok(opened) => match opened.get("handle").and_then(serde_json::Value::as_u64) {
-                    Some(handle) => pull_all(ctx, handle, |entry| {
-                        entry
-                            .get("command")
-                            .and_then(serde_json::Value::as_str)
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| entry.to_string())
-                    }),
+                    Some(handle) => {
+                        // `--full` reports each entry whole, attribution included (ADR-1015).
+                        let full = ctx.arguments().get("full").is_some();
+                        pull_all(ctx, handle, |entry| {
+                            if full {
+                                return entry.to_string();
+                            }
+                            entry
+                                .get("command")
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                                .unwrap_or_else(|| entry.to_string())
+                        })
+                    }
                     None => Outcome::Completed,
                 },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.relate"), |ctx| {
+            // `--edges` sends a list as given, which is how a case proves what the host refuses;
+            // otherwise the edges run along the package's `process->process` shape between the
+            // pids `--from` and `--to` name — by default the shell that started the package and
+            // the package itself — and `--repeat` asserts that many, to consecutive targets.
+            let relation = ctx
+                .arguments()
+                .get("relation")
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(|| format!("{PACKAGE}.process_to_process"), str::to_owned);
+            #[cfg(unix)]
+            let parent = i64::from(std::os::unix::process::parent_id());
+            #[cfg(not(unix))]
+            let parent = 0i64;
+            let from = int_argument(ctx, "from", parent);
+            let to = int_argument(ctx, "to", i64::from(std::process::id()));
+            let edges = if ctx.arguments().get("edges").is_some() {
+                json_argument(ctx, "edges")
+            } else {
+                let confidence = ctx
+                    .arguments()
+                    .get("confidence")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("inferred")
+                    .to_owned();
+                let repeat = int_argument(ctx, "repeat", 1).max(1);
+                serde_json::Value::Array(
+                    (0..repeat)
+                        .map(|offset| {
+                            json!({
+                                "from": {"schema": "ono.process/1", "pid": from},
+                                "to": {"schema": "ono.process/1", "pid": to + offset},
+                                "relation": relation,
+                                "confidence": confidence,
+                            })
+                        })
+                        .collect(),
+                )
+            };
+            match ctx.host_call(method::RELATIONS_CONTRIBUTE, json!({"edges": edges})) {
+                Ok(count) => {
+                    let _ = ctx.emit(&Value::String(format!("contributed {count}").into()));
+                }
+                Err(error) => return Outcome::Failed(error),
+            }
+            if ctx.arguments().get("query").is_none() {
+                return Outcome::Completed;
+            }
+            // `--query` reads the edges back the way any package would: the source resolved to
+            // its identity, and `relations.query` walked one hop from it.
+            let resolved = match ctx.host_call(
+                method::OBJECTS_RESOLVE,
+                json!({"target": "process", "selector": {"field": {"name": "pid", "value": from}}}),
+            ) {
+                Ok(resolved) => resolved,
+                Err(error) => return Outcome::Failed(error),
+            };
+            let Some(id) = resolved.get(0).and_then(|found| found.get("id")).cloned() else {
+                return Outcome::Completed;
+            };
+            match ctx.host_call(
+                method::RELATIONS_QUERY,
+                json!({"from": id, "to": null, "relations": [relation], "depth": 1}),
+            ) {
+                Ok(opened) => match opened.get("handle").and_then(serde_json::Value::as_u64) {
+                    Some(handle) => pull_all(ctx, handle, |edge| edge.to_string()),
+                    None => Outcome::Completed,
+                },
+                Err(error) => Outcome::Failed(error),
+            }
+        })
+        .command(&format!("{PACKAGE}.command.history-append"), |ctx| {
+            // `--entry` sends a whole entry as given, which is how a case proves what the host
+            // refuses — an entry naming another author among it; `--command` is the honest one.
+            let entry = match ctx.arguments().get("entry") {
+                Some(_) => json_argument(ctx, "entry"),
+                None => json!({
+                    "command": ctx
+                        .arguments()
+                        .get("command")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("echoed an item"),
+                }),
+            };
+            match ctx.host_call(method::HISTORY_APPEND, json!({"entry": entry})) {
+                Ok(_) => {
+                    let _ = ctx.emit(&Value::String("appended".into()));
+                    Outcome::Completed
+                }
                 Err(error) => Outcome::Failed(error),
             }
         })

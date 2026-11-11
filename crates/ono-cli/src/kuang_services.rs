@@ -20,12 +20,20 @@ const PACKAGE_REDACTIONS: &[&str] = &[
     r"(?i)\b(sk|pk|ghp|gho|xox[abp])[-_][A-Za-z0-9_-]{8,}",
 ];
 
+/// The most entries one package keeps in its own history; the oldest go first (ADR-1015).
+const PACKAGE_HISTORY_ENTRIES: usize = 1000;
+
+/// The longest text a package's history entry may carry, in bytes (ADR-1015).
+const PACKAGE_ENTRY_BYTES: usize = 4096;
+
 /// What a loaded package's domain calls reach: the registry as it stood when the package was
 /// loaded, and where the session's history file is.
 #[derive(Clone)]
 pub struct ShellHost {
     registry: ProviderRegistry,
     history: Option<PathBuf>,
+    /// The package's own history, opened at its first `history.append` (ADR-1015).
+    appended: Arc<std::sync::Mutex<Option<ono_history::History>>>,
 }
 
 impl std::fmt::Debug for ShellHost {
@@ -40,7 +48,11 @@ impl ShellHost {
     /// The services over `registry`, with the history at `history` when the session keeps one.
     #[must_use]
     pub fn new(registry: ProviderRegistry, history: Option<PathBuf>) -> Self {
-        Self { registry, history }
+        Self {
+            registry,
+            history,
+            appended: Arc::default(),
+        }
     }
 
     /// The target a schema's objects are asked for: the provider that advertises the schema
@@ -87,6 +99,258 @@ impl ShellHost {
                     || HostError::not_found(format!("`{id}` is not there to be read")),
                     host_error,
                 )
+            })
+    }
+}
+
+/// A call whose argument is outside the record the contract declares (`runtime.schema_violation`).
+fn schema_violation(message: impl Into<String>) -> HostError {
+    HostError {
+        code: ono_core::ErrorCode::KuangRuntimeSchemaViolation,
+        message: message.into(),
+    }
+}
+
+/// Where the packages' own histories are kept: beside the operator's, never in it (ADR-1015).
+fn package_histories(history: &std::path::Path) -> PathBuf {
+    history.with_file_name("history-packages")
+}
+
+/// What the host keeps of a package's entry, or why it keeps nothing (ADR-1015).
+fn package_entry(
+    entry: &Json,
+) -> Result<
+    (
+        String,
+        Option<ono_core::ExitStatus>,
+        Option<std::time::Duration>,
+    ),
+    HostError,
+> {
+    let Some(fields) = entry.as_object() else {
+        return Err(schema_violation(
+            "a history entry is a record `{command, status?, duration_ms?}`",
+        ));
+    };
+    for name in fields.keys() {
+        match name.as_str() {
+            "command" | "status" | "duration_ms" => {}
+            "package" => {
+                return Err(schema_violation(
+                    "a history entry's `package` is set by the host to the package that appends \
+                     it, and cannot be supplied (spec §31.7, ADR-1015)",
+                ));
+            }
+            "id" | "at" | "cwd" | "session" => {
+                return Err(schema_violation(format!(
+                    "a history entry's `{name}` is set by the host and cannot be supplied"
+                )));
+            }
+            other => {
+                return Err(schema_violation(format!(
+                    "`{other}` is not a field of a history entry; it has `command`, `status` and \
+                     `duration_ms`"
+                )));
+            }
+        }
+    }
+    let command = fields
+        .get("command")
+        .and_then(Json::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| schema_violation("a history entry names what was done in `command`"))?;
+    if command.len() > PACKAGE_ENTRY_BYTES {
+        return Err(schema_violation(format!(
+            "a history entry's `command` is at most {PACKAGE_ENTRY_BYTES} bytes"
+        )));
+    }
+    let status = match fields.get("status") {
+        None | Some(Json::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|code| u8::try_from(code).ok())
+                .map(ono_core::ExitStatus::from_code)
+                .ok_or_else(|| schema_violation("a history entry's `status` is 0–255"))?,
+        ),
+    };
+    let duration = match fields.get("duration_ms") {
+        None | Some(Json::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .map(std::time::Duration::from_millis)
+                .ok_or_else(|| {
+                    schema_violation("a history entry's `duration_ms` is a count of milliseconds")
+                })?,
+        ),
+    };
+    Ok((command.to_owned(), status, duration))
+}
+
+/// The policy a package's own history is kept under: the operator's redaction and the package
+/// boundary's wider net, nothing hidden, and a bound of its own (ADR-1015, ADR-0015 T8).
+fn package_history_policy() -> ono_history::Policy {
+    ono_history::Policy::default()
+        .redacting(PACKAGE_REDACTIONS)
+        .hide_leading_space(false)
+        .max_entries(PACKAGE_HISTORY_ENTRIES)
+}
+
+/// A relation key as the spatial layer finds a place by it: an integer's digits, or the text.
+fn key_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.to_string()),
+        other => other.as_int().ok().map(|number| number.to_string()),
+    }
+}
+
+impl ShellHost {
+    /// The object of kind `kind` the canonical provider answers for under `key`, if any.
+    async fn object_by_key(
+        &self,
+        kind: ono_spatial_core::SpatialType,
+        key: &str,
+    ) -> Option<ObjectId> {
+        let (target, field) = crate::spatial::relations::target_of(kind)?;
+        let value = key
+            .parse::<i64>()
+            .map_or_else(|_| Value::string(key), |number| Value::Int(number.into()));
+        let query = Query::target(target).with(Selector::field(field, value.clone()));
+        let collected = self.registry.snapshot(&query).ok()?.collect().await;
+        collected.values().iter().find_map(|found| match found {
+            Value::Record(record) if record.get(field) == Some(&value) => ObjectId::of(record),
+            _ => None,
+        })
+    }
+
+    /// One edge of a `relations.contribute` call, held to `ono.graph-edge/1` and to the
+    /// relations `package` declared, or the reason it is refused (spec §31.26, ADR-1014).
+    fn pushed_edge(
+        &self,
+        package: &str,
+        edge: &Json,
+    ) -> Result<crate::spatial::contributions::Pushed, HostError> {
+        let Some(fields) = edge.as_object() else {
+            return Err(schema_violation(
+                "an edge is an `ono.graph-edge/1` record `{from, to, relation, confidence}`",
+            ));
+        };
+        for name in fields.keys() {
+            match name.as_str() {
+                "from" | "to" | "relation" | "direction" | "confidence" | "metadata" => {}
+                "provider" => {
+                    return Err(schema_violation(
+                        "an edge's `provider` is set by the host to the package that contributes \
+                         it, and cannot be supplied (spec §31.26, §31.80)",
+                    ));
+                }
+                other => {
+                    return Err(schema_violation(format!(
+                        "`{other}` is not a field of `ono.graph-edge/1`"
+                    )));
+                }
+            }
+        }
+        let relation_id = fields
+            .get("relation")
+            .and_then(Json::as_str)
+            .ok_or_else(|| schema_violation("an edge names its `relation`"))?;
+        let relation = crate::spatial::contributions::relation_of(package, relation_id)
+            .ok_or_else(|| {
+                schema_violation(format!(
+                    "`{relation_id}` is not a relation `{package}` contributes: a package's edges \
+                     run along the relations its manifest declares in `contributions.relations` \
+                     (spec §31.7, ADR-1014)"
+                ))
+            })?;
+        match fields.get("direction").map(|value| value.as_str()) {
+            None | Some(Some("directed")) => {}
+            Some(Some("undirected")) => {
+                return Err(schema_violation(format!(
+                    "`{relation_id}` runs one way, from its source to its target"
+                )));
+            }
+            Some(_) => {
+                return Err(schema_violation(
+                    "an edge's `direction` is `directed` or `undirected`",
+                ));
+            }
+        }
+        let claimed = match fields.get("confidence").and_then(Json::as_str) {
+            Some("exact") => ono_spatial_core::Confidence::Exact,
+            Some("inferred") => ono_spatial_core::Confidence::Inferred,
+            _ => {
+                return Err(schema_violation(
+                    "an edge states its `confidence`, `exact` or `inferred` — required, never \
+                     defaulted (spec §22.2)",
+                ));
+            }
+        };
+        let metadata = match fields.get("metadata") {
+            None | Some(Json::Null) => serde_json::Map::new(),
+            Some(Json::Object(metadata)) => metadata.clone(),
+            Some(_) => return Err(schema_violation("an edge's `metadata` is a record")),
+        };
+        Ok(crate::spatial::contributions::Pushed {
+            relation,
+            source_key: self.end_key(fields.get("from"), "from", relation, relation.source)?,
+            target_key: self.end_key(fields.get("to"), "to", relation, relation.target)?,
+            confidence: crate::spatial::contributions::held_below_exact(claimed),
+            metadata,
+        })
+    }
+
+    /// The key one end of a contributed edge is found by: the end is an object id of the kind of
+    /// place the relation runs between, carrying the identity field that kind is found by.
+    fn end_key(
+        &self,
+        end: Option<&Json>,
+        side: &str,
+        relation: &ono_spatial_core::relation::RelationSpec,
+        kind: ono_spatial_core::SpatialType,
+    ) -> Result<String, HostError> {
+        let schema_text = end
+            .and_then(|end| end.get("schema"))
+            .and_then(Json::as_str)
+            .ok_or_else(|| {
+                schema_violation(format!(
+                    "an edge's `{side}` is an object id that names its `schema`"
+                ))
+            })?;
+        let schema: SchemaId = schema_text
+            .parse()
+            .map_err(|_| schema_violation(format!("`{schema_text}` is not a schema id")))?;
+        let (target, field) = crate::spatial::relations::target_of(kind).ok_or_else(|| {
+            schema_violation(format!(
+                "`{}` leads to a kind of place no target answers for",
+                relation.id
+            ))
+        })?;
+        if self.target_of(&schema).as_deref() != Some(target) {
+            return Err(schema_violation(format!(
+                "an edge's `{side}` is a `{schema}`, and `{}` runs between places that `{target}` \
+                 answers for",
+                relation.id
+            )));
+        }
+        let end = end.unwrap_or(&Json::Null);
+        let value = end.get(field).cloned().or_else(|| {
+            let position = builtin_schemas()
+                .get(&schema)?
+                .identity()
+                .iter()
+                .position(|name| name.as_ref() == field)?;
+            end.get("values")?.as_array()?.get(position).cloned()
+        });
+        value
+            .and_then(|value| from_json(&value, builtin_schemas()).ok())
+            .as_ref()
+            .and_then(key_text)
+            .ok_or_else(|| {
+                schema_violation(format!(
+                    "an edge's `{side}` names the `{field}` its `{schema}` is found by"
+                ))
             })
     }
 }
@@ -405,15 +669,69 @@ impl HostServices for ShellHost {
                 }));
             }
         }
+        // The edges packages contributed from this object, read from the one store `map` and
+        // `follow` read too (ADR-1014). The host never observed them, so none is exact, and
+        // one whose far end nothing answers to is no edge (§36.2).
+        for (package, pushed) in crate::spatial::contributions::pushed_edges() {
+            if relations
+                .as_ref()
+                .is_some_and(|wanted| !wanted.iter().any(|name| name == pushed.relation.id))
+            {
+                continue;
+            }
+            let starts_here = crate::spatial::relations::target_of(pushed.relation.source)
+                .filter(|(answering, _)| *answering == target)
+                .and_then(|(_, field)| record.get(field))
+                .and_then(key_text)
+                .is_some_and(|key| key == pushed.source_key);
+            if !starts_here {
+                continue;
+            }
+            let Some(far) = self
+                .object_by_key(pushed.relation.target, &pushed.target_key)
+                .await
+            else {
+                continue;
+            };
+            if to.as_ref().is_some_and(|to| far != *to) {
+                continue;
+            }
+            edges.push(json!({
+                "from": object_id_json(&from),
+                "to": object_id_json(&far),
+                "relation": pushed.relation.id,
+                "direction": "directed",
+                "confidence": match pushed.confidence {
+                    ono_spatial_core::Confidence::Exact => "exact",
+                    _ => "inferred",
+                },
+                "provider": package,
+                "metadata": Json::Object(pushed.metadata),
+            }));
+        }
         Ok(ready_stream(edges))
     }
 
     async fn relations_contribute(
         &self,
-        _package: &str,
-        _edges: Vec<Json>,
+        package: &str,
+        edges: Vec<Json>,
     ) -> Result<u64, HostError> {
-        Err(HostError::unavailable("store for contributed relations"))
+        // All or none: one edge outside the contract refuses the call, and nothing of it is kept.
+        let mut accepted = Vec::with_capacity(edges.len());
+        for edge in &edges {
+            accepted.push(self.pushed_edge(package, edge)?);
+        }
+        let bound = crate::spatial::contributions::PUSHED_EDGES;
+        crate::spatial::contributions::keep(package, accepted)
+            .map(|count| u64::try_from(count).unwrap_or(u64::MAX))
+            .map_err(|held| HostError {
+                code: ono_core::ErrorCode::ResourceItemLimit,
+                message: format!(
+                    "`{package}` would hold {held} contributed edges, and a package holds at most \
+                     {bound} in a session; nothing of this call was kept (ADR-1014)"
+                ),
+            })
     }
 
     async fn history_query(
@@ -428,7 +746,7 @@ impl HostServices for ShellHost {
         // the net is wider (ADR-0015 T8, ADR-0568): a credential in a header is as much a secret
         // as one in a flag.
         let policy = ono_history::Policy::default().redacting(PACKAGE_REDACTIONS);
-        let entries = match ono_history::History::open(path, ono_history::Policy::default()) {
+        let mut entries = match ono_history::History::open(path, ono_history::Policy::default()) {
             Ok(history) => history.entries().to_vec(),
             Err(_) if !path.exists() => Vec::new(),
             Err(error) => {
@@ -441,6 +759,23 @@ impl HostServices for ShellHost {
                 });
             }
         };
+        // The packages' own entries are read beside the operator's, each carrying its author
+        // (ADR-1015); one that cannot be read costs that package's entries, not the answer.
+        for file in std::fs::read_dir(package_histories(path))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|file| {
+                file.extension()
+                    .is_some_and(|extension| extension == "jsonl")
+            })
+        {
+            if let Ok(history) = ono_history::History::open(&file, package_history_policy()) {
+                entries.extend(history.entries().iter().cloned());
+            }
+        }
+        entries.sort_by_key(ono_history::Entry::at);
         let since = window
             .as_deref()
             .and_then(|window| window.parse::<jiff::SignedDuration>().ok())
@@ -463,20 +798,54 @@ impl HostServices for ShellHost {
                     "id": entry.id(),
                     "at": entry.at().to_string(),
                     "command": policy.redact(entry.command_text()),
-                    "cwd": entry.cwd().display().to_string(),
+                    "cwd": entry.cwd().map(|cwd| cwd.display().to_string()),
                     "status": entry.exit_status().map(|status| status.code()),
                     "duration_ms": entry.duration().map(|duration| duration.as_millis()),
                     "session": entry.session(),
+                    "package": entry.package(),
                 })
             })
             .collect();
         Ok(ready_stream(shown))
     }
 
-    async fn history_append(&self, _package: &str, _entry: Json) -> Result<(), HostError> {
-        Err(HostError::unavailable(
-            "attributed history entries: the history record has no field for a package's authorship yet",
-        ))
+    async fn history_append(&self, package: &str, entry: Json) -> Result<(), HostError> {
+        let Some(path) = self.history.as_ref() else {
+            return Err(HostError::unavailable("history: the session keeps none"));
+        };
+        let (text, status, duration) = package_entry(&entry)?;
+        // The id names a file, so it must be one: the supervisor hands over the id the manifest
+        // declared, and a name that could leave the directory is refused rather than trusted.
+        if package.is_empty()
+            || package.starts_with('.')
+            || !package
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        {
+            return Err(HostError::unavailable(&format!(
+                "history for `{package}`: its id cannot name a file"
+            )));
+        }
+        let unwritable = |error: &dyn std::fmt::Display| HostError {
+            code: ono_core::ErrorCode::ProviderUnavailable,
+            message: format!("the history of `{package}` could not be written: {error}"),
+        };
+        let mut appended = self
+            .appended
+            .lock()
+            .map_err(|_| unwritable(&"an earlier append failed part-way"))?;
+        if appended.is_none() {
+            let file = package_histories(path).join(format!("{package}.jsonl"));
+            *appended = Some(
+                ono_history::History::open(&file, package_history_policy())
+                    .map_err(|error| unwritable(&error))?,
+            );
+        }
+        let Some(history) = appended.as_mut() else {
+            return Err(unwritable(&"it was not opened"));
+        };
+        history.record_for(package, &text, status, duration);
+        history.flush().map_err(|error| unwritable(&error))
     }
 
     async fn process_signal(&self, object: Json, signal: String) -> Result<Json, HostError> {
@@ -649,7 +1018,17 @@ impl HostServices for ShellHost {
         _name: &str,
         _purpose: &str,
     ) -> Result<(), HostError> {
-        Err(HostError::unavailable("secret store"))
+        // There is nowhere for an operator to put a secret, and the one host call that would
+        // consume a handle, `network.request`, is not served (ADR-0573): a handle would name
+        // nothing usable. The environment is never a store (§31.20). The refusal says all of it
+        // rather than issuing a handle (ADR-1016).
+        Err(HostError {
+            code: ono_core::ErrorCode::ProviderUnavailable,
+            message: "this shell keeps no secret store: the operator has nowhere to put a \
+                      secret, the environment is not one, and no host call this build serves \
+                      would consume a handle, so none is issued (ADR-1016)"
+                .to_owned(),
+        })
     }
 }
 
