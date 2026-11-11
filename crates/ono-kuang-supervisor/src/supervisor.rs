@@ -3253,9 +3253,15 @@ impl Actor {
         started: &Result<RunningInvocation, WireError>,
         consent: Option<Arc<dyn crate::consent::ConsentSource>>,
     ) {
-        let invocations = &self.invocations;
-        self.invocation_consents
-            .retain(|invocation, _| invocations.contains_key(invocation));
+        // An invocation waiting for a slot is open too (ADR-1027): its source is kept until it
+        // runs and ends, or its wait does.
+        let (invocations, waiting) = (&self.invocations, &self.waiting);
+        self.invocation_consents.retain(|invocation, _| {
+            invocations.contains_key(invocation)
+                || waiting
+                    .iter()
+                    .any(|admission| admission.invocation == *invocation)
+        });
         if started.is_ok()
             && let Some(consent) = consent
         {

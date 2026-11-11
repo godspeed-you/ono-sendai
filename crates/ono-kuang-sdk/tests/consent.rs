@@ -692,3 +692,51 @@ async fn should_not_ask_for_a_family_the_policy_already_grants() {
         .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
         .await;
 }
+
+#[tokio::test]
+async fn should_ask_the_source_of_an_invocation_that_waited_for_a_slot_while_another_arrived() {
+    // ADR-1023 keeps an invocation's consent source for as long as the invocation is open, and
+    // ADR-1027 lets an invocation beyond the ceiling wait for a slot. A waiting invocation is
+    // open too: before, the next invocation to arrive dropped the waiting one's source, and when
+    // the slot came free its just-in-time question went to the instance's source, which asks
+    // nobody (v0.6.5 re-review F3).
+    let helpers = helpers();
+    let manifest = declared_manifest().replace(
+        "  startup: lazy",
+        "  startup: lazy\n  max_concurrent_invocations: 1",
+    );
+    let plugin = host(&manifest).load().await.expect("loads");
+    let holder = plugin
+        .invoke("dev.example.echo.command.count-forever", JsonMap::new())
+        .await
+        .expect("takes the only slot");
+    let consent = ScriptedConsent::answering([allow(ConsentDuration::Once)]);
+    let asking = plugin
+        .invoke_with_consent(
+            "dev.example.echo.command.exec",
+            exec_args(&helpers.a),
+            Some(consent.clone()),
+        )
+        .await
+        .expect("waits for the slot");
+    let later = plugin
+        .invoke(
+            "dev.example.echo.command.emit",
+            args(&[("count", json!(1))]),
+        )
+        .await
+        .expect("waits behind it");
+    holder.cancel().await;
+    let _ = holder.finish().await;
+    let (events, result) = asking.collect().await;
+    assert_eq!(
+        result.status,
+        InvokeStatus::Completed,
+        "the waiting invocation's own source answered its question: {events:?} {result:?}"
+    );
+    assert_eq!(consent.asked().len(), 1, "it was asked exactly once");
+    let _ = later.finish().await;
+    plugin
+        .shutdown(ono_kuang_protocol::ShutdownReason::Unload)
+        .await;
+}
