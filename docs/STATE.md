@@ -35,14 +35,13 @@ git push origin implementation && git push origin --tags
 ```
 
 **The workspace declares `0.6.5`.** `v0.6.5`, KUANG/11 Ecosystem Stabilization over `v0.6.4`, is
-**implemented on `implementation` and in release qualification, not yet tagged and not on `main`**.
-Its note, with the traceability of all 13 milestone issues, is `docs/releases/v0.6.5.md`, and its
-run record `docs/runs/v0.6.5-2026-11-10.md`. Every issue of the milestone is met — #224 in all
-seven parts, the `subscribe` half of its sixth rejected by ADR-0588 and ADR-1013. `v0.6.4`, System
-and Spatial Model Stabilization, is tagged, published (2026-11-10) and on `main` (`42a9875e`;
-release run 42861305537), with **#187** (selector-miss latency, not met) kept open outside its
-milestone as debt. Every earlier release has its note beside it in `docs/releases/`, and
-`gh release list` shows what is published.
+**tagged, published (2026-11-11) and on `main`** (`4bfbd890`; release run 43067684227). Its note,
+with the traceability of all 13 milestone issues, is `docs/releases/v0.6.5.md`, and its run record
+`docs/runs/v0.6.5-2026-11-10.md`. The milestone is closed: all 13 issues met and closed — #224 in
+all seven parts, the `subscribe` half of its sixth rejected by ADR-0588 and ADR-1013. `v0.6.4`,
+System and Spatial Model Stabilization (`42a9875e`, 2026-11-10), keeps **#187** (selector-miss
+latency, not met) open outside its milestone as debt. Every earlier release has its note beside it
+in `docs/releases/`, and `gh release list` shows what is published.
 
 **`implementation` past v0.6.3.** Thirty-one commits up to `cd125fd7` (2026-10-16), then the
 documentation pass that brings the repository's documents to v0.6.3:
@@ -279,7 +278,17 @@ against the tracker (no existing issue):
   low (gate noise). Exit: each waits on what it asserts rather than on time. The `temporal_view`
   one fails alone at low load too, and before v0.6.5: 4 of 20 runs at `v0.6.4`, 1 of 8 at the
   v0.6.5 release commit (2026-11-11); when it fails, the prompt after the map closes still names
-  the place the session stood at before `Enter`.
+  the place the session stood at before `Enter`. `spatial_interactive` shows the same symptom —
+  `enter compute` typed at the prompt leaves it at `~/work`
+  (`should_return_to_the_previous_place_when_back_is_used_at_the_prompt_and_in_the_map`,
+  `should_leave_the_terminal_in_order_for_an_external_program_after_the_map_closes`,
+  `should_change_the_place_only_on_enter_when_focus_moves_inside_the_map`): rarely alone (1 of 4
+  suite runs with `--all-features` at the release commit, 1 of 8 at `v0.6.4`), and in six
+  consecutive full `release-check` runs of 2026-11-11 one of the two suites was red every time,
+  also with two test threads. Not caused by load, process churn, leftover processes or units, or a
+  slower `enter` (20 ms against 21 ms at v0.6.4). Severity medium: it keeps `release-check` from
+  completing in one piece. Exit: find what an earlier suite of the full `ono-cli` run leaves behind
+  that makes the next interactive `enter` lose its place, and a full run green ten times.
 - The doc comment of `crates/ono-cli/src/plugins.rs::delivered` says the host learns of a handler's
   failure "from the invocation's result rather than from a stream event"; since ADR-0992 the stream
   carries it. Severity cosmetic.
