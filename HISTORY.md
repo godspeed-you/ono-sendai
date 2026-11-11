@@ -114,12 +114,15 @@ stream as it arrives, `explain`'s plan is data, completion answers outside a ter
 command example runs against the schema its command declares. v0.6.4 stabilized the system and
 spatial model: cgroups, namespaces and addresses became provider targets, a place behind a container
 or a namespace boundary says so, the map searches beyond what it drew, and a selective `where` or a
-`trace` of one object asks the provider for that much.
+`trace` of one object asks the provider for that much. v0.6.5 stabilized the KUANG/11 ecosystem: a
+background job runs a package in the session's own instance, a destructive plugin command meets
+the confirmation a core one meets, a package's declared risk is held to its capabilities, and
+contributed places and relations reach as far as core ones — pins that outlive the session, scopes,
+named relations with a cost, and edges into another package's kind of place.
 
-Two stabilization releases come next, each a milestone cut by subsystem: v0.6.5 for the KUANG/11
-ecosystem, v0.6.6 for remote links and change. After
-them, four further enhancements — v0.7 to v0.10, from rich terminal presentation to native AI
-assistance — are specified and not yet built.
+One stabilization release comes next, a milestone cut by subsystem: v0.6.6 for remote links and
+change. After it, four further enhancements — v0.7 to v0.10, from rich terminal presentation to
+native AI assistance — are specified and not yet built.
 
 ## How it was built
 

@@ -4,8 +4,9 @@ One page per thing that could surprise somebody upgrading, added to as tranches 
 section last. **Two migrations on it are required, each for some people only**: a directly
 listening agent over TCP needs one step (§2), and every compiled KUANG/11 component needs one
 `kuang-compile` after an upgrade that changes the WebAssembly engine (§10) — v0.6.2 to v0.6.3 is
-such an upgrade, and so is v0.6.3 to v0.6.4. Everything else here is either
-automatic or a description of a refusal you may now meet.
+such an upgrade, and so is v0.6.3 to v0.6.4; v0.6.4 to v0.6.5 needs no recompile, because
+wasmtime stays at 48.0.8. Everything else here is either automatic or a description of a refusal
+you may now meet.
 
 Sections 1–5 are v0.4.1's, and they are v0.4.1 §63's five in its order: a hardening release that
 adds no language and changes no schema you can see, and changes what the shell refuses. Sections
@@ -18,7 +19,9 @@ script or plugin relies on changed in v0.6.1 (`docs/releases/v0.6.0.md`, `v0.6.1
 v0.6.3: one setting name retired, `measure`'s median behind an option, and what a script can now
 see differently; v0.6.3 also moves wasmtime from 47 to 48, so §10's recompile is due once per
 component. Section 14 is v0.6.4: one more recompile, what a job and a plan mean by a path, and what
-the system and spatial model answer differently.
+the system and spatial model answer differently. Section 15 is v0.6.5: no recompile, and what the
+KUANG/11 extension model now holds a package to — a destructive contribution's `--confirm`, a
+declared risk, the session's shared instances and the contributed places and relations.
 
 ## 1. Ordinary local use — nothing to do
 
@@ -500,6 +503,162 @@ maintenance prelude between the two releases, the rest from the milestone:
 - **A provider written against `ono-provider-api`** sees two additions it may ignore:
   `Provider::pushdown()` with `Query::pushed()`, and `Query::sought()` (ADR-0980, ADR-0987). Both
   are advice; a provider that reads neither answers as before.
+
+## 15. What changes with v0.6.5
+
+*(the milestone `v0.6.5`; ADR-0990 … ADR-0992, ADR-0995 … ADR-0998, ADR-1000 … ADR-1002,
+ADR-1005 … ADR-1016, ADR-1020 … ADR-1024, ADR-1026 … ADR-1028, ADR-1030, ADR-1031;
+`docs/releases/v0.6.5.md`)*
+
+What v0.6.5 changes for someone upgrading from v0.6.4. There is **no recompile** this time:
+wasmtime stays at 48.0.8, so a component `kuang-compile` compiled for v0.6.4 loads unchanged
+(§10). The first four entries can make something that ran before refuse; the rest describe
+answers that are richer or arrive differently.
+
+- **A contributed command declared `risk: destructive` needs `--confirm` on every run** (#156,
+  ADR-1001). In a script, in a background job and at a terminal alike, an unconfirmed run is
+  refused with `safety.confirmation_required` before the package is loaded or sent anything —
+  `` `<spelling>` is destructive and was not confirmed ``, with the help "nothing was changed.
+  Write `<spelling> --confirm` to act". Nothing prompts, exactly as for `protect` or
+  `stop socket`; `help` and completion offer `--confirm`. The flag counts wherever it is written,
+  and takes the next word only when that word is `true` or `false`: `remove echo-record --confirm
+  r1` confirms and binds `r1` to the selector (19670ee0). The Kubernetes provider's
+  `remove k8s-resource` is `risk: destructive`, so its default server dry run needs the flag too:
+
+  ```text
+  remove k8s-resource --context prod --kind ConfigMap --name stale --confirm                   # server dry run
+  remove k8s-resource --context prod --kind ConfigMap --name stale --dry_run false --confirm   # deletes
+  ```
+
+  The provider's own declared examples and two of its live-cluster tests invoke it without
+  `--confirm` and refuse under v0.6.5 until the provider's repository adds it. `set k8s-resource`
+  (`risk: mutate`) asks for nothing, as before.
+- **`get plugin` answers `ono.plugin/2`, without `isolation`** (#199, ADR-0996). `execution_tier`
+  is the one field naming what an instance runs in; the manifest's own word is
+  `inspect plugin <id> | select manifest` (`runtime.kind`). A script that selects `isolation`
+  gets a missing field. Every place that named `ono.plugin/1` — help, `get command`, the reference
+  pages, the `ref<…>` fields of the KUANG/11 schemas — names `ono.plugin/2`; the identity
+  `[id, version]` is unchanged, and the records that refer to a package keep their own versions.
+  `ono.plugin-runtime/1` keeps both fields. The record also changed what it reports:
+  `memory` is the instance's measured allocation where it was always null, `cpu_time` is new
+  (null for a component and for a package with no instance), and `jobs` counts the invocations
+  running in the instance where it was always 0 (#222, ADR-0997, ADR-0998).
+- **A command that needs a `mutate` or `destructive` capability declares its risk, never below
+  the capability's** (#156, ADR-1000, ADR-1002, ADR-1022). The `mutate` families include
+  `network.connect`, `process.exec`, `process.signal`, `provider.mutate`, `state.persist`,
+  `secret.use`, `relation.write` and `history.write`; `filesystem.write` is `destructive`
+  (`docs/contracts/capabilities.yaml` → `kuang_capabilities`). A package whose command declares
+  one of them without a `risk:` line, or with a lower risk, installed before: under v0.6.5 the
+  on-disk declaration is refused at registration (`package.invalid`, reported by `get plugin`,
+  absent from `get command`), and a hello declaration is refused the same way when the command is
+  invoked. The fix is one `risk:` line. A command that only reads over `network.connect` has to
+  say `risk: mutate`, which asks for no confirmation; a read that should read as a read is
+  contributed as a target. Where a command is declared on disk and in the hello, the stronger
+  declaration decides its confirmation.
+- **A destructive host call is the declaring command's** (ADR-1022). The broker refuses a host
+  call needing a `destructive` family — `recovery.restore` today — with `capability.denied`,
+  `reason: undeclared-by-command`, unless every invocation open in the instance is a command that
+  declared the capability. A target never declares one, and a call made with no invocation open
+  is refused as well. An honest restore running alone is unaffected; one running beside another
+  invocation of the same instance that did not declare it is refused, because a host call does not
+  say which invocation made it.
+- **A background job runs packages in the session's instances** (#304, ADR-0995). A package a job
+  uses is the session's instance, listed by `get plugin`; the audit trail holds one
+  `lifecycle.load` and one `lifecycle.unload` (capability `plugin.unload`, invocation `host`) per
+  instance, and `unload`, `disable`, `remove`, a reload and the session's end now record the
+  unload. A package's `context.get` inside a job answers where the session stands now, which can
+  differ from the job's start directory. Leaving the shell with loaded packages can take up to one
+  more grace period (2 s) for an instance that does not acknowledge its shutdown.
+- **`kill %N` and Ctrl-C cancel a package invocation** (ADR-0998). A job blocked on a contributed
+  command or target ends on `kill %N`, and Ctrl-C ends a contributed command read in the
+  foreground; the line ends as interrupted (130) and the instance stays loaded, where `kill %N`
+  used to report the job as not stopped yet.
+- **An invocation beyond a package's concurrency ceiling waits for a slot** (ADR-1027), where it
+  was refused at once. It runs when an invocation of the instance ends; after ten seconds without
+  a free slot it is refused with `runtime.concurrency_limit`, naming the invocations that hold the
+  slots, and Ctrl-C ends the wait. The bound is not a setting. A script that relied on the
+  immediate refusal now waits up to the bound; `take`, `let xs = (get …)` or a higher
+  `max_concurrent_invocations` in the package's manifest avoid the wait.
+- **A package is loaded once when a job and the shell reach it together** (ADR-1026). Where a
+  race used to leave two loads, one unload and `Ono-Sendai-K11201 runtime.trap the instance was
+  shut down` on one side, both lines now run in one instance.
+- **A view names its invocation** (#157, ADR-0991, ADR-1028). Packages built with the
+  `ono-kuang-sdk` of this release send it, and nothing changes for them. A package built with an
+  earlier SDK opens views without it; that is accepted while one invocation is open in the
+  instance and refused with `view.protocol_error` while several are — which a background job or a
+  waiting invocation now makes common. The refusal names both remedies: rebuild with
+  `ono-kuang-sdk` 0.6.5, or declare `runtime.max_concurrent_invocations: 1` in the manifest. A
+  package that speaks the protocol without the SDK names `invocation` in `views.open`.
+- **A package command that stops short fails** (#154, ADR-0992). A contributed command or target
+  whose package answers `cancelled` without having been cancelled now ends with
+  `stream.cancelled` and status 1 after the values it sent, where it succeeded with a truncated
+  answer. A refusal from an unbounded target is reported once, where it was printed twice. A
+  package that speaks the protocol without the SDK should know that a clean `streams.close` no
+  longer ends the consumer's stream before the invocation's result arrives.
+- **A bounded contributed target streams** (#224, ADR-1011). `get <target> | take N` returns on
+  the Nth value and stops the package; a failure after some values fails the command, with the
+  values that arrived standing beside the error.
+- **`watch <contributed target>` refuses** with `provider.unsupported` and names `get <target>`
+  of an unbounded target as the live read a package has (ADR-1013). It used to run the `watch`
+  program on `PATH`, which re-ran a command of that name every two seconds.
+- **A relation shape may carry a name and a cost** (#224, ADR-1006):
+  `<from>-><to>[; name=<word>][; cost=<cheap|normal|expensive|privileged|remote>]`. A package that
+  uses either needs v0.6.5: an older host reads `b; name=x` as an endpoint that names no kind of
+  place and refuses the package at load. A shape naming another package's schema, refused before,
+  now loads and waits for that kind, and `follow` loads the installed package that contributes
+  it (ADR-1008). A package's `spatial-relation` command is invoked
+  with a `relations` argument naming the relations wanted, and a package that ignores it is
+  still answered correctly (ADR-1020). Unloading a package withdraws its relations, and a reload
+  declares them anew (0bdf84a5).
+- **A schema may declare `scope`** (#224, ADR-1009). A schema in a package's
+  `contributions.schemas` document may state `scope: [<field>, …]`; its places then report a
+  `plugin:` scope — `plugin:cluster=kind-ono/namespace=shop` — where they reported the host, and
+  movement between two such scopes records `scope_crossing`. Identity and place path are
+  unchanged. A package declares scopes only for schemas in its own namespace, read from the
+  directory the session loaded it from; a declaration for another package's schema is ignored
+  (ADR-1030).
+- **Spatial words can load an installed package** (#129, ADR-1005, ADR-1021). `find place
+  --role`, `find place --type`, `jump <kind>/<key>` and `jump @<pin>` load the package whose
+  on-disk declarations name that role or kind, so a `lifecycle.load` can appear in the trail where
+  only a contributed command started one before. A package that names its schemas only in its
+  handshake is not started for a kind word. A pin whose kind no installed package contributes no
+  longer breaks the pin store: `jump @<pin>` reports it and `unpin <name>` removes it. `pins.json`
+  stays at version 1.
+- **`find place` can say it stopped at its bound**, on the diagnostic stream, when it read 1024
+  objects from one contributed target (ADR-1007). Standard output is unchanged.
+- **Three host services answer** (#203). `relations.contribute` keeps a package's edges for the
+  session along its own declared relations, at most 1024 per package and at most 4096 bytes per
+  edge, measured as the JSON the package sent; a call carrying a larger edge is
+  `resource.item_limit` and nothing of that call is kept (ADR-1031). `relations.query` reads the
+  edges as `inferred` (ADR-1014). `history.append` keeps a package's entry in
+  `<state>/ono/history-packages/<package-id>.jsonl`, apart from `history.jsonl`: the prompt never
+  recalls it, and `history.query` returns every entry with `package` (null for the operator's)
+  and `cwd` (null for a package's) (ADR-1015). The operator's history file reads exactly as
+  before. `secrets.request` still answers `provider.unavailable` and issues no handle; its message
+  now reads "this shell keeps no secret store: the operator has nowhere to put a secret, the
+  environment is not one, and no host call this build serves would consume a handle, so none is
+  issued (ADR-1016)". The shell's environment is never read for a secret.
+- **Who is asked a just-in-time permission is the invoking evaluator's** (ADR-1023). A background
+  job asks nobody and gets `permission.required` with the remedy, whoever loaded the instance; the
+  foreground at a terminal is asked, also in an instance a job loaded. A foreground question that
+  arises while a job's invocation is open in the same instance is answered
+  `permission.required`, and one reached only through the provider registry — resolving or acting
+  on a contributed object, the edges of a contributed relation — is no longer asked at a terminal.
+  An invocation that waited for a slot keeps its own evaluator's consent source (f426679e). An
+  answer of `session` or `always` given once covers later calls.
+- **An operator catalog may name `certificate_authorities`** (#153, ADR-1010): PEM files, absolute
+  or relative to the catalog file, against which that catalog's HTTPS artifacts are verified in
+  place of the public roots. The built-in catalog and a catalog of unknown origin that name one
+  are refused as `package.invalid`; a named file that cannot be read refuses the fetch with
+  `plugin.catalog_unavailable`.
+- **A plugin launch refused before its first confinement control names the cause** (#197,
+  ADR-0990): `… was not started because the spawn failed before <control> could be installed:
+  Permission denied (os error 13)`. The error code and the metadata keys are unchanged.
+- **A Rust consumer of `ono-kuang-supervisor`** sees `Sandbox` renamed `ExecutionEnvelope` and
+  `LoadedPlugin::sandbox()` renamed `envelope()` (#198), and three additions it may ignore:
+  `LoadedPlugin::running_invocations()` (ADR-0998) and `invoke_with_consent` /
+  `query_with_consent`, which carry the invoking evaluator's consent source (ADR-1023); `invoke`
+  and `query` keep their signatures.
 
 ## What to read next
 

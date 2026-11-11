@@ -34,12 +34,15 @@ request.
 git push origin implementation && git push origin --tags
 ```
 
-**The workspace declares `0.6.4`.** `v0.6.4`, System and Spatial Model Stabilization over `v0.6.3`,
-is **tagged, published (2026-11-10) and on `main`** (`42a9875e`; release run 42861305537). Its note,
-with the traceability of all 25 milestone issues, is `docs/releases/v0.6.4.md`, and its run record
-`docs/runs/v0.6.4-2026-11-09.md`. The milestone is closed: 24 issues closed, and **#187**
-(selector-miss latency, not met) kept open outside it as debt. Every earlier release has its note
-beside it in `docs/releases/`, and `gh release list` shows what is published.
+**The workspace declares `0.6.5`.** `v0.6.5`, KUANG/11 Ecosystem Stabilization over `v0.6.4`, is
+**implemented on `implementation` and in release qualification, not yet tagged and not on `main`**.
+Its note, with the traceability of all 13 milestone issues, is `docs/releases/v0.6.5.md`, and its
+run record `docs/runs/v0.6.5-2026-11-10.md`. Every issue of the milestone is met — #224 in all
+seven parts, the `subscribe` half of its sixth rejected by ADR-0588 and ADR-1013. `v0.6.4`, System
+and Spatial Model Stabilization, is tagged, published (2026-11-10) and on `main` (`42a9875e`;
+release run 42861305537), with **#187** (selector-miss latency, not met) kept open outside its
+milestone as debt. Every earlier release has its note beside it in `docs/releases/`, and
+`gh release list` shows what is published.
 
 **`implementation` past v0.6.3.** Thirty-one commits up to `cd125fd7` (2026-10-16), then the
 documentation pass that brings the repository's documents to v0.6.3:
@@ -74,10 +77,10 @@ v0.3, v0.4, v0.4.1, v0.5, v0.6, v0.6.1, v0.7, v0.8, v0.9 and v0.10, enumerated i
 eleven are immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if one is missing its checksum
 line in `docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
 
-**Build order for what remains: v0.6.5, then v0.6.6, then v0.7, v0.8, v0.9 and v0.10.**
-v0.4.1, v0.5, v0.6, v0.6.1, v0.6.2 and v0.6.3 are implemented and released (`v0.4.1` … `v0.6.3`);
-v0.6.4 is implemented and waits for its tag. Of three stabilization tranches two remain,
-each a GitHub milestone that is its authoritative inventory, as v0.6.2's and v0.6.3's were
+**Build order for what remains: v0.6.6, then v0.7, v0.8, v0.9 and v0.10.**
+v0.4.1, v0.5, v0.6, v0.6.1, v0.6.2, v0.6.3 and v0.6.4 are implemented and released (`v0.4.1` …
+`v0.6.4`); v0.6.5 is implemented and in release qualification. Of three stabilization tranches one
+remains, each a GitHub milestone that is its authoritative inventory, as v0.6.2's and v0.6.3's were
 (ADR-0862, ADR-0929): `v0.6.4` — System and Spatial Model Stabilization (providers, adapters and
 process execution; spatial navigation and the map), `v0.6.5` — KUANG/11 Ecosystem Stabilization
 (plugins, contributed providers, plugin and provider conformance), and `v0.6.6` — Remote and
@@ -138,42 +141,22 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-The milestone `v0.6.5` (KUANG/11 Ecosystem Stabilization, 13 issues), coordinated from
-`implementation` (orchestrator, 2026-11-10). Sub-branches `implementation-<slug>` in worktrees
-`../ono-sendai-<slug>`, merged back by the orchestrator only. Reserved numbers so parallel branches
-never collide: ADR-0990 … 0994 and cases 145–149 for `supervisor`; ADR-0995 … 0999 and cases
-155–159 for `instances`; ADR-1000 … 1004 and cases 160–164 for `contributions`; ADR-1005 … 1009 and
-cases 165–169 for `spatial`; ADR-1010 … 1014 and cases 172–179 for the orchestrator.
-
-- [orchestrator | 2026-11-10] #198, #184 — done on `implementation` (8a8b9dd6, a4214f84).
-- [supervisor | 2026-11-10] #157, #154, #197 — merged into `implementation` (a3edd602,
-  ADR-0990 … ADR-0992, cases 145, 146).
-- [safety | 2026-11-10] #156 — files: `crates/ono-command/src/contract.rs`,
-  `crates/ono-cli/src/eval/pipeline.rs`, the confirmation gate, `crates/ono-kuang-sdk/examples/`,
-  `docs/contracts/kuang/contributions.v1.yaml` (command risk only).
-- [instances | 2026-11-10] #304, #222, #199 — files: `crates/ono-cli/src/session.rs`,
-  `crates/ono-cli/src/kuang_host.rs`, `crates/ono-cli/src/plugins.rs` (instance lookup),
-  `docs/contracts/schemas/plugin.v1.yaml`.
-- [orchestrator | 2026-11-10] #153 — done on `implementation` (24a71820, ADR-1010).
-- [spatial | 2026-11-10] #129, #224 parts (1)–(5) — files: `crates/ono-cli/src/spatial/`,
-  `crates/ono-spatial-*/`, `docs/contracts/kuang/contributions.v1.yaml` (relations and places),
-  `docs/contracts/spatial/`.
-- [orchestrator | 2026-11-10] next: #156, #224 parts (6)–(7), #203 — after `supervisor` and
-  `instances` are merged.
-
 ## What is left, and why
 
-**`v0.6.5` — KUANG/11 Ecosystem Stabilization — is the next tranche**, then `v0.6.6`, then v0.7
-(above). The known problems are in the tracker, and most of them by release milestone (`v0.6.5` …
-`v0.10.0`). What v0.6.4 left: **#187** (a selector miss at Profile M is 577 ms p95 against 250 ms;
-the sweep still enumerates every process's descriptors to find socket owners) has no milestone
-and waits for triage; so do **#306** ("unusually high traffic" needs a provider-stated rate) and
-**#307** (`high_memory` against a cgroup's memory limit), split out of #209; **#308–#310** (live
-link latency, two-sided cross-host correlation, a second hop on `map links`), split out of #213,
-are in `v0.6.6`. `enter container` as an execution context is rejected by ADR-0114 and ADR-0968,
-not deferred (#221). `v0.6.2` — the test suite, the harness, CI, packaging, release tooling and
-binary size — and `v0.6.3` — command contracts, errors and diagnostics, the shell language,
-pipelines and completion — are implemented and released.
+**`v0.6.6` — Remote and Change Stabilization — is the next tranche**, then v0.7 (above); `v0.6.5`
+— KUANG/11 Ecosystem Stabilization — is implemented, every one of its 13 issues met, and waits for
+its tag. The known problems are in the tracker, and most of them by release milestone (`v0.6.6` …
+`v0.10.0`). What v0.6.5 found outside its issues is under *Found, not yet filed* → *Found during
+the v0.6.5 run*. What v0.6.4 left: **#187** (a selector miss at Profile M is 577 ms p95 against
+250 ms; the sweep still enumerates every process's descriptors to find socket owners) has no
+milestone and waits for triage; so do **#306** ("unusually high traffic" needs a provider-stated
+rate) and **#307** (`high_memory` against a cgroup's memory limit), split out of #209;
+**#308–#310** (live link latency, two-sided cross-host correlation, a second hop on `map links`),
+split out of #213, are in `v0.6.6`. `enter container` as an execution context is rejected for
+good by ADR-0114 and ADR-0968 (#221). `v0.6.2` — the test suite, the harness, CI, packaging,
+release tooling and binary size — `v0.6.3` — command contracts, errors and diagnostics, the shell
+language, pipelines and completion — and `v0.6.4` — providers, adapters, process execution,
+spatial navigation and the map — are implemented and released.
 
 **The performance baseline was measured again for v0.6.4** (ADR-0989): every §33.2 target holds,
 and every moved row says why. Two rows are worth a look at the next re-measurement:
@@ -231,6 +214,72 @@ against the tracker (no existing issue):
   never entered: the parent records it after `create_dir_all`, the `chdir` happens in the child and
   can fail (case 145 makes it fail). v0.4.1 §2.6 honesty. Severity low. Exit: in the spawn-error
   path the row is not `applied` when the error is the `chdir`'s, or the child records the row.
+- The Kubernetes provider's own tests and examples refuse since ADR-1001 (cross-repository, review
+  finding F8): `ono-sendai-kubernetes` at 604ee08 runs `remove k8s-resource … --dry_run false`
+  without `--confirm` in `crates/ono-kubernetes-plugin/tests/live_cluster.rs:782` and `:918`, and
+  declares the example `remove k8s-resource --context prod --kind ConfigMap --name stale` in
+  `package/contributions/commands.yaml:206-207` and `contributions.rs:3038-3039`. Each is now
+  `safety.confirmation_required`. Severity medium for the provider repository. Exit: the provider's
+  examples and tests write `--confirm`; an issue in that repository.
+- Every spatial read resolves every edge every package pushed (`relations.contribute`, ADR-1014),
+  wanted or not and resolvable or not: `contributions::merge` runs `edge_between` → `place_of` twice
+  per pushed edge on each `look`/`map`/`follow`, and `kuang_services::relations_query` takes a
+  registry snapshot per pushed edge. An edge whose end never resolves stays until unload. Measured
+  by the v0.6.5 re-review (F2): after `echo:relate --from $F --to 200000 --repeat 1000`,
+  `enter process $F; look --json` took 4.3 s instead of 0.2 s. Severity minor (cost; the answers
+  are right, ADR-1031 bounds the memory). Exit: pushed edges filtered by the relations wanted
+  (ADR-1020) and an end that the provider answered "no such object" for dropped or indexed, so a
+  default `look` with 1024 unresolvable pushed edges stays within the §33.2 budget.
+- No command a user types routes a contributed object to `ProviderRegistry::act`: `set echo-place …`
+  is dispatched straight to `command.invoke`, `ProviderMutation` is bound only for core command
+  contracts, and the change planner plans only the core's operations (ADR-1012, *Consequences*).
+  The provider path is implemented and tested at the registry (`plugin_provider.rs`), and nothing
+  observes it from the shell. Severity low (a feature gap). Exit: a contributed action command
+  routed through `ProviderMutation`, with an acceptance case.
+- A job's pipelines empty the process-wide link table: `pipeline_context` calls
+  `crate::spatial::links::publish(&rows)` in every session, a job's included (since a37b08a3), so
+  a job running a pipeline replaces the table with `[]` until the foreground's next pipeline, and
+  a disconnected link's `last_seen` is lost (v0.4 §35.2). Severity low–medium; needs `remote` links
+  and a job. Exit: no global publish when `execution.background_job` is set; a test holding a link
+  in the foreground while a job runs a pipeline, then `get link` still shows it with `last_seen`.
+- A contributed *command's* answer is still collected whole before the rest of the line runs: a
+  foreground `echo:count-forever | count` grows the shell's memory until interrupted (it can be
+  interrupted since ADR-0998). Targets stream since ADR-0588 and ADR-1011; a command's answer
+  streaming is a contribution-contract change. Severity low–medium. Exit: a command's stream
+  consumed as a core producer's, with a bounded-memory test.
+- `spatial/contributions.rs` asks a package for its edges (`asserted`) with no interrupt watch, so
+  Ctrl-C during a `look` that waits on a slow relation command is not passed to the invocation.
+  Severity low. Exit: the edge invocation is cancelled on interrupt, with a test against a slow
+  relation fixture.
+- Non-destructive capability families stay package-wide (ADR-1022, *Consequences*): a command that
+  declares nothing (`echo:sneaky-clock`) reads the clock under a grant another command of the
+  package needed. Only `destructive` families are bound to the declaring command. Severity low
+  (K11P §6 reads both ways). Exit: a decision whether `mutate` families follow, as an ADR.
+- `ono-kuang-testhost` does not check relation-shape attributes: it strips `; name=…; cost=…`, so a
+  bad attribute passes the test host and fails at load. Severity low. Exit: the test host calls
+  `relation::shape_attributes` and refuses what the shell refuses.
+- A named contributed relation's far end is still `<id>.inverse`: §31.26 gives one name, and the
+  shape syntax has no `inverse=`. Severity low (a feature gap). Exit: an `inverse=` attribute or an
+  ADR declining it.
+- `crates/ono-cli/tests/plugins.rs`'s `ono()` (and possibly other `Shell::new()` users) does not
+  isolate `XDG_STATE_HOME`, so every run appends to the developer's real
+  `~/.local/state/ono/kuang/audit.jsonl` (about 2,860 lines on 2026-11-10). Reproduce:
+  `cargo test -p ono-cli --test plugins`, then `grep credential-plugin
+  ~/.local/state/ono/kuang/audit.jsonl`. Severity low (test isolation, AGENTS.md §11). Exit: every
+  plugin suite runs under a scratch state home.
+- ADR-0162 says adding a field "is a schema version bump, which spec-check enforces"; spec-check
+  only requires that refs and outputs resolve (ADR-0996 recorded the bump mechanics by hand).
+  Severity low (a false claim in an ADR). Exit: spec-check enforces it, or an ADR corrects the
+  sentence.
+- PTY and wall-clock tests flake under load from parallel builds (load 14–29 on 8 cores):
+  `spatial_interactive::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`,
+  `temporal_view::should_enter_the_historical_place_and_keep_the_coordinate_when_enter_is_pressed_on_a_past_node`,
+  `jobs_shutdown::should_end_several_stubborn_jobs_within_one_grace_period_rather_than_one_each`,
+  `jobs_shutdown::should_leave_promptly_when_its_jobs_end_on_the_signal`; each passed alone. Severity
+  low (gate noise). Exit: each waits on what it asserts rather than on time.
+- The doc comment of `crates/ono-cli/src/plugins.rs::delivered` says the host learns of a handler's
+  failure "from the invocation's result rather than from a stream event"; since ADR-0992 the stream
+  carries it. Severity cosmetic.
 
 **Found during the v0.6.4 run (2026-11-09 … 2026-11-10).** Outside the milestone's issues, or the
 part of one that was left; each checked against the tracker (no existing issue). The release review
