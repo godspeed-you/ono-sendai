@@ -1115,3 +1115,25 @@ pub fn component_fixture() -> Result<std::path::PathBuf, String> {
         .join("debug")
         .join("kuang-example-plugin.wasm"))
 }
+
+/// `ono -c script` with every home the shell reads under `home`, and `home` as the working
+/// directory: the package under `<home>/plugins` and nothing of the developer's own state.
+pub fn ono_with_packages_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
+    Shell::new()
+        .args(["-c", script])
+        .env("HOME", home.path().display().to_string())
+        .env(
+            "XDG_CONFIG_HOME",
+            home.path().join("config").display().to_string(),
+        )
+        .env(
+            "XDG_STATE_HOME",
+            home.path().join("state").display().to_string(),
+        )
+        .env(
+            "ONO_PLUGIN_PATH",
+            home.path().join("plugins").display().to_string(),
+        )
+        .cwd(home.path())
+        .run()
+}

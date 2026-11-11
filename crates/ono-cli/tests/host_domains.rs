@@ -9,7 +9,10 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_testkit::{Scratch, Shell, scratch};
+mod support;
+
+use ono_testkit::{Scratch, scratch};
+use support::ono_with_packages_at_home as ono;
 
 /// The example package, installed under `<scratch>/plugins`, requesting the read capabilities.
 fn plugin_home(home: &Scratch) {
@@ -55,26 +58,6 @@ network:
     let entry = home.path().join("plugins/dev.example.echo/runtime/echo");
     std::fs::create_dir_all(entry.parent().expect("a parent")).expect("the runtime directory");
     ono_testkit::executable_copy(&binary, &entry);
-}
-
-fn ono(home: &Scratch, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .args(["-c", script])
-        .env("HOME", home.path().display().to_string())
-        .env(
-            "XDG_CONFIG_HOME",
-            home.path().join("config").display().to_string(),
-        )
-        .env(
-            "XDG_STATE_HOME",
-            home.path().join("state").display().to_string(),
-        )
-        .env(
-            "ONO_PLUGIN_PATH",
-            home.path().join("plugins").display().to_string(),
-        )
-        .cwd(home.path())
-        .run()
 }
 
 #[test]
