@@ -394,6 +394,58 @@ fn should_refuse_following_a_relation_whose_far_kind_no_loaded_package_contribut
     );
 }
 
+/// A second package, `dev.example.racks`, whose one kind of place is the far end of
+/// [`FOREIGN_SHAPE`]: the example binary answers as that package when started with `--racks`.
+const RACK_TARGETS: &str = r#"
+targets:
+  - name: racks-rack
+    schema: dev.example.racks.rack/1
+    summary: Racks the second example package answers for.
+    identity_doc: Two observations are the same rack when their `rid` matches.
+"#;
+
+/// Lays the second package out beside the example package in `home`, installed and not loaded.
+fn install_the_racks_package(home: &std::path::Path) {
+    let plugins = home.join("plugins");
+    support::lay_out_echo_package_with(&plugins, "dev.example.racks", RACK_TARGETS, &[]);
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    let entry = plugins.join("dev.example.racks/runtime/echo");
+    std::fs::remove_file(&entry).expect("the copied runtime");
+    std::fs::write(
+        &entry,
+        format!("#!/bin/sh\nexec '{}' --racks\n", binary.display()),
+    )
+    .expect("the runtime wrapper");
+    let mut permissions = std::fs::metadata(&entry).expect("written").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&entry, permissions).expect("executable");
+}
+
+#[test]
+fn should_follow_a_relation_to_another_packages_kind_of_place_once_that_package_is_installed() {
+    // #224 (1) through the shell, with two packages: the example package relates its resource to
+    // a rack, a kind of place only `dev.example.racks` contributes. That package is installed and
+    // not loaded; `follow` loads it, the waiting relation is registered, and the edge arrives at
+    // the rack the second package answers for (ADR-1008).
+    let home = echo_plugin_home_with(ECHO, TARGETS, &[FOREIGN_SHAPE]);
+    install_the_racks_package(home.path());
+    let run = ono_with_plugins(&home, &at_the_place("follow racked-in; look | to json"));
+    run.assert_success();
+    let place = &rows(&run)[0]["place"];
+    assert_eq!(
+        (
+            place["object_type"].as_str(),
+            place["identity"]["rid"].as_str()
+        ),
+        (Some("dev.example.racks.rack/1"), Some("r-7")),
+        "the relation crosses into the other package's kind of place, got {:?}",
+        run.output()
+    );
+}
+
 #[test]
 fn should_still_refuse_a_shape_naming_a_schema_of_its_own_package_it_does_not_declare() {
     // The package's own namespace is the package's to declare, on disk, before it runs: a schema

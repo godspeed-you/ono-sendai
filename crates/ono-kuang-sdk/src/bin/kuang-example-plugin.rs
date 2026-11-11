@@ -35,6 +35,8 @@ const VERSION: &str = "0.1.0";
 const ITEM_SCHEMA: &str = "dev.example.echo.item/1";
 const PLACE_SCHEMA: &str = "dev.example.echo.place/1";
 const ZONE_SCHEMA: &str = "dev.example.echo.zone/1";
+const RACKS_PACKAGE: &str = "dev.example.racks";
+const RACK_SCHEMA: &str = "dev.example.racks.rack/1";
 
 fn main() {
     match std::env::args().nth(1).as_deref() {
@@ -70,6 +72,9 @@ fn main() {
         Some(flag) if flag.starts_with("--change-provider=") => {
             change_provider(flag.split_once('=').map(|(_, flaw)| flaw)).run();
         }
+        // A second package, `dev.example.racks`, whose one kind of place another package's
+        // relation shape may name (#224 (1), ADR-1008): two packages, one binary.
+        Some("--racks") => racks().run(),
         _ => honest().run(),
     }
 }
@@ -139,6 +144,69 @@ fn place_schema_contribution() -> SchemaContribution {
 /// a shape whose two ends are different contributed things. `echo-zone` is the far end:
 /// identity-bearing like `echo-place`, answered by exactly one target, and named by a schema id
 /// the package's own manifest can point at.
+fn rack_schema_contribution() -> SchemaContribution {
+    SchemaContribution {
+        id: RACK_SCHEMA.to_owned(),
+        name: "Rack".to_owned(),
+        summary: "One rack the second example package answers for.".to_owned(),
+        identity: vec!["rid".to_owned()],
+        fields: vec![
+            SchemaFieldContribution {
+                name: "rid".to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                nullable: false,
+            },
+            SchemaFieldContribution {
+                name: "name".to_owned(),
+                field_type: "string".to_owned(),
+                required: true,
+                nullable: false,
+            },
+        ],
+    }
+}
+
+/// The second example package: one kind of place, a rack, and the target that answers for it.
+/// It relates nothing itself; the example package's `racked-in` shape names its kind (#224 (1)).
+fn racks() -> Plugin {
+    Plugin::new(RACKS_PACKAGE, VERSION)
+        .contribute_schema(rack_schema_contribution())
+        .contribute_target(TargetContribution {
+            name: "racks-rack".to_owned(),
+            schema: RACK_SCHEMA.to_owned(),
+            summary: "Racks the second example package answers for.".to_owned(),
+            identity_doc: "Two observations are the same rack when their `rid` matches.".to_owned(),
+            options: Vec::new(),
+            answer: Answer::Bounded,
+            roles: Vec::new(),
+            parent: None,
+        })
+        .provider("racks-rack", |ctx| {
+            let schema = rack_schema_contribution()
+                .to_schema()
+                .expect("the fixture schema is valid");
+            let schema = std::sync::Arc::new(schema);
+            for (rid, name) in [("r-7", "rack-seven"), ("r-8", "rack-eight")] {
+                let record = RecordValue::builder(
+                    std::sync::Arc::clone(&schema),
+                    Provenance::local("plugin-self", schema.id().clone()),
+                )
+                .set("rid", Value::String(rid.into()))
+                .and_then(|builder| builder.set("name", Value::String(name.into())))
+                .expect("the fixture fields exist")
+                .build();
+                if ctx
+                    .emit(&Value::Record(std::sync::Arc::new(record)))
+                    .is_err()
+                {
+                    return Outcome::Cancelled;
+                }
+            }
+            Outcome::Completed
+        })
+}
+
 fn zone_schema_contribution() -> SchemaContribution {
     SchemaContribution {
         id: ZONE_SCHEMA.to_owned(),
@@ -1356,6 +1424,9 @@ fn honest_at_most(at_once: u32) -> Plugin {
                 // two `checkout`s — so that one kind of place can carry two relations of
                 // different cost (ADR-1020).
                 relation_record("beside", (PLACE_SCHEMA, "u-3"), (PLACE_SCHEMA, "u-1")),
+                // The fourth leaves the package: `ledger` sits in a rack, a kind of place only
+                // `dev.example.racks` contributes (#224 (1), ADR-1008).
+                relation_record("racked-in", (PLACE_SCHEMA, "u-3"), (RACK_SCHEMA, "r-7")),
             ];
             // The host names the relations it is asking for, by the ids `relations.yaml` derives
             // from the shapes (ADR-1020); a relation it did not name is not computed. Without

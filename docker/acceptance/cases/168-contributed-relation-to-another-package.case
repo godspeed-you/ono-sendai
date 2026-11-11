@@ -4,8 +4,10 @@
 # installed). ADR-1008.
 #
 # The package is the conformance fixture the container ships; its shape runs from its own resource
-# kind to `dev.example.racks.rack/1`, a schema of a package that is not installed here.
-case: a relation to another package's kind of place loads, and is refused at traversal for what it waits for
+# kind to `dev.example.racks.rack/1`, a schema of a package that is not installed at first. Then the
+# second package is installed — the same binary answers as `dev.example.racks` with `--racks` — and
+# `follow` loads it and crosses into its kind of place.
+case: a relation to another package's kind of place loads, waits for that package, and crosses into it once installed
 timeout: 180
 env: NO_COLOR=1
 run: |
@@ -83,6 +85,24 @@ run: |
   prove 168-d "a word no relation declares is still \`spatial.no_relation\`" \
     'ono -c "$at_ledger; follow nothing-at-all" 2>&1 | grep -q "spatial.no_relation\|spatial.not_found"'
 
+  echo "== §31.26 with two packages: the other package installed, \`follow\` crosses into its place =="
+  racks="$home/plugins/dev.example.racks"
+  mkdir -p "$racks/runtime" "$racks/contributions"
+  sed -e 's/id: dev.example.echo/id: dev.example.racks/' -e '/relations:/d' \
+    "$package/manifest.yaml" > "$racks/manifest.yaml"
+  printf '#!/bin/sh\nexec /usr/local/bin/kuang-example-plugin --racks\n' > "$racks/runtime/echo"
+  chmod 755 "$racks/runtime/echo"
+  cat > "$racks/contributions/targets.yaml" <<'TARGETS'
+  targets:
+    - name: racks-rack
+      schema: dev.example.racks.rack/1
+      summary: Racks the second example package answers for.
+      identity_doc: Two observations are the same rack when their `rid` matches.
+  TARGETS
+  prove 168-f "\`follow racked-in\` loads the other package and arrives at its rack" \
+    'ono -c "$at_ledger; follow racked-in; look --json" | tail -1 | grep -q "\"rid\":\"r-7\""'
+  rm -rf "$racks"
+
   echo "== §31.5: a schema of the package's own namespace it does not declare is refused at load =="
   write_manifest "dev.example.echo.place/1->dev.example.echo.nowhere/1"
   prove 168-e "an undeclared own schema is \`package.invalid\`" \
@@ -95,6 +115,7 @@ stdout-contains: PROVED 168-b
 stdout-contains: PROVED 168-c
 stdout-contains: PROVED 168-d
 stdout-contains: PROVED 168-e
+stdout-contains: PROVED 168-f
 stdout-contains: cross-package relation checks done
 stdout-not-contains: FAILED
 stdout-not-contains: panicked
