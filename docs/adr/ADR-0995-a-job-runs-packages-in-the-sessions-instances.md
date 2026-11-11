@@ -1,6 +1,6 @@
 # ADR-0995: A job runs packages in the session's instances, and the session unloads them
 
-- Status: accepted
+- Status: superseded by ADR-1023 (in part: that a just-in-time request a job makes is answered by the consent source of the evaluator that loaded the instance)
 - Date: 2026-11-10
 - Spec refs: spec §18.4, §31.8, §31.10, §31.12, §31.33, §31.37, §31.38; v0.4.1 §17; ADR-0090,
   ADR-0107, ADR-0567, ADR-0952, ADR-0958, ADR-0959; issue #304

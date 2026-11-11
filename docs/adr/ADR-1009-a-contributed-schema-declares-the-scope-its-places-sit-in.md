@@ -1,6 +1,6 @@
 # ADR-1009: A contributed schema declares the scope its places sit in
 
-- Status: accepted
+- Status: superseded by ADR-1030 (in part: that the declaration is read from the plugin path the process started with)
 - Date: 2026-11-10
 - Spec refs: v0.4 §3.2, §2.18, §20.1, §36.1, §36.4, §42.1; external-system-provider §4.5, §9.1,
   §9.2, §9.4, §15.5; ADR-0584, ADR-0983
