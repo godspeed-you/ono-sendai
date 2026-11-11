@@ -1,0 +1,70 @@
+# #156 review S-F1, ADR-1022 (spec §17.4, §31.22, §31.66; external-system-provider §21.5): a
+# command declared on disk and in the running package's hello is confirmed by the stronger of the
+# two. The package here declares `remove echo-record` (`wipe`) `risk: read` on disk and
+# `destructive` in its hello: without `--confirm` it is refused with `safety.confirmation_required`
+# by either spelling, and its handler never writes the audit entry it writes when it runs. With
+# `--confirm` it runs.
+case: the stronger of a command's disk and hello declarations decides its confirmation
+timeout: 120
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  printf '#!/bin/sh\nexec /usr/local/bin/kuang-example-plugin --destructive\n' > "$home/plugins/dev.example.echo/runtime/echo"
+  chmod 755 "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/commands.yaml" <<'CONTRIB'
+  commands:
+    - id: dev.example.echo.command.wipe
+      verb: remove
+      target: echo-record
+      summary: Remove the record the package keeps, and say so in the audit trail.
+      output: stream<string>
+      argument_mode: expression
+      capabilities: []
+      risk: read
+      examples:
+        - remove echo-record
+  CONTRIB
+  wiped='get audit --plugin dev.example.echo | where action == "audit.event:wipe" | count | to json'
+
+  echo "== disk says read, hello says destructive: refused unconfirmed (§17.4) =="
+  ono -c "remove echo-record; $wiped" 2>&1 | sed 's/^/bare: /'
+  echo "== the qualified spelling is the same command =="
+  ono -c "load plugin dev.example.echo; echo:wipe; $wiped" 2>&1 | grep -v 'loaded\|answerable' | sed 's/^/qualified: /'
+  echo "== with --confirm it runs =="
+  ono -c "remove echo-record --confirm | to json; $wiped" 2>&1 | sed 's/^/confirmed: /'
+exit: 0
+stdout-contains: bare: ono: Ono-Sendai-E0701 safety.confirmation_required
+stdout-contains: bare: [0]
+stdout-contains: qualified: ono: Ono-Sendai-E0701 safety.confirmation_required
+stdout-contains: qualified: [0]
+stdout-contains: confirmed: ["wiped"]
+stdout-contains: confirmed: [1]
+stdout-not-contains: panicked

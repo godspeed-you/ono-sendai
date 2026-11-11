@@ -1453,3 +1453,140 @@ fn should_never_let_a_new_catalog_entry_redirect_an_installed_package() {
     let run = ono(&home, "inspect plugin echo | select readiness | to json");
     run.assert_success();
 }
+
+/// A person's terminal over the installed packages of `home`, with a helper program ready for the
+/// `login-helper` permission to be asked about.
+fn terminal_with_helper(
+    home: &ono_testkit::Scratch,
+) -> (
+    ono_testkit::Guarded<ono_process::PtySession>,
+    std::path::PathBuf,
+) {
+    ono(home, "install plugin echo --confirm").assert_success();
+    let helper = home.path().join("home/helper");
+    std::fs::create_dir_all(helper.parent().expect("a parent")).expect("home");
+    ono_testkit::executable_script(
+        &home.path().join("home"),
+        "helper",
+        "#!/bin/sh\necho hello\n",
+    );
+    let root = home.path();
+    let command = ono_process::Command::new(ono_testkit::ono_binary())
+        .env("TERM", "xterm")
+        .env("NO_COLOR", "1")
+        .env(
+            "ONO_PLUGIN_PATH",
+            root.join("plugins").display().to_string(),
+        )
+        .env(
+            "ONO_PLUGIN_SOURCES",
+            root.join("sources").display().to_string(),
+        )
+        .env(
+            "ONO_SYSTEM_CONFIG_DIR",
+            root.join("system").display().to_string(),
+        )
+        .env("HOME", root.join("home").display().to_string())
+        .env("XDG_STATE_HOME", root.join("state").display().to_string())
+        .env("XDG_CONFIG_HOME", root.join("config").display().to_string())
+        .env(
+            "ONO_CONFIG_DIR",
+            root.join("config/ono").display().to_string(),
+        )
+        .current_dir(root.join("home"));
+    let mut executor = ono_process::Executor::detached();
+    let session = executor
+        .run_pty(&command, ono_process::WindowSize::new(24, 100))
+        .map(|session| ono_testkit::Guarded::new(session, ono_process::PtySession::pid))
+        .expect("a pseudo-terminal must be available");
+    (session, helper)
+}
+
+#[test]
+fn should_never_ask_from_a_background_job_in_an_instance_the_foreground_loaded() {
+    // ADR-0995 runs a job's package command in the session's instance. Who may be asked is the
+    // evaluator's to say, not the instance's: a job never asks, so a line typed for the shell while
+    // the job runs is the shell's, and the job's just-in-time request is refused as a script's is
+    // (#156 review S-F2, K11P §20.3, ADR-1023).
+    let home = root();
+    let (mut session, helper) = terminal_with_helper(&home);
+    let timeout = Duration::from_secs(20);
+    support::read_until(&mut session, ">", timeout);
+    session
+        .write_all(b"load plugin echo; echo \"step\" \"1\"\n")
+        .expect("typed");
+    let loaded = support::read_until(&mut session, "step 1", timeout);
+    assert!(
+        loaded.contains("loaded"),
+        "the foreground loads: {loaded:?}"
+    );
+    session
+        .write_all(format!("echo:exec --program {} | to json &\n", helper.display()).as_bytes())
+        .expect("typed");
+    let asked = support::read_until(&mut session, "Allow this helper?", Duration::from_secs(3));
+    assert!(
+        !asked.contains("Allow this helper?"),
+        "a job never prints a question at the shell's prompt: {asked:?}"
+    );
+    session.write_all(b"echo \"step\" \"2\"\n").expect("typed");
+    let ran = support::read_until(&mut session, "step 2", timeout);
+    assert!(
+        ran.contains("step 2"),
+        "the line typed for the shell ran in the shell: {ran:?}"
+    );
+    session
+        .write_all(b"fg %1; echo \"step\" \"3\"\n")
+        .expect("typed");
+    let refused = support::read_until(&mut session, "step 3", timeout);
+    assert!(
+        refused.contains("permission.required") && !refused.contains("stdout: hello"),
+        "the job's request is refused as nobody can be asked: {refused:?}"
+    );
+    session.write_all(b"exit\n").expect("left");
+    let rows = permissions(&home, "echo", false);
+    assert_ne!(
+        str_field(permission(&rows, "login-helper"), "state"),
+        "allowed",
+        "no keystroke meant for the shell became a decision: {rows:?}"
+    );
+}
+
+#[test]
+fn should_ask_at_the_terminal_in_an_instance_a_background_job_loaded() {
+    // The other half of the same rule: an instance a job loaded is the session's instance, and
+    // the foreground's just-in-time request in it is asked at the terminal (ADR-1023).
+    let home = root();
+    let (mut session, helper) = terminal_with_helper(&home);
+    let timeout = Duration::from_secs(20);
+    support::read_until(&mut session, ">", timeout);
+    session
+        .write_all(b"get echo-item --count 1 | to json &; fg %1; echo \"step\" \"1\"\n")
+        .expect("typed");
+    support::read_until(&mut session, "step 1", timeout);
+    // The job's contributed command is what loaded the package: nothing in the foreground did.
+    session
+        .write_all(b"get plugin | select id state | to json; echo \"step\" \"2\"\n")
+        .expect("typed");
+    let loaded = support::read_until(&mut session, "step 2", timeout);
+    assert!(
+        ["loaded", "degraded"]
+            .iter()
+            .any(|state| loaded.contains(&format!("\"state\":\"{state}\""))),
+        "the job loaded the package: {loaded:?}"
+    );
+    session
+        .write_all(format!("echo:exec --program {} | to json\n", helper.display()).as_bytes())
+        .expect("typed");
+    let asked = support::read_until(&mut session, "Allow this helper?", timeout);
+    assert!(
+        asked.contains("Allow this helper?") && asked.contains(&helper.display().to_string()),
+        "the foreground is asked: {asked:?}"
+    );
+    session.write_all(b"o\n").expect("answered");
+    let ran = support::read_until(&mut session, "stdout: hello", timeout);
+    assert!(
+        ran.contains("stdout: hello"),
+        "it ran once allowed: {ran:?}"
+    );
+    session.write_all(b"exit\n").expect("left");
+}

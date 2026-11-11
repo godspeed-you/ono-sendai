@@ -195,6 +195,9 @@ impl Provider for PluginProvider {
             query_arguments(query),
             Boundedness::Bounded,
             wanted,
+            // The registry is asked on behalf of no evaluator it can name, so nobody is asked:
+            // the instance's own source answers (ADR-1023).
+            None,
         ))
     }
 
@@ -264,16 +267,38 @@ impl Provider for PluginProvider {
             ));
         };
         let contribution = &command.contribution;
+        // The action is the declared command, and it is held to what the command declared: its
+        // hello to the registry's floor (ADR-1002), and the stronger of its hello and its disk
+        // declaration to the confirmation its risk calls for — a `destructive` action without
+        // `confirm` is refused before any of the package's code runs, by the gate a typed
+        // invocation passes (ADR-1001, ADR-1022, ADR-1024).
+        let hello = crate::plugins::hello_declaration(&self.package_id, contribution)?;
+        let disk = crate::plugins::declaration(&contribution.id);
+        let confirmed = action.argument("confirm") == Some(&Value::Bool(true));
+        for declared in std::iter::once(&hello).chain(disk) {
+            if let Some(refusal) = declared.unconfirmed(confirmed) {
+                return Err(refusal);
+            }
+        }
         let declares = |name: &str| {
             contribution
                 .options
                 .iter()
                 .any(|option| option.name == name)
         };
+        // The option the package declared as its dry run: a `bool` named `dry-run` or `dry_run`,
+        // the two spellings a package writes the generic vocabulary's word in (ADR-1024).
+        let dry_run_option = hello
+            .options()
+            .iter()
+            .find(|option| {
+                option.declared_type().is_flag() && option.name().replace('_', "-") == "dry-run"
+            })
+            .map(|option| option.name().to_owned());
         let mut arguments = serde_json::Map::new();
         for (name, value) in action.arguments() {
-            // The host's own words: the confirmation was the caller's to decide, and which
-            // provider acts is what routed the action here.
+            // The host's own words: the confirmation was decided above, and which provider acts
+            // is what routed the action here.
             if matches!(name.as_str(), "confirm" | "provider" | "dry-run") {
                 continue;
             }
@@ -291,7 +316,7 @@ impl Provider for PluginProvider {
         }
         if action.is_dry_run() {
             // A dry run asked of an action that cannot do one would be a real change.
-            if !declares("dry-run") {
+            let Some(option) = &dry_run_option else {
                 return Err(ErrorValue::new(
                     ErrorCode::ProviderUnsupported,
                     format!(
@@ -299,9 +324,22 @@ impl Provider for PluginProvider {
                         contribution.verb, contribution.target
                     ),
                 ));
-            }
-            arguments.insert("dry-run".to_owned(), serde_json::Value::Bool(true));
+            };
+            arguments.insert(option.clone(), serde_json::Value::Bool(true));
         }
+        // A declared default is the shell's guarantee, on this path as on a typed one (ADR-0587):
+        // a package whose dry run defaults to true is dry-run unless the action says otherwise.
+        for declared in std::iter::once(&hello).chain(disk) {
+            for option in declared.options() {
+                if let Some(default) = option.default_value()
+                    && !arguments.contains_key(option.name())
+                {
+                    arguments.insert(option.name().to_owned(), ono_value::to_json(default));
+                }
+            }
+        }
+        let dry_run = dry_run_option
+            .is_some_and(|option| arguments.get(&option) == Some(&serde_json::Value::Bool(true)));
         arguments.insert(
             "object".to_owned(),
             object_argument(&plugin, action.target()),
@@ -320,7 +358,7 @@ impl Provider for PluginProvider {
                 ));
             }
         }
-        Ok(ActionOutcome::succeeded(action, !action.is_dry_run()))
+        Ok(ActionOutcome::succeeded(action, !dry_run))
     }
 }
 
@@ -361,9 +399,10 @@ pub(crate) fn stream_of(
     arguments: serde_json::Map<String, serde_json::Value>,
     boundedness: Boundedness,
     wanted: Option<usize>,
+    consent: Option<Arc<dyn ono_kuang_supervisor::ConsentSource>>,
 ) -> ValueStream {
     ValueStream::spawn(PipelineConfig::new(), boundedness, move |sink| async move {
-        let mut invocation = match plugin.query(target, arguments).await {
+        let mut invocation = match plugin.query_with_consent(target, arguments, consent).await {
             Ok(invocation) => invocation,
             Err(error) => {
                 let _ = sink.fail(crate::kuang_host::wire_error_value(&error)).await;

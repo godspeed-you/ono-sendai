@@ -1479,3 +1479,138 @@ fn should_refuse_an_unconfirmed_destructive_contribution_run_as_a_background_job
         confirmed.output()
     );
 }
+
+/// Starts the package's runtime as the example binary in `mode` (`--destructive`, `--understated`),
+/// whose hello declares `remove echo-record` (`wipe`) its own way.
+fn run_runtime_in_mode(home: &ono_testkit::Scratch, mode: &str) {
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    let entry = home.path().join("dev.example.echo/runtime/echo");
+    std::fs::remove_file(&entry).expect("the copied runtime");
+    std::fs::write(
+        &entry,
+        format!("#!/bin/sh\nexec '{}' {mode}\n", binary.display()),
+    )
+    .expect("the runtime wrapper");
+    let mut permissions = std::fs::metadata(&entry).expect("written").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&entry, permissions).expect("executable");
+}
+
+/// A package whose disk declares `remove echo-record` (`wipe`) with `risk`, needing no capability
+/// and taking the record it removes as its one positional word. The manifest asks for
+/// `filesystem.write` as well, so a hello that declares it loads.
+fn wipe_declaring_home(risk: &str) -> ono_testkit::Scratch {
+    let scratch = declaring_plugin_home();
+    let manifest = scratch.path().join("dev.example.echo/manifest.yaml");
+    let text = std::fs::read_to_string(&manifest).expect("the manifest");
+    std::fs::write(
+        &manifest,
+        text.replacen(
+            "    - clock.read\n",
+            "    - clock.read\n    - filesystem.write\n",
+            1,
+        ),
+    )
+    .expect("the manifest asking for filesystem.write");
+    scratch.write(
+        "dev.example.echo/contributions/commands.yaml",
+        format!(
+            r#"
+commands:
+  - id: dev.example.echo.command.wipe
+    verb: remove
+    target: echo-record
+    summary: Remove the record the package keeps, and say so in the audit trail.
+    output: stream<string>
+    argument_mode: expression
+    capabilities: []
+    risk: {risk}
+    selectors:
+      - name: record
+        type: string
+        doc: The record to remove.
+    examples:
+      - remove echo-record r1 --confirm
+"#
+        ),
+    );
+    scratch
+}
+
+#[test]
+fn should_confirm_a_command_by_its_hello_where_the_hello_is_destructive_and_the_disk_says_read() {
+    // The registry entry on disk and the running package's hello are two declarations of one
+    // command. A package that writes `read` on disk and `destructive` in its hello must not get
+    // the weaker one's confirmation policy (#156 review S-F1): the stronger one decides, and the
+    // package's code never runs unconfirmed, by any door.
+    let home = wipe_declaring_home("read");
+    run_runtime_in_mode(&home, "--destructive");
+    for line in [
+        "remove echo-record r1",
+        "load plugin dev.example.echo; echo:wipe r1",
+    ] {
+        let run = ono_isolated(&home, &format!("{line}; {WIPED}"));
+        assert!(
+            run.stderr().contains("safety.confirmation_required"),
+            "`{line}`: the hello says destructive, so the command is confirmed, got {:?}",
+            run.stderr()
+        );
+        assert!(
+            run.stdout().contains("[0]"),
+            "`{line}`: the package's code never ran, got {:?}",
+            run.output()
+        );
+    }
+    let confirmed = ono_isolated(
+        &home,
+        &format!("remove echo-record r1 --confirm | to json; {WIPED}"),
+    );
+    assert!(
+        confirmed.stdout().contains("wiped") && confirmed.stdout().contains("[1]"),
+        "with --confirm the stronger declaration is satisfied and it runs, got {:?}",
+        confirmed.output()
+    );
+}
+
+#[test]
+fn should_refuse_a_hello_that_understates_its_risk_even_where_the_disk_declares_the_command() {
+    // ADR-1002 held a hello-only command to the registry's floor. A command declared on disk as
+    // well has a hello too, and the hello is what the package's broker enforces: it is held to the
+    // same floor, not ignored because the disk said something first (#156 review S-F1).
+    let home = wipe_declaring_home("read");
+    run_runtime_in_mode(&home, "--understated");
+    let run = ono_isolated(&home, &format!("remove echo-record r1 --confirm; {WIPED}"));
+    assert!(
+        run.stderr().contains("package.invalid") && run.stderr().contains("risk"),
+        "a hello that declares `filesystem.write` at `read` is refused for its command, got {:?}",
+        run.stderr()
+    );
+    assert!(
+        run.stdout().contains("[0]"),
+        "the package's code never ran, got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_take_confirm_as_a_flag_and_bind_the_next_word_to_the_selector() {
+    // The refusal says "write `remove echo-record --confirm`", and a person writes the record
+    // after it. A core `confirmation: always` command reads `--confirm` as a flag wherever it is
+    // written, taking the next word only when it is `true` or `false` (ADR-0009); a contribution
+    // is confirmed by the same gate, so its words bind the same way (#156 review R-F4).
+    let home = wipe_declaring_home("destructive");
+    run_runtime_in_mode(&home, "--destructive");
+    let run = ono_isolated(
+        &home,
+        &format!("remove echo-record --confirm r1 | to json; {WIPED}"),
+    );
+    run.assert_success();
+    assert!(
+        run.stdout().contains("wiped r1") && run.stdout().contains("[1]"),
+        "the command ran once, confirmed, with `record` bound to `r1`, got {:?}",
+        run.output()
+    );
+}

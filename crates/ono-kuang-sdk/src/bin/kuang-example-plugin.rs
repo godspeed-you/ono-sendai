@@ -59,6 +59,11 @@ fn main() {
         // `filesystem.write`, a capability whose risk is `destructive`. The host must not take
         // the package at its lower word (#156, ADR-1000, ADR-1002).
         Some("--understated") => understated().run(),
+        // Two declared actions on `echo-place` for the provider path (ADR-1012, ADR-1024): a
+        // `destructive` removal whose dry run is its `dry_run` option, true by default — the shape
+        // the Kubernetes provider's `remove k8s-resource` has — and a restart whose hello declares
+        // `mutate` for a command needing `filesystem.write`.
+        Some("--destructive-action") => destructive_action().run(),
         // The v0.6 §48 surface, kept apart from the default so that every existing conformance
         // assertion about what this package contributes stays exactly as true as it was.
         Some("--change-provider") => change_provider(None).run(),
@@ -504,6 +509,27 @@ fn change_provider(flaw: Option<&str>) -> Plugin {
 /// is the whole of §48.4 and §12.2's split. The command id is the call id with its dots turned
 /// into dashes, so a test that walks `protocol.v1.yaml` can find the command for a call.
 fn with_recovery_commands(plugin: Plugin) -> Plugin {
+    // A command that declares only the reading capability and makes the destructive call anyway
+    // (a defect, on purpose): a package-wide grant of `recovery.restore` must not reach a command
+    // that never said it restores, because its declaration is what its confirmation was decided
+    // on (ADR-1022).
+    let plugin = plugin
+        .contribute_command(change_command(
+            "sneaky-restore",
+            "Call recovery.restore while declaring only recovery.discover (a defect, on purpose).",
+            &["recovery.discover"],
+            &[],
+        ))
+        .command(
+            &format!("{PACKAGE}.command.sneaky-restore"),
+            |ctx| match ctx.host_call(
+                method::RECOVERY_RESTORE,
+                recovery_params(method::RECOVERY_RESTORE),
+            ) {
+                Ok(value) => emit_text(ctx, &value.to_string()),
+                Err(error) => Outcome::Failed(error),
+            },
+        );
     RECOVERY_CALLS
         .iter()
         .fold(plugin, |carry, (call, capability)| {
@@ -659,8 +685,18 @@ fn destructive() -> Plugin {
             )
         })
         .command(&format!("{PACKAGE}.command.wipe"), |ctx| {
+            // The record it was asked to remove, when the words named one: how a test sees that
+            // the words bound where they were meant to.
+            let wiped = match ctx
+                .arguments()
+                .get("record")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some(record) => format!("wiped {record}"),
+                None => "wiped".to_owned(),
+            };
             match ctx.audit_event(json!({"action": "wipe", "detail": "the record was removed"})) {
-                Ok(()) => emit_text(ctx, "wiped"),
+                Ok(()) => emit_text(ctx, &wiped),
                 Err(error) => Outcome::Failed(error),
             }
         })
@@ -686,6 +722,76 @@ fn understated() -> Plugin {
                 Ok(()) => emit_text(ctx, "wiped"),
                 Err(error) => Outcome::Failed(error),
             }
+        })
+}
+
+/// The honest package plus `remove echo-place` (destructive) and an understated `restart
+/// echo-place`, both declared as actions on the place schema.
+fn destructive_action() -> Plugin {
+    let place_action = || ActionContribution {
+        targets: vec![PLACE_SCHEMA.to_owned()],
+        mutates: true,
+        idempotency: Idempotency::Idempotent,
+        result: None,
+        verification: Some("the place is read back".to_owned()),
+        effects: vec!["changes-state".to_owned()],
+        effect_classes: Vec::new(),
+    };
+    honest()
+        .contribute_command(CommandContribution {
+            verb: "remove".to_owned(),
+            target: "echo-place".to_owned(),
+            risk: Some("destructive".to_owned()),
+            options: vec![ParameterContribution {
+                name: "dry_run".to_owned(),
+                declared_type: "bool".to_owned(),
+                doc: "Say what would be removed without removing it. Default true.".to_owned(),
+                repeatable: false,
+                optional_value: false,
+                default: Some(json!(true)),
+            }],
+            action: Some(place_action()),
+            ..command_declaring(
+                "remove-place",
+                "Remove a place; a dry run unless `dry_run false` is given.",
+                "stream<string>",
+                &["provider.mutate"],
+            )
+        })
+        .command(&format!("{PACKAGE}.command.remove-place"), |ctx| {
+            // The declared default is the host's to apply: a handler that has to remember it is
+            // a handler that can forget it, so an absent `dry_run` is refused here, loudly.
+            match ctx
+                .arguments()
+                .get("dry_run")
+                .and_then(serde_json::Value::as_bool)
+            {
+                Some(true) => emit_text(ctx, "would remove"),
+                Some(false) => emit_text(ctx, "removed"),
+                None => Outcome::Failed(ono_kuang_sdk::protocol::WireError {
+                    code: "Ono-Sendai-E0401".to_owned(),
+                    name: "provider.unavailable".to_owned(),
+                    message: "no `dry_run` arrived, and its declared default is true".to_owned(),
+                    help: None,
+                    metadata: Box::default(),
+                }),
+            }
+        })
+        .contribute_command(CommandContribution {
+            verb: "restart".to_owned(),
+            target: "echo-place".to_owned(),
+            risk: Some("mutate".to_owned()),
+            action: Some(place_action()),
+            ..command_declaring(
+                "restart-place",
+                "Restart a place, declaring `mutate` while needing `filesystem.write` (a defect, \
+                 on purpose).",
+                "stream<string>",
+                &["provider.mutate", "filesystem.write"],
+            )
+        })
+        .command(&format!("{PACKAGE}.command.restart-place"), |ctx| {
+            emit_text(ctx, "restarted")
         })
 }
 

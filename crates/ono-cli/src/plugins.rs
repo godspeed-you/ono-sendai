@@ -315,9 +315,12 @@ pub fn load_plugin_with(
         &declared_schemas,
     )
     .map_err(Flow::Failed)?;
+    // The instance is shared by the foreground and every job (ADR-0995), so whoever loads it
+    // decides nothing about who may be asked: its own source asks nobody, and an invocation
+    // carries the source of the evaluator that runs it (ADR-1023).
     let consent = std::sync::Arc::new(crate::kuang_permissions::ShellConsent::new(
         std::sync::Arc::clone(session.tables()),
-        session.is_interactive(),
+        false,
         package.clone(),
     ));
     let mut config = LoadConfig::new(entry, package.manifest);
@@ -343,8 +346,8 @@ pub fn load_plugin_with(
     config.views = std::sync::Arc::new(crate::kuang_views::ShellViews::new(std::sync::Arc::clone(
         session.theme(),
     )));
-    // Who answers a just-in-time request: a person at this session's terminal, or nobody
-    // (K11P §14, ADR-0603 §2).
+    // Who answers a just-in-time request no invocation's own source answers: nobody
+    // (K11P §14, §20.3, ADR-0603 §2, ADR-1023).
     config.consent = consent;
     let (runtime, _) = session.pipeline_context().ok_or_else(|| {
         Flow::Failed(ErrorValue::new(
@@ -1047,22 +1050,24 @@ pub fn invoke(
             )
         })?;
         // The qualified spelling is a second door to the same contribution, and it is held to
-        // the same confirmation: the declaration on disk where there is one, the running
-        // package's own hello where there is not (ADR-1001).
-        let spoken = match declared {
-            Some(declared) => Some(declared.clone()),
-            None => plugin
-                .commands()
-                .iter()
-                .find(|registered| registered.contribution.id == full)
-                .map(|registered| hello_contract(&id, &registered.contribution))
-                .transpose()
-                .map_err(Flow::Failed)?,
-        };
-        refuse_unconfirmed(spoken.as_ref(), words)?;
+        // the same confirmation (ADR-1001). The declaration on disk and the running package's
+        // hello are two declarations of one command, and the hello is the one the package's
+        // broker enforces: it is held to the registry's floor whether or not the disk declares
+        // the command too (ADR-1002), and the stronger of the two decides the confirmation, so a
+        // package cannot say `read` in one and act on `destructive` in the other (ADR-1022).
+        let hello = plugin
+            .commands()
+            .iter()
+            .find(|registered| registered.contribution.id == full)
+            .map(|registered| hello_contract(&id, &registered.contribution))
+            .transpose()
+            .map_err(Flow::Failed)?;
+        refuse_unconfirmed(declaration(&full), words)?;
+        refuse_unconfirmed(hello.as_ref(), words)?;
+        let consent = evaluator_consent(session, &id);
         runtime.block_on(async {
             let invocation = plugin
-                .invoke(&full, arguments)
+                .invoke_with_consent(&full, arguments, consent)
                 .await
                 .map_err(|error| crate::kuang_host::wire_error_value(&error))?;
             Ok::<_, ErrorValue>(collect_unless_interrupted(invocation).await)
@@ -1072,6 +1077,29 @@ pub fn invoke(
         .map_err(Flow::Failed)?
         .ok_or_else(crate::eval::interrupted_flow_now)?;
     delivered(events, &result)
+}
+
+/// Who answers the just-in-time questions of an invocation this evaluator runs: a person at the
+/// terminal of an interactive foreground, nobody in a script or a background job (K11P §14,
+/// §20.3, ADR-1023). The instance is the session's whoever loaded it (ADR-0995); who may be asked
+/// is the evaluator's.
+///
+/// `None` when the package is no longer installed, which leaves the instance's own source — one
+/// that asks nobody — to answer.
+fn evaluator_consent(
+    session: &Session,
+    package: &str,
+) -> Option<std::sync::Arc<dyn ono_kuang_supervisor::ConsentSource>> {
+    let installed = session
+        .with_kuang(|host| host.resolve_installed(package))
+        .ok()?;
+    Some(std::sync::Arc::new(
+        crate::kuang_permissions::ShellConsent::new(
+            std::sync::Arc::clone(session.tables()),
+            session.is_interactive(),
+            installed,
+        ),
+    ))
 }
 
 /// Refuses a run of a contribution whose confirmation policy `words` do not satisfy.
@@ -1084,7 +1112,8 @@ fn refuse_unconfirmed(
     contract: Option<&CommandContract>,
     words: &[std::ffi::OsString],
 ) -> Eval<()> {
-    let confirmed = json_arguments(words).get("confirm") == Some(&serde_json::Value::Bool(true));
+    let confirmed =
+        json_arguments(words, contract).0.get("confirm") == Some(&serde_json::Value::Bool(true));
     match contract.and_then(|contract| contract.unconfirmed(confirmed)) {
         Some(refusal) => Err(Flow::Failed(refusal)),
         None => Ok(()),
@@ -1102,6 +1131,46 @@ fn hello_contract(
     package: &str,
     contribution: &ono_kuang_protocol::CommandContribution,
 ) -> Result<CommandContract, ErrorValue> {
+    hello_entry(package, contribution, false)
+}
+
+/// The registry entry a command the running package declared in its hello would be, with the
+/// options it declared there: what the provider path invokes it with — their types, their
+/// defaults, which of them is its dry run — as well as its confirmation policy (ADR-1024).
+///
+/// # Errors
+///
+/// The registry's own refusal of the declaration, as for [`hello_contract`].
+pub(crate) fn hello_declaration(
+    package: &str,
+    contribution: &ono_kuang_protocol::CommandContribution,
+) -> Result<CommandContract, ErrorValue> {
+    hello_entry(package, contribution, true)
+}
+
+fn hello_entry(
+    package: &str,
+    contribution: &ono_kuang_protocol::CommandContribution,
+    with_options: bool,
+) -> Result<CommandContract, ErrorValue> {
+    // A straight rename across the crate boundary, as the registry makes for a declaration on
+    // disk: `ono-kuang-protocol` owns the wire's shape, `ono-command` the registry's.
+    let options = if with_options {
+        contribution
+            .options
+            .iter()
+            .map(|parameter| ono_command::ContributedParameter {
+                name: parameter.name.clone(),
+                declared_type: parameter.declared_type.clone(),
+                doc: parameter.doc.clone(),
+                repeatable: parameter.repeatable,
+                optional_value: parameter.optional_value,
+                default: parameter.default_text(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     ono_command::ContributedCommand {
         id: contribution.id.clone(),
         verb: contribution.verb.clone(),
@@ -1112,7 +1181,7 @@ fn hello_contract(
         capabilities: contribution.capabilities.clone(),
         argument_mode: contribution.argument_mode.clone(),
         selectors: Vec::new(),
-        options: Vec::new(),
+        options,
         risk: contribution.risk.clone(),
         examples: Vec::new(),
         origin: ono_command::Origin::plugin(package, ""),
@@ -1150,26 +1219,12 @@ fn declared_arguments(
     declaration: Option<&CommandContract>,
     words: &[std::ffi::OsString],
 ) -> serde_json::Map<String, serde_json::Value> {
-    let mut arguments = json_arguments(words);
+    // The bare words, in order, minus the ones that were an option's value, bind to the declared
+    // selectors positionally, exactly as a core command's do (ADR-0009).
+    let (mut arguments, positional) = json_arguments(words, declaration);
     let Some(declaration) = declaration else {
         return arguments;
     };
-    // The bare words, in order, minus the ones that were an option's value. They bind to the
-    // declared selectors positionally, exactly as a core command's do (ADR-0009).
-    let mut positional: Vec<String> = Vec::new();
-    let mut expecting_value = false;
-    for word in words {
-        let text = word.to_string_lossy().into_owned();
-        if let Some(rest) = text.strip_prefix("--") {
-            expecting_value = !rest.contains('=');
-            continue;
-        }
-        if expecting_value {
-            expecting_value = false;
-            continue;
-        }
-        positional.push(text);
-    }
     for (spec, word) in declaration.selectors().iter().zip(&positional) {
         arguments
             .entry(spec.name().to_owned())
@@ -1205,28 +1260,57 @@ fn json_of(value: &Value) -> serde_json::Value {
     ono_value::to_json(value)
 }
 
-fn json_arguments(words: &[std::ffi::OsString]) -> serde_json::Map<String, serde_json::Value> {
+/// The named arguments `words` carry, and the bare words left for the selectors.
+///
+/// A flag — an option the declaration types `bool`, or the host's own `--confirm` where the
+/// declaration says nothing of it — takes the next word only when that word is `true` or `false`,
+/// and otherwise means `true` and leaves the word where it was: the core binder's rule (ADR-0009),
+/// so `remove echo-record --confirm r1` confirms and removes `r1`, as a core `confirmation:
+/// always` command does wherever `--confirm` is written. Any other option takes the next word.
+fn json_arguments(
+    words: &[std::ffi::OsString],
+    declaration: Option<&CommandContract>,
+) -> (serde_json::Map<String, serde_json::Value>, Vec<String>) {
+    let is_flag = |name: &str| match declaration.and_then(|declared| declared.option(name)) {
+        Some(spec) => spec.declared_type().is_flag(),
+        None => name == "confirm",
+    };
     let mut arguments = serde_json::Map::new();
+    let mut positional = Vec::new();
     let mut pending: Option<String> = None;
+    let mut pending_flag: Option<String> = None;
     for word in words {
         let text = word.to_string_lossy();
         if let Some(rest) = text.strip_prefix("--") {
-            if let Some(name) = pending.take() {
+            for name in [pending.take(), pending_flag.take()].into_iter().flatten() {
                 arguments.insert(name, serde_json::Value::Bool(true));
             }
             if let Some((name, value)) = rest.split_once('=') {
                 arguments.insert(name.to_owned(), json_word(value));
+            } else if is_flag(rest) {
+                pending_flag = Some(rest.to_owned());
             } else {
                 pending = Some(rest.to_owned());
             }
-        } else if let Some(name) = pending.take() {
-            arguments.insert(name, json_word(&text));
+            continue;
         }
+        if let Some(name) = pending.take() {
+            arguments.insert(name, json_word(&text));
+            continue;
+        }
+        if let Some(name) = pending_flag.take() {
+            if let Ok(explicit) = text.parse::<bool>() {
+                arguments.insert(name, serde_json::Value::Bool(explicit));
+                continue;
+            }
+            arguments.insert(name, serde_json::Value::Bool(true));
+        }
+        positional.push(text.into_owned());
     }
-    if let Some(name) = pending.take() {
+    for name in [pending, pending_flag].into_iter().flatten() {
         arguments.insert(name, serde_json::Value::Bool(true));
     }
-    arguments
+    (arguments, positional)
 }
 
 fn json_word(text: &str) -> serde_json::Value {
@@ -1487,6 +1571,7 @@ pub fn query(
             ono_pipeline::Boundedness::Unbounded
         };
         let target = crate::plugin_provider::intern_target(target);
+        let consent = evaluator_consent(session, package);
         let _guard = runtime.enter();
         Ok(Answered::Live(crate::plugin_provider::stream_of(
             plugin,
@@ -1494,6 +1579,7 @@ pub fn query(
             arguments,
             boundedness,
             None,
+            consent,
         )))
     }
 }
@@ -1503,7 +1589,7 @@ pub fn query(
 /// The declaration is read from the package's own documents before anything runs (spec §31.68),
 /// so it is available at the moment an invocation is being assembled — which is what lets the
 /// host type an argument and supply a default rather than forwarding whatever words arrived.
-fn declaration(id: &str) -> Option<&'static CommandContract> {
+pub(crate) fn declaration(id: &str) -> Option<&'static CommandContract> {
     crate::plugin_registry::registry().ok()?.get(id)
 }
 
