@@ -830,7 +830,13 @@ fn should_report_a_job_that_failed_unattended_when_the_prompt_returns() {
     shell
         .write_all(format!("get file {} &\n", missing.display()).as_bytes())
         .expect("the terminal accepts input");
-    read_until(&mut shell, "[%1]", Duration::from_secs(10));
+    // What arrives after the job is announced is kept: a job that fails at once can be reported
+    // in that very read.
+    let announced = read_until(&mut shell, "[%1]", Duration::from_secs(10));
+    let mut seen = announced
+        .split_once("[%1]")
+        .map(|(_, rest)| rest.to_owned())
+        .unwrap_or_default();
     shell
         .write_all(
             b"while (get job | where state == running | count) > 0 { sh -c 'sleep 0.02' }; echo \"waited-$?\"\n",
@@ -838,24 +844,38 @@ fn should_report_a_job_that_failed_unattended_when_the_prompt_returns() {
         .expect("the terminal accepts input");
     // The job can end before the loop's line is read — it fails at once, and a job no longer
     // starts a plugin host of its own (ADR-0995) — and then the prompt that reads that line is
-    // the one that reports it. Either way the report comes once, at a prompt, and not before the
-    // job was started.
-    let mut seen = read_until(&mut shell, "waited-0", Duration::from_secs(20));
+    // the one that reports it; otherwise the prompt after the loop does.
+    seen.push_str(&read_until(&mut shell, "waited-0", Duration::from_secs(20)));
     // The report is one line, and under load it can reach the terminal in pieces: read until the
     // part the assertion needs has arrived, not merely its first words.
     if !seen.contains("status 1") {
         seen.push_str(&read_until(&mut shell, "status 1", Duration::from_secs(10)));
     }
-    seen.push_str(&read_until(&mut shell, ">", Duration::from_secs(5)));
+    // One more prompt, so that "once" covers the prompt after the report as well.
+    shell
+        .write_all(b"echo \"again-$?\"\n")
+        .expect("the terminal accepts input");
+    seen.push_str(&read_until(&mut shell, "again-0", Duration::from_secs(10)));
 
     assert_eq!(
         seen.matches("ended with status 1").count(),
         1,
         "the prompt reported the failed job, once; saw:\n{seen}"
     );
+    let (_, after) = seen
+        .split_once("ended with status 1")
+        .expect("the report is there");
     assert!(
-        seen.contains("job %1"),
+        seen.contains("job %1 ended with status 1"),
         "the report names the job; saw:\n{seen}"
+    );
+    // At a prompt, and not in the middle of a command: what follows the report is a prompt,
+    // before any output the loop prints.
+    let prompt = after.find("local://");
+    let loop_output = after.find("waited-");
+    assert!(
+        prompt.is_some_and(|prompt| loop_output.is_none_or(|output| prompt < output)),
+        "the report is followed by a prompt, not by the running command's output; saw:\n{seen}"
     );
 
     shell
