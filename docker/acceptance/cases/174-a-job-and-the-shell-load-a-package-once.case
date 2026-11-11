@@ -1,0 +1,105 @@
+# ADR-1026 (v0.6.5 review R-F1), spec §31.8, §31.37, §31.68; ADR-0995: a background job and the
+# shell share one KUANG/11 host, so both can reach a package nobody has loaded yet at the same
+# moment. Each loads it lazily, and before ADR-1026 the second instance replaced the first and shut
+# it down under the invocation running in it (`runtime.trap the instance was shut down`). A lazy
+# load is one load per package: ten rounds, each starting from an unloaded package, each answer
+# arrives, and the trail holds one load and one unload per round.
+# v0.6.5 review S-F3 (spec §18.4, §31.22; ADR-1001): a package's qualified command backgrounded
+# on its own is a job too — `echo:emit --count 2 &` runs and `fg` shows its values, and an
+# unconfirmed destructive one is refused in the job as in the foreground.
+case: a job and the shell share one package instance, loaded once and reached by its qualified name
+timeout: 240
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+  roles: [provider]
+  network:
+    outbound: none
+  contributions:
+    commands: [contributions/commands.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/commands.yaml" <<'COMMANDS'
+  commands:
+    - id: dev.example.echo.command.emit
+      verb: get
+      target: echo-item
+      summary: Emit a counted stream of integers.
+      output: stream<int>
+      argument_mode: expression
+      capabilities: []
+      options:
+        - name: count
+          type: int
+          doc: How many integers to emit.
+          default: 2
+  COMMANDS
+  trail='get audit --plugin dev.example.echo | where invocation == "host" | where action == "lifecycle.load" | count | to json'
+  script=""
+  for round in 1 2 3 4 5 6 7 8 9 10; do
+    script="$script
+  get echo-item --count 3 | to json > '$home/job-$round.json' &
+  get echo-item --count 2 | count | to json
+  while (get job | where state == \"running\" | count) > 0 { sleep 0.01 }
+  unload plugin dev.example.echo | count | to json"
+  done
+  ono -c "$script" 2>"$home/stderr"
+  echo "shell-exit: $?"
+  answered=0
+  for round in 1 2 3 4 5 6 7 8 9 10; do
+    if [ "$(cat "$home/job-$round.json" 2>/dev/null)" = "[1,2,3]" ]; then
+      answered=$((answered + 1))
+    fi
+  done
+  echo "jobs-answered: $answered"
+  if grep -q 'runtime.trap' "$home/stderr"; then
+    echo "an-instance-was-shut-down-under-an-invocation"
+  fi
+  echo "loads: $(ono -c "$trail")"
+
+  echo "== a qualified package command backgrounded alone is a job (S-F3) =="
+  ono -c 'load plugin dev.example.echo
+  echo:emit --count 2 &
+  fg %1' >"$home/alone.out" 2>"$home/alone.err"
+  echo "alone-values: $(grep -cxE ' *[12] *' "$home/alone.out")"
+  if grep -q command_not_found "$home/alone.err"; then echo "the-namespace-was-not-resolved"; fi
+  printf '#!/bin/sh\nexec /usr/local/bin/kuang-example-plugin --destructive\n' \
+    > "$home/plugins/dev.example.echo/runtime/echo"
+  chmod 755 "$home/plugins/dev.example.echo/runtime/echo"
+  ono -c 'load plugin dev.example.echo
+  echo:wipe &
+  fg %1' >"$home/wipe.out" 2>"$home/wipe.err"
+  if grep -q safety.confirmation_required "$home/wipe.err"; then echo "wipe-refused-in-the-job"; fi
+  if grep -q wiped "$home/wipe.out"; then echo "an-unconfirmed-wipe-ran"; fi
+exit: 0
+stdout-contains: shell-exit: 0
+stdout-contains: jobs-answered: 10
+stdout-contains: loads: [10]
+stdout-not-contains: an-instance-was-shut-down-under-an-invocation
+stdout-contains: alone-values: 2
+stdout-not-contains: the-namespace-was-not-resolved
+stdout-contains: wipe-refused-in-the-job
+stdout-not-contains: an-unconfirmed-wipe-ran
+stdout-not-contains: panicked

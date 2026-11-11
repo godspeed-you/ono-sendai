@@ -349,3 +349,133 @@ fn should_count_the_invocation_a_job_holds_open_in_get_plugins_jobs() {
         run.output()
     );
 }
+
+#[test]
+fn should_load_a_package_once_when_a_job_and_the_shell_both_load_it_lazily() {
+    // R-F1 of the v0.6.5 review: a job and the shell share one host (ADR-0995), so both can find
+    // the package not yet loaded and both start it. The second instance replaced the first under
+    // the invocation that was running in it. A lazy load is one load per package however many
+    // evaluators ask at once: the loser of the race runs in the winner's instance. Twenty rounds,
+    // each unloading the package so that the next one loads it lazily again from both sides.
+    let home = plugin_home();
+    let rounds = 20;
+    let answers = home.path().join("answers");
+    std::fs::create_dir_all(&answers).expect("a directory for the jobs' answers");
+    let script: String = (1..=rounds)
+        .map(|round| {
+            format!(
+                "get echo-item --count 3 | to json > '{}/{round}.json' &\n\
+                 get echo-item --count 2 | to json\n\
+                 while (get job | where state == \"running\" | count) > 0 {{ sleep 0.01 }}\n\
+                 unload plugin dev.example.echo | count | to json\n",
+                answers.display()
+            )
+        })
+        .collect();
+    let run = ono(&home, &script);
+
+    run.assert_success();
+    assert!(
+        !run.stderr().contains("Ono-Sendai"),
+        "no invocation failed, in the job or in the shell: {:?}",
+        run.output()
+    );
+    for round in 1..=rounds {
+        let answer =
+            std::fs::read_to_string(answers.join(format!("{round}.json"))).unwrap_or_default();
+        assert_eq!(
+            answer.trim(),
+            "[1,2,3]",
+            "round {round}: the job's invocation was answered: {:?}",
+            run.output()
+        );
+    }
+    assert_eq!(
+        run.stdout().matches("[1,2]").count(),
+        rounds,
+        "every foreground invocation was answered: {:?}",
+        run.output()
+    );
+    let expected: Vec<&str> = (0..rounds)
+        .flat_map(|_| ["lifecycle.load", "lifecycle.unload"])
+        .collect();
+    assert_eq!(
+        lifecycle_trail(&home),
+        expected,
+        "spec §31.37: each round started one instance, so the trail holds one load and one \
+         unload per round"
+    );
+}
+
+#[test]
+fn should_run_a_qualified_package_command_backgrounded_alone_as_a_job() {
+    // v0.6.5 review S-F3: `echo:emit --count 2 | to json &` ran as a job, while the same command
+    // backgrounded on its own was handed to the program path and refused with `unknown namespace
+    // 'echo'`. A qualified package command is a job however many stages the line has (spec §18.4,
+    // §31.22).
+    let home = plugin_home();
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo\n\
+         echo:emit --count 2 &\n\
+         fg %1",
+    );
+
+    run.assert_success();
+    assert!(
+        !run.stderr().contains("command_not_found"),
+        "the namespace of a loaded package resolves in the background too: {:?}",
+        run.output()
+    );
+    let values: Vec<&str> = run
+        .stdout()
+        .lines()
+        .map(str::trim)
+        .filter(|line| *line == "1" || *line == "2")
+        .collect();
+    assert_eq!(
+        values,
+        ["1", "2"],
+        "`fg` shows what the job's invocation answered: {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_refuse_an_unconfirmed_destructive_package_command_backgrounded_alone() {
+    // The same door in the background is held to the same confirmation (ADR-1001): a
+    // destructive contribution without `--confirm` is refused in the job, and `fg` reports it.
+    let home = plugin_home();
+    let binary = ono_testkit::ono_binary()
+        .parent()
+        .expect("the target directory")
+        .join("kuang-example-plugin");
+    let entry = home.path().join("plugins/dev.example.echo/runtime/echo");
+    std::fs::remove_file(&entry).expect("the copied runtime");
+    std::fs::write(
+        &entry,
+        format!("#!/bin/sh\nexec '{}' --destructive\n", binary.display()),
+    )
+    .expect("the runtime wrapper");
+    let mut permissions = std::fs::metadata(&entry).expect("written").permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+    std::fs::set_permissions(&entry, permissions).expect("executable");
+
+    let run = ono(
+        &home,
+        "load plugin dev.example.echo\n\
+         echo:wipe &\n\
+         fg %1",
+    );
+
+    assert!(
+        run.stderr().contains("safety.confirmation_required"),
+        "an unconfirmed destructive command is refused in a job as in the foreground: {:?}",
+        run.output()
+    );
+    assert!(
+        !run.stdout().contains("wiped"),
+        "the package's code never ran: {:?}",
+        run.output()
+    );
+}

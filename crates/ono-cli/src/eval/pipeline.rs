@@ -629,6 +629,24 @@ pub(super) fn run_stage_list(
         }
     }
 
+    // A backgrounded line headed by a package's qualified command is a job, whatever follows it:
+    // its evaluator runs the head through the branches above. Alone, the head is no native stage,
+    // so it used to reach the program path and be refused as an unknown namespace, while the same
+    // command with `| to json` after it ran (v0.6.5 review S-F3).
+    if background
+        && let Some(stage) = list.stages.first()
+        && let StageHead::Command(name) = &stage.head
+        && let Some(namespace) = name.namespace.as_deref()
+        && Namespace::from_prefix(Some(namespace)).is_none()
+        && (crate::plugins::loaded_package(session, namespace).is_some()
+            || crate::plugins::contributed_by_namespace(namespace, &name.name).is_some())
+    {
+        if session.mode() == Mode::Config {
+            return Err(Flow::Failed(config_refusal("this command")));
+        }
+        return super::native::run_evaluated_job(session, list, source);
+    }
+
     // A pipeline may start with a value instead of a command: `$hot | where …`, `@-1 | count`
     // (spec §10.2, §20.2). The head is evaluated once and a list splices, because a list *is*
     // several values (ADR-0019); everything after it runs as if a producer had streamed them.

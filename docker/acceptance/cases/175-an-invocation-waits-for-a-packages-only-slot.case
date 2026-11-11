@@ -1,0 +1,101 @@
+# ADR-1027 (v0.6.5 review R-F2, R-F3), spec §31.14, §31.15, §18.4; ADR-0586, ADR-0995, ADR-0998,
+# ADR-1011: a package that runs one invocation at a time is shared by the shell, its jobs and the
+# stages of one pipeline. An invocation beyond the ceiling waits for the slot — until the job
+# holding it ends or is killed, or the upstream holding it is ended by `take` — instead of being
+# refused at once with `runtime.concurrency_limit`.
+case: an invocation beyond a package's concurrency ceiling waits for the slot
+timeout: 180
+run: |
+  home=$(mktemp -d)
+  export ONO_PLUGIN_PATH="$home/plugins"
+  export XDG_STATE_HOME="$home/state"
+  export XDG_CONFIG_HOME="$home/config"
+  mkdir -p "$home/plugins/dev.example.echo/runtime" "$home/plugins/dev.example.echo/contributions"
+  cp /usr/local/bin/kuang-example-plugin "$home/plugins/dev.example.echo/runtime/echo"
+  cat > "$home/plugins/dev.example.echo/manifest.yaml" <<'MANIFEST'
+  format: kuang-package/1
+  package:
+    id: dev.example.echo
+    name: echo
+    version: 0.1.0
+    description: Emits what it is asked to emit.
+    publisher: dev.example
+    license: MIT
+  compatibility:
+    kuang_api: ">=11.1 <12"
+    ono_language: ">=0.2"
+    platforms: [linux-amd64, linux-arm64]
+  runtime:
+    kind: native-process
+    entry: runtime/echo
+    memory_max: 64MiB
+    cpu_budget: interactive
+    startup: lazy
+    max_concurrent_invocations: 1
+  roles: [provider]
+  network:
+    outbound: none
+  contributions:
+    targets: [contributions/targets.yaml]
+  MANIFEST
+  cat > "$home/plugins/dev.example.echo/contributions/targets.yaml" <<'TARGETS'
+  targets:
+    - name: echo-item
+      schema: dev.example.echo.item/1
+      summary: Items the example package provides.
+      identity_doc: Two observations are the same item when their `seq` matches.
+      options:
+        - name: count
+          type: int
+          doc: How many items to answer with.
+    - name: echo-tick
+      schema: dev.example.echo.item/1
+      summary: Items emitted until the query is cancelled.
+      identity_doc: Two observations are the same tick when their `seq` matches.
+      answer: unbounded
+    - name: echo-slow
+      schema: dev.example.echo.item/1
+      summary: Counted items, paced, then the end.
+      identity_doc: Two observations are the same item when their `seq` matches.
+      options:
+        - name: count
+          type: int
+          doc: How many items to answer with.
+        - name: pace-ms
+          type: int
+          doc: Milliseconds between two items.
+  TARGETS
+  active='while (get plugin | where id == "dev.example.echo" and state == "active" | count) == 0 { sleep 0.01 }'
+  idle='while (get job | where state == "running" | count) > 0 { sleep 0.01 }'
+
+  echo "== the shell waits for the job holding the only slot to end (R-F2) =="
+  ono -c "load plugin dev.example.echo
+  get echo-slow --count 5 --pace-ms 400 | count | to json > '$home/job.json' &
+  $active
+  echo shell: (get echo-item | count)
+  $idle"
+  echo "job: $(cat "$home/job.json")"
+
+  echo "== a job waiting for the slot runs once the holder is killed (R-F2, ADR-0998) =="
+  ono -c "load plugin dev.example.echo
+  echo:count-forever | count &
+  $active
+  get echo-item | count | to json > '$home/waiting.json' &
+  sleep 0.3
+  kill %1
+  $idle" 2>"$home/stderr"
+  echo "waited: $(cat "$home/waiting.json")"
+  if grep -q concurrency_limit "$home/stderr"; then echo "a-waiting-invocation-was-refused"; fi
+
+  echo "== a later stage invokes the package its upstream held (R-F3) =="
+  ono -c 'load plugin dev.example.echo
+  echo taken: (get echo-tick | take 1 | each { get echo-item --count 1 | count } | to json)
+  echo streamed: (get echo-slow --count 3 --pace-ms 50 | each { get echo-item --count 1 | count } | to json)'
+exit: 0
+stdout-contains: shell: 3
+stdout-contains: job: [5]
+stdout-contains: waited: [3]
+stdout-contains: taken: [1]
+stdout-contains: streamed: [1,1,1]
+stdout-not-contains: a-waiting-invocation-was-refused
+stdout-not-contains: panicked
