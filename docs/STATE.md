@@ -276,7 +276,10 @@ against the tracker (no existing issue):
   `temporal_view::should_enter_the_historical_place_and_keep_the_coordinate_when_enter_is_pressed_on_a_past_node`,
   `jobs_shutdown::should_end_several_stubborn_jobs_within_one_grace_period_rather_than_one_each`,
   `jobs_shutdown::should_leave_promptly_when_its_jobs_end_on_the_signal`; each passed alone. Severity
-  low (gate noise). Exit: each waits on what it asserts rather than on time.
+  low (gate noise). Exit: each waits on what it asserts rather than on time. The `temporal_view`
+  one fails alone at low load too, and before v0.6.5: 4 of 20 runs at `v0.6.4`, 1 of 8 at the
+  v0.6.5 release commit (2026-11-11); when it fails, the prompt after the map closes still names
+  the place the session stood at before `Enter`.
 - The doc comment of `crates/ono-cli/src/plugins.rs::delivered` says the host learns of a handler's
   failure "from the invocation's result rather than from a stream event"; since ADR-0992 the stream
   carries it. Severity cosmetic.
