@@ -836,18 +836,26 @@ fn should_report_a_job_that_failed_unattended_when_the_prompt_returns() {
             b"while (get job | where state == running | count) > 0 { sh -c 'sleep 0.02' }; echo \"waited-$?\"\n",
         )
         .expect("the terminal accepts input");
+    // The job can end before the loop's line is read — it fails at once, and a job no longer
+    // starts a plugin host of its own (ADR-0995) — and then the prompt that reads that line is
+    // the one that reports it. Either way the report comes once, at a prompt, and not before the
+    // job was started.
     let mut seen = read_until(&mut shell, "waited-0", Duration::from_secs(20));
     // The report is one line, and under load it can reach the terminal in pieces: read until the
     // part the assertion needs has arrived, not merely its first words.
-    seen.push_str(&read_until(&mut shell, "status 1", Duration::from_secs(10)));
+    if !seen.contains("status 1") {
+        seen.push_str(&read_until(&mut shell, "status 1", Duration::from_secs(10)));
+    }
+    seen.push_str(&read_until(&mut shell, ">", Duration::from_secs(5)));
 
-    let after = seen
-        .split_once("waited-0")
-        .map(|(_, rest)| rest)
-        .unwrap_or_default();
+    assert_eq!(
+        seen.matches("ended with status 1").count(),
+        1,
+        "the prompt reported the failed job, once; saw:\n{seen}"
+    );
     assert!(
-        after.contains("job %1") && after.contains("status 1"),
-        "the prompt reported the failed job; saw:\n{seen}"
+        seen.contains("job %1"),
+        "the report names the job; saw:\n{seen}"
     );
 
     shell
