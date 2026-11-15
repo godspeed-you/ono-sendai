@@ -187,6 +187,41 @@ impl Terminal {
         }
     }
 
+    /// Reads until the shell's own screen, back from a closed view, holds a whole prompt.
+    ///
+    /// The prompt is what the caller reads next, so it is waited for — until its closing `> `
+    /// (`# ` as root) has been painted — rather than assumed to have arrived within a fixed time
+    /// of the view closing (issue #311).
+    fn wait_for_the_prompt_after_the_view(&mut self) {
+        assert!(
+            self.wait_until(BUDGET, |seen| {
+                let shown = screen(&tail(seen, ALTERNATE_SCREEN_OFF));
+                shown.contains("> ") || shown.contains("# ")
+            }),
+            "v0.4 §21: the shell paints its prompt once the view has closed; saw:\n{}",
+            screen(&tail(self.seen(), ALTERNATE_SCREEN_OFF))
+        );
+    }
+
+    /// Moves the session into `local/compute`, and lets the recorder cover three seconds of it.
+    ///
+    /// The move is waited for — until the prompt names the place — rather than assumed to have
+    /// finished within a fixed time (issue #311). The three seconds that follow are a real
+    /// requirement, not a guess: the tests step the coordinate to `-3s`, and §12.3 refuses an
+    /// instant the session's ledger does not reach.
+    fn enter_compute(&mut self) {
+        let mark = self.mark();
+        self.line("enter compute");
+        assert!(
+            self.wait_until(BUDGET, |seen| screen(&seen[mark..])
+                .contains("local/compute:")),
+            "v0.4 §21.1: `enter compute` moves the session, and the prompt names the place; \
+             saw:\n{}",
+            screen(self.since(mark))
+        );
+        self.settle(Duration::from_secs(3));
+    }
+
     /// Sends raw key bytes.
     fn keys(&mut self, bytes: &[u8]) {
         self.pty
@@ -261,8 +296,8 @@ fn tail(text: &str, mark: &str) -> String {
 
 /// The text with its escape sequences removed, as a reader of the screen would see it.
 ///
-/// Only for failure messages: an assertion that stripped the escapes would lose the geometry the
-/// resize tests are about, so the assertions read the raw transcript and the messages read this.
+/// For failure messages, and for what a prompt *says*: an assertion about geometry that stripped
+/// the escapes would lose what the resize tests are about, so those read the raw transcript.
 fn screen(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
@@ -471,8 +506,7 @@ fn should_move_the_cursor_only_to_a_significant_event_when_the_step_keys_walk_th
         "the shell must reach a prompt; saw:\n{}",
         screen(session.seen())
     );
-    session.line("enter compute");
-    session.settle(Duration::from_secs(3));
+    session.enter_compute();
     session.enter_the_past("-3s");
 
     let opened = session.mark();
@@ -573,8 +607,7 @@ fn should_enter_the_historical_place_and_keep_the_coordinate_when_enter_is_press
         "the shell must reach a prompt; saw:\n{}",
         screen(session.seen())
     );
-    session.line("enter compute");
-    session.settle(Duration::from_secs(3));
+    session.enter_compute();
     let marker = session.enter_the_past("-3s");
 
     let opened = session.mark();
@@ -611,6 +644,7 @@ fn should_enter_the_historical_place_and_keep_the_coordinate_when_enter_is_press
         "v0.4 §49.8: the view closes and hands the screen back; saw:\n{}",
         screen(session.since(closed))
     );
+    session.wait_for_the_prompt_after_the_view();
     session.settle(Duration::from_millis(600));
     // Read from the moment the shell's own screen came back: the map's own header names the place
     // too, and an assertion that could be satisfied by the last frame would prove nothing about
@@ -741,8 +775,7 @@ fn should_keep_the_frozen_instant_and_the_place_when_the_terminal_is_resized_dur
         "the shell must reach a prompt; saw:\n{}",
         screen(session.seen())
     );
-    session.line("enter compute");
-    session.settle(Duration::from_secs(3));
+    session.enter_compute();
     let marker = session.enter_the_past("-3s");
 
     let opened = session.mark();
@@ -790,6 +823,7 @@ fn should_keep_the_frozen_instant_and_the_place_when_the_terminal_is_resized_dur
         "v0.4 §49.8: the resized view still closes cleanly; saw:\n{}",
         screen(session.since(closed))
     );
+    session.wait_for_the_prompt_after_the_view();
     session.settle(Duration::from_millis(600));
     // Read from the moment the shell's own screen came back, so what is asserted on is the
     // prompt and never the last frame the view painted before it left.
@@ -902,8 +936,7 @@ fn should_answer_the_view_and_the_textual_query_from_one_coordinate_when_the_ses
         "the shell must reach a prompt; saw:\n{}",
         screen(session.seen())
     );
-    session.line("enter compute");
-    session.settle(Duration::from_secs(3));
+    session.enter_compute();
     let marker = session.enter_the_past("-3s");
 
     // The place path is read out of the answer's own document rather than off the screen: the

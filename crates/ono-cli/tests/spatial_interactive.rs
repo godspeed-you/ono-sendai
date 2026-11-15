@@ -262,6 +262,14 @@ impl Session {
             "the shell must return to its prompt; saw:\n{}",
             plain(&self.seen)
         );
+        // The marker is the command's output, and the prompt comes after it. What is read is the
+        // prompt, so it is waited for — until its closing `> ` (`# ` as root) has been painted —
+        // rather than assumed to have arrived within a fixed time of the output (issue #311).
+        assert!(
+            self.wait_until(BUDGET, |seen| prompt_closed(&after(seen, &marker))),
+            "§21: the shell paints a prompt after every command; saw:\n{}",
+            plain(&self.seen)
+        );
         self.settle(Duration::from_millis(400));
         let drawn = plain(&after(&self.seen, &marker)).trim().to_owned();
         assert!(
@@ -290,6 +298,13 @@ impl Drop for Session {
         let _ = self.pty.signal(Signal::KILL);
         let _ = self.pty.wait();
     }
+}
+
+/// Whether `text` holds a whole prompt: the shell closes every prompt with `> `, or `# ` as root
+/// (§17.2).
+fn prompt_closed(text: &str) -> bool {
+    let shown = plain(text);
+    shown.contains("> ") || shown.contains("# ")
 }
 
 /// The transcript after the last occurrence of `mark`, or everything when it never appeared.
