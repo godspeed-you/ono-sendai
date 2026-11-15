@@ -201,6 +201,8 @@ only what finished since the last release and has no issue of its own.
   rightly keeps an ignored `SIGHUP` or `SIGINT` (`3c238222`, `ono_testkit::ono_command`).
 - [x] The gate builds its tests, flushes the build's writes and then tests, so the first suites no
   longer queue behind gigabytes of write-back (`576ebc24`, ADR-1033).
+- [x] Acceptance case 249 names its events by identity once the answer gave it, rather than by a
+  short reference later shells can make ambiguous (`298cec9b`).
 
 ---
 

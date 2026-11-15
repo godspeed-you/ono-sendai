@@ -548,9 +548,9 @@ adrs=731
 command_contract_files=16
 commands=226
 stripped_bytes.kuang-compile.aarch64-unknown-linux-gnu=5591976
-stripped_bytes.kuang-compile.x86_64-unknown-linux-gnu=7424912
+stripped_bytes.kuang-compile.x86_64-unknown-linux-gnu=7431408
 stripped_bytes.ono.aarch64-unknown-linux-gnu=19418112
-stripped_bytes.ono.x86_64-unknown-linux-gnu=23127680
+stripped_bytes.ono.x86_64-unknown-linux-gnu=23114112
 stripped_bytes.ono.x86_64-unknown-linux-musl=7579872
 ```
 

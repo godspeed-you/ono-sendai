@@ -19,7 +19,7 @@ load recorded at its start (`~/.cache/ono-pty/bin/repeat.sh`).
 | Pause | 10:58–13:15 CET: the owner needed the machine; nothing ran |
 | Starting point | `abc4e314` on `implementation`, clean, equal to `origin/implementation`; `main` at `4bfbd890` (v0.6.5) |
 | Root cause | the prompt read the spatial session state with `try_lock()` and dropped the place when another task held it; since v0.6.4 the read behind the prompt (ADR-0984) holds it at exactly that moment (#311) |
-| Fixes | `c4ed3a3d` (#311, ADR-1032); `7d8c1b0a` (a fuzzy match ended `enter`'s sweep); `8bb2f748` (PTY harness waits); `71b1f2fb` (`change_gates.rs` fixture); `3c238222` (signal tests at default dispositions); `576ebc24` (the gate flushes its build before testing, ADR-1033) |
+| Fixes | `c4ed3a3d` (#311, ADR-1032); `7d8c1b0a` (a fuzzy match ended `enter`'s sweep); `8bb2f748` (PTY harness waits); `71b1f2fb` (`change_gates.rs` fixture); `3c238222` (signal tests at default dispositions); `576ebc24` (the gate flushes its build before testing, ADR-1033); `298cec9b` (acceptance case 249) |
 | Tests added | 5 unit tests; the PTY suites unchanged in what they assert |
 | ADRs | ADR-1032, ADR-1033 |
 | Subagents | one, an independent read-only review on Opus |
@@ -97,6 +97,8 @@ prompt did arrive. No environmental cause was involved in #311.
 | `3c238222` | test | the tests that signal their shell start it at default signal dispositions (below) |
 | `d0c41e91` | docs | STATE and this record |
 | `576ebc24` | fix | the gate builds its tests, flushes the build's writes (`sync`), then runs them (ADR-1033) |
+| `5a0d5a16` | docs | STATE and this record |
+| `298cec9b` | test | acceptance case 249 names its events by identity once the answer gave it (below) |
 
 Regression tests. Each of these failed before its fix, and each holds the contended state itself
 while it reads:
@@ -161,6 +163,14 @@ next Tab asks again. No production path is special-cased for tests.
   flush drained it by about 14:03, and the tests then ran with less than 1 GB dirty: **green**
   (14:00–14:12).
 
+- **An acceptance case that reused short references (`298cec9b`).** CI on `5a0d5a16` (run
+  43717871341) was red in one case, `249-correlation-is-not-causation`. Its later `why event @e81e`
+  calls failed although the same reference had resolved four steps earlier. §11.6's references are
+  the shortest unambiguous prefix plus one digit of headroom (ADR-0783), and every `ono -c` after
+  the first records events of its own, so a prefix can come to name two events. The product is
+  right to refuse it. The case now takes the full identity from the answer it already parses for
+  the commands that are about the answer. No check changed; 5 of 5 container runs passed.
+
 ## Review
 
 One independent read-only review on Opus. It read the diff and the code without building or
@@ -212,18 +222,23 @@ A second gate was stopped because a test build of mine ran beside it. The gate o
 
 ## Qualification
 
-Three attempts broke before the final one, and each streak counts from zero:
+Four attempts ended before the final one, and each streak counts from zero:
 
 | Attempt | SHA | Run | Result | Cause |
 |---|---|---|---|---|
 | 1 | `91706f92` | 1 | stopped in the gate (`acquisition.rs`, 3 watchdogs) | write-back throttling after an aborted start (*Found*) |
 | 2 | `91706f92` | 1 | stopped in the gate (`jobs_shutdown.rs`, the `SIGHUP` test) | the runner's ignored signals, fixed in `3c238222` |
 | 3 | `d0c41e91` | 1 | stopped in the gate (`authorized_clients.rs`, one watchdog) | the build's write-back under the first tests, fixed in `576ebc24` |
+| 4 | `5a0d5a16` | 1 | **release-ready** (54 min) | — |
+| 4 | `5a0d5a16` | 2 | stopped by me during the gate | CI on `5a0d5a16` was red in case 249, fixed in `298cec9b`; the final SHA had to carry the fix |
 
 `scripts/release-check.sh` then runs ten consecutive times on the commit that adds this
 paragraph. The tree is clean, nothing changes between runs, the runs go one at a time with
 nothing else heavy beside them, and a sampler records dirty pages and write-back throughout. The
-driver is started with default signal dispositions. The runs and their results are recorded in the
+driver is started with default signal dispositions. Every run's gate recompiles four crates
+(`tokio-rustls`, `ono-remote`, `ono-cli`, `xtask`) that a later step of the previous run left with
+another fingerprint; the cause was not investigated, and ADR-1033's flush covers the writes. The
+runs and their results are recorded in the
 commit that follows, which changes documentation only. The two SHAs are kept apart there.
 
 ## Resources
