@@ -24,11 +24,17 @@ use ono_testkit::{SkipReason, skipped};
 const NO_SERVICE: &str = "this host serves no systemd unit, so there is no bulk restart to plan";
 
 /// A plan §19.4 gates: fifty targets reaches `change.bulk.high_risk_targets` and is HIGH (§53).
+///
+/// The fifty are units with a unit file. A transient unit — a `.scope` a container or a CI
+/// runner starts — can end between the listing and the plan, and §4.3 then rightly refuses to
+/// freeze it (`change.target_unresolved`), which failed this fixture on a runner whose
+/// `collect-logs.scope` ended in between. A unit with a unit file stays a unit for as long as
+/// the test runs, so the plan is the host's to make rather than its timing's (ADR-0880).
 fn high_risk_plan(home: &std::path::Path) -> Option<String> {
     requires_a_service(home)?;
     let run = ono_at(
         home,
-        "get service | take 50 | plan restart service | to json",
+        "get service | where unit_file != null | take 50 | plan restart service | to json",
     );
     run.assert_success();
     let record = one(&run);
