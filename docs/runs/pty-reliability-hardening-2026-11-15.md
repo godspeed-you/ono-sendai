@@ -19,7 +19,7 @@ load recorded at its start (`~/.cache/ono-pty/bin/repeat.sh`).
 | Pause | 10:58–13:15 CET: the owner needed the machine; nothing ran |
 | Starting point | `abc4e314` on `implementation`, clean, equal to `origin/implementation`; `main` at `4bfbd890` (v0.6.5) |
 | Root cause | the prompt read the spatial session state with `try_lock()` and dropped the place when another task held it; since v0.6.4 the read behind the prompt (ADR-0984) holds it at exactly that moment (#311) |
-| Fixes | `c4ed3a3d` (#311, ADR-1032); `7d8c1b0a` (a fuzzy match ended `enter`'s sweep); `8bb2f748` (PTY harness waits); `71b1f2fb` (`change_gates.rs` fixture) |
+| Fixes | `c4ed3a3d` (#311, ADR-1032); `7d8c1b0a` (a fuzzy match ended `enter`'s sweep); `8bb2f748` (PTY harness waits); `71b1f2fb` (`change_gates.rs` fixture); `3c238222` (signal tests at default dispositions) |
 | Tests added | 5 unit tests; the PTY suites unchanged in what they assert |
 | ADRs | ADR-1032 |
 | Subagents | one, an independent read-only review on Opus |
@@ -93,6 +93,8 @@ prompt did arrive. No environmental cause was involved in #311.
 | `8bb2f748` | test | the PTY suites wait for the prompt they read, within the existing budget; no assertion changed |
 | `7d90f92f` | chore | metrics |
 | `71b1f2fb` | test | `change_gates.rs` plans units with a unit file (below) |
+| `91706f92` | docs | STATE, CONTRIBUTING, this record |
+| `3c238222` | test | the tests that signal their shell start it at default signal dispositions (below) |
 
 Regression tests. Each of these failed before its fix, and each holds the contended state itself
 while it reads:
@@ -128,6 +130,22 @@ next Tab asks again. No production path is special-cased for tests.
   red in four `change_gates.rs` tests. The fixture planned the first fifty units the runner listed,
   one of them the transient `collect-logs.scope`, which ended before the plan froze it. The fixture
   now plans fifty units with a unit file. Every assertion is unchanged.
+
+- **Tests that inherited the runner's ignored signals (`3c238222`).** The second qualification
+  attempt stopped in `jobs_shutdown::should_end_its_jobs_when_the_shells_terminal_hangs_up`: the
+  shell did not leave on `SIGHUP` within 120 s. A watcher caught eighteen such shells in a stress
+  run and dumped their threads. The termination thread waited in `anon_pipe_read`, so the
+  handler had never run, and `SigIgn` was `0x1007`: `SIGHUP`, `SIGINT`, `SIGQUIT` and `SIGPIPE`
+  ignored on entry. I had started the qualification driver with `setsid nohup … &`. `nohup`
+  ignores `SIGHUP`, a script's background command ignores `SIGINT`, and a shell keeps a signal
+  ignored that was ignored on entry (POSIX; ADR-0959, review B2), as
+  `keeps_running_on_ignored` asserts. The shell was right and the tests depended on how their
+  runner was started. Under a runner that ignores both, that test,
+  `temporal_cancellation::should_leave_the_ledger_unlocked_and_intact_when_a_long_historical_query_is_interrupted`
+  and `watch_live::should_release_the_query_task_promptly_when_a_live_map_is_cancelled` failed on
+  every run. They now start the shell through `env --default-signal` (`ono_testkit::ono_command`),
+  and pass under both runners. The qualification driver is now started with default dispositions
+  too.
 
 ## Review
 
@@ -180,10 +198,18 @@ A second gate was stopped because a test build of mine ran beside it. The gate o
 
 ## Qualification
 
-`scripts/release-check.sh` runs ten consecutive times on the commit that adds this record, a
-clean tree with nothing changed between runs, one at a time, nothing else heavy beside it. The
-runs and their results are recorded in the commit that follows it, which changes documentation
-only. The two SHAs are kept apart there.
+Two attempts broke before the final one, and each streak counts from zero:
+
+| Attempt | SHA | Run | Result | Cause |
+|---|---|---|---|---|
+| 1 | `91706f92` | 1 | stopped in the gate (`acquisition.rs`, 3 watchdogs) | write-back throttling after an aborted start (*Found*) |
+| 2 | `91706f92` | 1 | stopped in the gate (`jobs_shutdown.rs`, the `SIGHUP` test) | the runner's ignored signals, fixed in `3c238222` |
+
+`scripts/release-check.sh` then runs ten consecutive times on the commit that adds this
+paragraph. The tree is clean, nothing changes between runs, the runs go one at a time with
+nothing else heavy beside them, and a sampler records dirty pages and write-back throughout. The
+driver is started with default signal dispositions. The runs and their results are recorded in the
+commit that follows, which changes documentation only. The two SHAs are kept apart there.
 
 ## Resources
 
@@ -202,5 +228,5 @@ widened window that turns the failure deterministic before the fix and harmless 
 regression tests fail on the old code for exactly that reason. Repetition cannot prove a race
 absent. What it shows here is 360 post-fix runs without a failure, under the conditions that
 failed 3 in 8 before. The fix also removes the race in kind: the prompt no longer touches the
-lock. The `acquisition.rs` watchdog seen once and the lock-order inversion are unexplained or
-unfixed, and both are on the board.
+lock. The lock-order inversion is unfixed, and `acquisition.rs`'s sensitivity to write-back is
+explained but not removed. Both are on the board.

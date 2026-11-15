@@ -47,8 +47,10 @@ starts: when it fails or overruns, the testkit ends the whole process tree it st
 (ADR-0890, ADR-0892). A test that compares two readings of the live machine is a flaky test, not a
 slow one — read the host once, or own the fixture you read (ADR-0880). A test at a
 pseudo-terminal waits for what it reads — the prompt's closing `> `, the frame at the new size —
-and never reads whatever arrived within a fixed time; and the shell never degrades what a prompt
-shows because some other task holds a lock (#311, ADR-1032).
+and never reads whatever arrived within a fixed time; a test that signals the shell it starts
+starts it with `ono_testkit::ono_command()`, at default signal dispositions whatever the runner
+ignores; and the shell never degrades what a prompt shows because some other task holds a lock
+(#311, ADR-1032).
 
 `scripts/acceptance.sh` is the interesting one. It builds a clean Debian image, installs `ono` as
 the login shell of an unprivileged user, cuts the network, and asks the binary to prove each
