@@ -140,6 +140,11 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
+- [git-0a | 2026-11-15 09:20 CET] #311, the prompt that drops the current place while a background
+  read holds the spatial state (the PTY flake of v0.6.4/v0.6.5), and ten consecutive
+  `release-check` runs — files: `crates/ono-cli/src/spatial/{session,prompt,storage}.rs`,
+  `docs/adr/`, `docs/runs/`, this board.
+
 ## What is left, and why
 
 **`v0.6.6` — Remote and Change Stabilization — is the next tranche**, then v0.7 (above); `v0.6.5`
@@ -270,25 +275,11 @@ against the tracker (no existing issue):
   only requires that refs and outputs resolve (ADR-0996 recorded the bump mechanics by hand).
   Severity low (a false claim in an ADR). Exit: spec-check enforces it, or an ADR corrects the
   sentence.
-- PTY and wall-clock tests flake under load from parallel builds (load 14–29 on 8 cores):
-  `spatial_interactive::should_preserve_the_current_place_when_the_terminal_is_resized_with_a_place_open`,
-  `temporal_view::should_enter_the_historical_place_and_keep_the_coordinate_when_enter_is_pressed_on_a_past_node`,
+- Wall-clock tests flake under load from parallel builds (load 14–29 on 8 cores):
   `jobs_shutdown::should_end_several_stubborn_jobs_within_one_grace_period_rather_than_one_each`,
   `jobs_shutdown::should_leave_promptly_when_its_jobs_end_on_the_signal`; each passed alone. Severity
-  low (gate noise). Exit: each waits on what it asserts rather than on time. The `temporal_view`
-  one fails alone at low load too, and before v0.6.5: 4 of 20 runs at `v0.6.4`, 1 of 8 at the
-  v0.6.5 release commit (2026-11-11); when it fails, the prompt after the map closes still names
-  the place the session stood at before `Enter`. `spatial_interactive` shows the same symptom —
-  `enter compute` typed at the prompt leaves it at `~/work`
-  (`should_return_to_the_previous_place_when_back_is_used_at_the_prompt_and_in_the_map`,
-  `should_leave_the_terminal_in_order_for_an_external_program_after_the_map_closes`,
-  `should_change_the_place_only_on_enter_when_focus_moves_inside_the_map`): rarely alone (1 of 4
-  suite runs with `--all-features` at the release commit, 1 of 8 at `v0.6.4`), and in six
-  consecutive full `release-check` runs of 2026-11-11 one of the two suites was red every time,
-  also with two test threads. Not caused by load, process churn, leftover processes or units, or a
-  slower `enter` (20 ms against 21 ms at v0.6.4). Severity medium: it keeps `release-check` from
-  completing in one piece. Exit: find what an earlier suite of the full `ono-cli` run leaves behind
-  that makes the next interactive `enter` lose its place, and a full run green ten times.
+  low (gate noise). Exit: each waits on what it asserts rather than on time. (The PTY half of this
+  entry — `spatial_interactive` and `temporal_view` losing the place after `enter` — is #311.)
 - The doc comment of `crates/ono-cli/src/plugins.rs::delivered` says the host learns of a handler's
   failure "from the invocation's result rather than from a stream event"; since ADR-0992 the stream
   carries it. Severity cosmetic.
