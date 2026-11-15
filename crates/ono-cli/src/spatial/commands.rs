@@ -1241,13 +1241,13 @@ pub async fn resolved_place(
         return Ok(found.spatial_id().clone());
     }
     let mut resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
-    if matches!(resolution, ono_spatial_query::Resolution::NotFound)
+    if unanswered(&resolution)
         && let Some(space) = ono_spatial_query::resolve::space_of(here)
     {
         view::observe_space(providers, session, space, false, now).await?;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
-    if matches!(resolution, ono_spatial_query::Resolution::NotFound)
+    if unanswered(&resolution)
         && let Some(path) = absolute_path_in(selector)
     {
         // §33.3: the path tree is query-driven, so a path is a place only once somebody names
@@ -1255,7 +1255,7 @@ pub async fn resolved_place(
         view::observe_path(providers, session, &path, now).await;
         resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
     }
-    if matches!(resolution, ono_spatial_query::Resolution::NotFound)
+    if unanswered(&resolution)
         && let Some(question) = pinned_question(providers, selector)
     {
         // v0.4.1 §34.4: `process/1842` names one object by the field its provider is keyed on.
@@ -1280,7 +1280,7 @@ pub async fn resolved_place(
             resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
         }
     }
-    if matches!(resolution, ono_spatial_query::Resolution::NotFound) {
+    if unanswered(&resolution) {
         let plan = ono_spatial_query::targets_for(
             type_hint(selector),
             &std::collections::BTreeSet::new(),
@@ -1331,7 +1331,7 @@ pub async fn resolved_place(
             }
             view::observe_targets(providers, session, &targets, now).await;
             resolution = ono_spatial_query::resolve(session.index(), selector, &context, now);
-            if !matches!(resolution, ono_spatial_query::Resolution::NotFound) {
+            if !unanswered(&resolution) {
                 break;
             }
         }
@@ -1347,6 +1347,19 @@ pub async fn resolved_place(
     }
     let found = resolution.require(selector)?;
     Ok(found.spatial_id().clone())
+}
+
+/// Whether a resolution still leaves the selector without an answer, so the search goes on.
+///
+/// A fuzzy match is offered and never taken (§27.3), so it is no answer either: a cheaper target
+/// whose object merely resembles the name — systemd's `/run/credentials/<unit>` mount beside the
+/// unit itself — must not end the search before the target that holds the name is asked. Where
+/// nothing exact turns up, the fuzzy matches are still what the refusal offers.
+fn unanswered(resolution: &ono_spatial_query::Resolution) -> bool {
+    matches!(
+        resolution,
+        ono_spatial_query::Resolution::NotFound | ono_spatial_query::Resolution::Fuzzy(_)
+    )
 }
 
 /// The absolute path a selector names, where it names one.
@@ -1953,4 +1966,138 @@ fn match_rank(
         return Some((2, shown.len()));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use jiff::Timestamp;
+    use ono_pipeline::ValueStream;
+    use ono_provider_api::{Capability, Provider, ProviderRegistry, Query, Risk};
+    use ono_value::{
+        ErrorValue, Provenance, RecordValue, Schema, SchemaId, Value, builtin_schemas,
+    };
+
+    use crate::spatial::session::SpatialSessionState;
+
+    /// A provider that answers one target with fixed records, whatever it is asked.
+    #[derive(Debug)]
+    struct Fixed {
+        target: &'static str,
+        records: Vec<RecordValue>,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for Fixed {
+        fn id(&self) -> &str {
+            self.target
+        }
+
+        fn targets(&self) -> &[&str] {
+            std::slice::from_ref(&self.target)
+        }
+
+        fn schemas(&self) -> Vec<Arc<Schema>> {
+            Vec::new()
+        }
+
+        fn capabilities(&self) -> Vec<Capability> {
+            vec![Capability::new("fixture.list", Risk::Read)]
+        }
+
+        fn snapshot(&self, _query: &Query) -> Result<ValueStream, ErrorValue> {
+            Ok(ValueStream::from_values(
+                self.records
+                    .iter()
+                    .map(|record| Value::Record(Arc::new(record.clone())))
+                    .collect::<Vec<_>>(),
+            ))
+        }
+
+        async fn resolve(
+            &self,
+            _selector: &ono_provider_api::Selector,
+        ) -> Result<Vec<ono_provider_api::ObjectRef>, ErrorValue> {
+            Ok(Vec::new())
+        }
+    }
+
+    fn record(schema: &str) -> ono_value::RecordBuilder {
+        RecordValue::builder(
+            builtin_schemas()
+                .get(&SchemaId::new(schema, 1))
+                .expect("a built-in schema"),
+            Provenance::local("fixture", SchemaId::new(schema, 1)),
+        )
+    }
+
+    #[tokio::test]
+    async fn should_enter_a_service_by_its_name_when_a_mount_is_named_like_it() {
+        // §27.1, §27.3: a fuzzy match is offered and never taken, so it cannot be the answer
+        // either. systemd 256 mounts each unit's credentials at
+        // `/run/credentials/<unit>.service`; the mounts are swept before the service manager
+        // because they are cheaper (v0.4.1 §34.2), and the mount that resembled the name stopped
+        // the sweep before the service that *is* the name was asked — `enter
+        // systemd-resolved.service` answered `spatial.not_found` on such a host.
+        let mount = record("ono.mount")
+            .set("source", Value::string("tmpfs"))
+            .and_then(|builder| {
+                builder.set(
+                    "target",
+                    Value::Path(Arc::from(Path::new(
+                        "/run/credentials/systemd-resolved.service",
+                    ))),
+                )
+            })
+            .and_then(|builder| builder.set("filesystem", Value::string("tmpfs")))
+            .and_then(|builder| builder.set("options", Value::List(Arc::from([]))))
+            .and_then(|builder| builder.set("read_only", Value::Bool(true)))
+            .expect("the fixture mount")
+            .build();
+        let service = record("ono.service")
+            .set("name", Value::string("systemd-resolved.service"))
+            .and_then(|builder| builder.set("state", Value::string("active")))
+            .and_then(|builder| builder.set("provider", Value::string("systemd")))
+            .expect("the fixture service")
+            .build();
+        let mut providers = ProviderRegistry::new();
+        providers.register(Arc::new(Fixed {
+            target: "mount",
+            records: vec![mount],
+        }));
+        providers.register(Arc::new(Fixed {
+            target: "service",
+            records: vec![service],
+        }));
+        let now = Timestamp::now();
+        let mut session = SpatialSessionState::new(crate::spatial::local_scope(), now);
+        let here = session.current_place().clone();
+
+        let there = super::resolved_place(
+            &providers,
+            &mut session,
+            &here,
+            "systemd-resolved.service",
+            now,
+        )
+        .await
+        .expect("§27.1: the unit answers to its own name");
+
+        assert_eq!(
+            session
+                .index()
+                .get(&there)
+                .map(|entry| entry.object().display_name().to_owned())
+                .as_deref(),
+            Some("systemd-resolved.service"),
+            "§27.1: the place entered is the service, not the mount that resembles its name"
+        );
+    }
 }
