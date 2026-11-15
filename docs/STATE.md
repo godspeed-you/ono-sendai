@@ -74,7 +74,10 @@ documentation pass that brings the repository's documents to v0.6.3:
 `docs/specs/ono_sendai_shell_spec_v0.2.md` is the **base**, and ten enhancements are layered on it —
 v0.3, v0.4, v0.4.1, v0.5, v0.6, v0.6.1, v0.7, v0.8, v0.9 and v0.10, enumerated in AGENTS.md §5.2. All
 eleven are immutable (AGENTS.md §5.2, ADR-0026). `spec-check` fails if one is missing its checksum
-line in `docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name.
+line in `docs/specs/spec.sha256` or if `AGENTS.md` does not enumerate an enhancement by name. Beside
+them, the cross-release architecture specification
+`docs/architecture/security-spec-01-governed-execution.md` is checksummed in the same file and just
+as immutable (ADR-1035).
 
 **Build order for what remains: v0.6.6, then v0.7, v0.8, v0.9 and v0.10.**
 v0.4.1, v0.5, v0.6, v0.6.1, v0.6.2, v0.6.3 and v0.6.4 are implemented and released (`v0.4.1` …
@@ -127,6 +130,22 @@ validating and acting, data crossing a model boundary only under context and egr
 agency expressed as capability, scope and plan. Its own §0.6 places it after v0.7–v0.9. Merged,
 checksummed and enumerated, **not implemented**, and **behind v0.9**; its tracker milestone is
 `v0.10.0`.
+
+**v0.10 was revised by the user on 2026-11-15** (4 202 lines, in place, checksum renewed) together
+with a new **Security Specification 01 — Governed Execution, Sandboxes & Credential Mediation**,
+`docs/architecture/security-spec-01-governed-execution.md` (1 091 lines). The revision makes the
+generic assistant a native Core capability present in every installation; model providers are
+KUANG/11 packages, and other packages extend the assistant through the typed objects and operations
+they already register — no assistant package is needed (ADR-1034 settles the collision with v0.2
+§7 and §31.41–§31.43). Security Specification 01 defines three generic Core mechanisms — a Linux
+sandbox, a Credential Broker over the existing `secret.use` references and an operation policy with
+trusted executors and one-shot grants — for shells, subshells, plugins, automation and the
+assistant alike; every assistant tool call executes under its effective Security Scope (v0.10
+§23.6, Gates AS–AW). ADR-1035 places it beside the existing confinement registry, secret contract
+(ADR-1016 stays until the broker lands) and K11P permissions. Its phases S0–S4 block v0.10 and are
+tracked in `v0.10.0`: S0 in #266, S1 #312, S2 #313, S3 #314, S4 in #273/#277. Phase S5 (governed
+subshells, external agents) is #315, without a milestone, and blocks v0.10 only if v0.10 advertises
+protected external-agent execution. **Nothing of either specification is implemented.**
 ---
 
 ## Product direction from the user (2026-08-26)

@@ -2,7 +2,7 @@
 title: "ONO-SENDAI Specification v0.10"
 subtitle: "Native AI Assistance & Governed Model Interaction"
 author: "Project Specification"
-date: "2026-09-10"
+date: "2026-11-15"
 geometry: "paperwidth=157mm,paperheight=210mm,left=13mm,right=13mm,top=14mm,bottom=15mm"
 fontsize: 11pt
 mainfont: "DejaVu Sans"
@@ -29,15 +29,17 @@ header-includes:
 # ONO-SENDAI Specification v0.10
 ## Native AI Assistance & Governed Model Interaction
 
-**Status:** Product and architecture extension specification
+**Status:** Product and architecture extension specification — architecture and governed-execution integration revision 2026-11-15 (original 2026-09-10)
 
-**Scope:** Production completion of the AI-assistant and model-broker direction already established by the v0.2 KUANG/11 specification; provider-neutral model access through KUANG/11; multiple providers, models and account/subscription connections; guided native setup; deterministic model selection and explicit fallback; typed assistant context; model-boundary data classification and redaction; typed tool calls; v0.6 ChangePlan integration for mutation; v0.7-v0.9 terminal and Deck integration; security, audit, failure and conformance requirements.
+**Scope:** Production completion of the native, built-in, provider-neutral assistant and model-broker direction inherited from v0.2; concrete model access exclusively through KUANG/11 provider plugins; existing KUANG/11 plugins optionally extend native assistant capabilities; multiple providers, models and account/subscription connections; guided native setup; deterministic model selection and explicit fallback; typed assistant context; model-boundary data classification and redaction; typed tool calls; v0.6 ChangePlan integration for mutation; v0.7-v0.9 terminal and Deck integration; security, audit, failure and conformance requirements.
 
-**Relationship:** Standalone additive specification to the published Ono-Sendai baseline and the v0.3-v0.9 extension specifications. This document deliberately completes existing K11-G concepts rather than introducing a separate AI subsystem or command language.
+**Security dependency:** This specification normatively depends on **ONO-SENDAI Security Specification 01 — Governed Execution, Sandboxes & Credential Mediation** ([`docs/architecture/security-spec-01-governed-execution.md`](../architecture/security-spec-01-governed-execution.md)) for assistant tool execution, sandboxing, secret mediation, and operation policy. Every assistant tool call executes under the effective Security Scope that specification defines (§23.6). The native assistant's protected tool use, together with the Security Specification 01 phases S0-S4 and the gates its §22.1 makes v0.10 blockers, is a v0.10 release requirement; a model or agent MUST NOT be advertised as operating in protected mode until the matching runtime-enforcement gates pass. This does not require arbitrary third-party agent support, protected external-agent execution (Security Specification 01 Phase S5) or every credential backend in v0.10.
+
+**Relationship:** Standalone additive specification to the published Ono-Sendai baseline and the v0.3-v0.9 extension specifications. This revision assigns generic assistant behavior and policy enforcement to Ono Core, concrete model adapters to KUANG/11, and optional assistant capability contributions to existing KUANG/11 extension mechanisms. Where inherited v0.2 wording implies plugin-owned generic assistant execution, an ADR MUST record the compatible clarification; earlier specifications are not retrospectively edited.
 
 **Normative language:** MUST, MUST NOT, SHOULD, SHOULD NOT, MAY
 
-> **AI is native in Ono's semantics, not in Ono's vendor dependencies. The model reasons; Ono observes, validates and acts.**
+> **AI is native in Ono Core; model providers and additional capabilities are replaceable KUANG/11 contributions. The model reasons; Ono observes, validates and acts.**
 
 ---
 
@@ -76,7 +78,7 @@ v0.8  Deck workspace composition and generic terminal ownership while reusing
 v0.9  Long-running live-view integration in the Deck without a second live
       data model.
 
-v0.10 Production completion of model brokerage and native assistants by
+v0.10 Production completion of model brokerage and the native assistant by
       combining the existing object, capability, context, plan, presentation
       and plugin contracts into one governed AI interaction path.
 ```
@@ -114,28 +116,39 @@ A new v0.10 semantic abstraction is justified only when all of the following are
 
 If an earlier type can be extended compatibly, the implementation MUST extend it rather than create a synonym.
 
-## 0.3 Existing K11-G is the starting point
+## 0.3 Existing K11-G contracts, with a native Core assistant
 
-v0.2 already reserves KUANG/11 K11-G for model brokerage and assistants and already establishes the key design principle:
+v0.2 already establishes the `Assistant`, model broker, context broker, model policy, typed assistant tools, and KUANG/11 K11-G contribution contracts. v0.10 completes those contracts without creating a second assistant runtime.
 
-> **The model reasons; Ono observes and acts.**
-
-v0.10 turns that direction into a complete release contract.
-
-The implementation MUST NOT create a separately named "AI runtime" that bypasses or duplicates KUANG/11 merely because AI is a major release theme. Internal modules may of course have implementation names, but the public architecture remains:
+The normative runtime ownership is:
 
 ```text
-Ono language / values / plans / views
-                |
-                v
-KUANG/11 assistant + model contracts
-                |
-                v
-provider plugin(s)
-                |
-                v
-local or remote model service
+operator / typed pipeline / Ono command evaluator
+                    |
+                    v
+          ONO CORE (always installed)
+          native generic Assistant
+          model broker + context broker
+          egress policy + typed tool bridge
+          capability checks + ChangePlan bridge
+                    |
+          existing KUANG/11 contracts
+             /                  \
+            v                    v
+  model-provider plugins    capability extensions
+  (transport/auth only)     (typed objects, operations,
+            |               optional AI metadata)
+            v                    |
+     model service        existing Ono registries
 ```
+
+Three boundary rules are mandatory:
+
+1. **Generic assistant capabilities are Core-owned.** The default assistant exists with the shell, even with no plugin installed. A missing usable model connection is a structured setup error, not a missing-assistant-plugin error.
+2. **Concrete model access is plugin-owned.** Authentication, transport, protocol adaptations, model discovery and concrete provider errors live in KUANG/11 model-provider packages. Core MUST NOT embed provider-specific implementation code.
+3. **Plugins can extend, not replace, the native assistant.** Normal typed objects and commands contributed through existing registries become eligible assistant tools subject to Core policy. Optional AI-specific metadata MAY enhance that integration; no separate assistant implementation or assistant-plugin manifest is required.
+
+KUANG/11 is the extension boundary, not the runtime owner of generic reasoning, tool selection, policies or model egress. Plugin-contributed knowledge is untrusted data, not authority. Any collision with the exact v0.2 `Assistant.plugin` contract MUST be settled by a compatibility ADR before changing its machine-readable representation.
 
 ## 0.4 No retrospective editing
 
@@ -155,7 +168,9 @@ v0.10 is built around five normative statements:
 
 > **One language, including AI.**
 
-> **AI is provider-neutral in Ono and provider-specific in KUANG/11 packages.**
+> **The generic assistant is a built-in Ono Core capability; concrete model access is implemented by KUANG/11 packages.**
+
+> **KUANG/11 capabilities extend the native assistant without creating more assistant runtimes.**
 
 > **The model reasons; Ono observes, validates and acts.**
 
@@ -197,6 +212,7 @@ The release MUST NOT require:
 - a general RAG framework;
 - a hidden agent daemon;
 - a multi-agent orchestration framework;
+- a mandatory assistant plugin, assistant package or dedicated assistant-plugin API;
 - a new Deck pane/layout model;
 - a new live-stream abstraction;
 - a general DLP product;
@@ -207,7 +223,7 @@ The release MUST NOT require:
 
 The subtraction test for v0.10 is:
 
-> If all provider plugins are removed, Ono remains a complete shell and every v0.2-v0.9 behavior remains valid.
+> If all provider plugins are removed, Ono remains a complete shell with its built-in assistant discoverable but unable to infer until a usable model connection is configured; every non-AI v0.2-v0.9 behavior remains valid.
 
 ---
 
@@ -237,7 +253,7 @@ A native-feeling assistant therefore works with:
 
 ## 1.2 Provider neutrality is architectural, not marketing
 
-Ono core MUST NOT contain behavior that depends on names such as OpenAI, Anthropic, Claude, GPT, Ollama, llama.cpp or any future vendor/model family.
+Ono Core MUST own the provider-neutral assistant lifecycle, model broker, context broker, tool orchestration and policy enforcement, but MUST NOT contain behavior that depends on names such as OpenAI, Anthropic, Claude, GPT, Ollama, llama.cpp or any future vendor/model family.
 
 Provider names may appear only as data contributed by a KUANG/11 model-provider package or in examples/documentation.
 
@@ -418,7 +434,7 @@ The following invariants are non-negotiable.
 3. **Existing verbs first.** `ask`, `get`, `inspect`, `connect`, `set`, `enter`, `leave`, `explain`, `apply` and other existing verbs MUST be reused where their semantics fit.
 4. **Targets may grow; grammar does not.** New targets required by the domain MAY be registered through the normal target registry. They do not justify a new parser or subcommand grammar.
 5. **Provider code is KUANG/11 code.** Provider-specific model transport/authentication belongs in provider packages, not core.
-6. **Provider plugins are not assistants.** A provider plugin supplies model access; an assistant supplies reasoning behavior and tool/context policy. One package MAY contribute both roles, but the roles remain conceptually distinct.
+6. **One native assistant, extensible by plugins.** Generic assistant execution and tool/context policy belong to Core. A provider plugin supplies model access only; other KUANG/11 plugins MAY contribute typed objects/operations and optional assistant-facing metadata, but MUST NOT replace Core policy or execution. No assistant package is mandatory.
 7. **The model never owns authority.** Model output is a proposal, response or tool intent. Ono owns validation and execution.
 8. **No raw shell by default.** The normal assistant tool surface is generated from typed command/provider metadata, not `sh -c` or a PTY.
 9. **Mutation stays v0.6 mutation.** Any model-originated real mutation MUST become or join a valid `ChangePlan` before execution.
@@ -428,7 +444,7 @@ The following invariants are non-negotiable.
 13. **Pipeline objects stay objects.** `get process | ask assistant ...` passes typed values to the context broker; it MUST NOT first render them as a human table and then reparse the table.
 14. **Model-boundary policy is host-owned.** A provider plugin MUST NOT decide which local fields are safe to export.
 15. **Secrets do not become prompt text.** Raw credential and secret values MUST NOT be sent to a model as context in the normal v0.10 product path.
-16. **Secret use is not secret disclosure.** Tools SHOULD use existing opaque `secret.use` handles so a model can cause an authenticated operation without learning the credential.
+16. **Secret use is not secret disclosure.** Credential-backed protected operations MUST use the Security Specification 01 Credential Broker, a narrow trusted executor and existing opaque `secret.use` references; the agent/model/process MUST NOT obtain raw secrets, unrestricted signing/agent sockets or arbitrary authenticated sessions.
 17. **Classification survives transformation.** Formatting, projection, concatenation or serialization MUST NOT silently erase data-class metadata relevant to model egress.
 18. **Sanitization is explicit.** Redaction or removal that changes exportability MUST leave inspectable provenance/audit information.
 19. **Untyped input is untrusted.** Text without a trustworthy schema MUST pass conservative boundary inspection before remote inference.
@@ -449,7 +465,7 @@ The following invariants are non-negotiable.
 34. **Persistent assistant memory is opt-in.** Existing v0.2 rules remain authoritative.
 35. **Evidence outranks prose.** When an answer is based on Ono-observed values, the result SHOULD retain evidence references.
 36. **Interpretation is labeled.** Model-generated conclusions are not promoted into provider-observed topology, state or causality without an explicit analysis contribution and appropriate provenance.
-37. **Remote scope remains remote scope.** An assistant operating across an Ono link uses existing remote capability and provenance rules; local authority never silently crosses the link.
+37. **Remote scope remains remote scope.** An assistant operating across an Ono link uses existing remote capability and provenance rules; local authority never silently crosses the link. Restrictions are enforced again at the remote execution boundary; an operation the remote side cannot restrict is refused in protected mode (Security Specification 01 §7.8, §13.4).
 38. **Rich TTY and Deck are projections.** AI does not change command semantics depending on renderer.
 39. **Provider streaming is not a new semantic stream model.** Visible token/progress updates reuse existing job/view presentation mechanics; the final assistant result remains a stable value.
 40. **Cancellation is inherited.** Cancelling an assistant request uses existing job/request cancellation and provider cancellation where available.
@@ -458,6 +474,13 @@ The following invariants are non-negotiable.
 43. **Errors are structured.** Provider, selection, policy, auth, context and tool failures are normal Ono error values.
 44. **Discoverability is registry-derived.** `help`, completion, `inspect` and `explain` use the same registered metadata as execution.
 45. **No fake intelligence.** Ono MUST NOT invent model conclusions, silently substitute a different user request or treat malformed shell input as an AI prompt outside an explicitly entered assistant context.
+46. **Built-in assistant without provider coupling.** A fresh Ono install MUST expose the generic assistant, its help and inspectable contract without requiring any KUANG/11 plugin. Inference with no configured model MUST fail with a structured, actionable connection error.
+47. **Typed plugin integration by default.** A plugin's ordinary registered typed commands/objects MAY be available to the assistant through the existing tool bridge; they MUST pass capability, scope, side-effect, egress and trust checks. Plugins MUST NOT need to implement a second assistant API just to become discoverable.
+48. **Extensions do not grant authority.** Installing, updating or removing a plugin MUST NOT implicitly alter autonomy, broaden model access, add secret disclosure or authorize mutations. Optional plugin-supplied hints, instructions and domain knowledge remain untrusted and cannot override Core policies.
+49. **Protected execution is a concrete runtime property.** A tool/session requiring filesystem or process isolation MUST run with verified OS-enforced effective scope; capability checks or redacted prompts alone are insufficient. If required enforcement is unavailable, fail closed.
+50. **Credential authority is operation-bound.** Secret references MUST NOT become reusable permissions. The broker checks subject, target, operation, arguments, policy version and approval, and returns only a filtered typed result.
+51. **No privilege in an AI-generated shell.** An assistant or external subprocess MUST NOT gain authority by spawning children, borrowing host sockets, SSH forwarding, calling an unrestricted native plugin or obtaining raw tokens.
+52. **Human grants are external and narrow.** Elevation requires a trusted approval bound to an exact operation (and sealed `ChangePlan` for mutation). A running kernel sandbox cannot be widened in place.
 
 ---
 
@@ -472,14 +495,16 @@ v0.10 implementation and review MUST use the following ownership model.
 | typed values | v0.2 `Value` | pass directly into assistant context |
 | streams/cancellation | v0.2 pipeline/job control | host long-running assistant work |
 | history/results | v0.2 `HistoryEntry` / `ResultRef` | reference, never replace |
-| assistant object | v0.2 `Assistant` | complete production fields/behavior |
+| native assistant object and runtime | v0.2 `Assistant` concept, implemented in Ono Core | built-in default, request lifecycle, production fields/behavior; no plugin required |
 | model selection policy | v0.2 `ModelPolicy` | formalize deterministic routing/fallback |
-| model broker | v0.2 KUANG/11 K11-G | implement provider-neutral brokerage |
-| context broker | v0.2 KUANG/11 K11-G | make context construction explicit/bounded |
-| assistant tools | v0.2 KUANG/11 | generate from typed command/provider metadata |
-| capability enforcement | v0.2 + KUANG/11 permission spec | validate every tool request |
+| model broker | v0.2 model brokerage concept, implemented in Ono Core | implement provider-neutral brokerage through KUANG/11 provider adapters |
+| context broker | v0.2 context concept, implemented in Ono Core | make context construction explicit/bounded, never delegated to plugins |
+| assistant tool bridge | v0.2 typed command/provider metadata and KUANG/11 registries, mediated by Core | automatically discover eligible typed operations; validate and authorize every call |
+| capability enforcement | v0.2 + KUANG/11 permission spec, Security Specification 01 Operation Policy | validate every tool request with effective subject/target/scope/credential constraints |
+| process filesystem/network confinement | Security Specification 01 Core sandbox/launcher | enforce and attest protected Linux boundaries; no unverified isolation claims |
+| trusted credential-backed operation | Security Specification 01 broker/executor | bind authorized typed operations to identity/destination; no generic signer or SSH shell |
 | provider package install | KUANG/11 install/acquisition specs | reuse short-name guided install |
-| credentials | KUANG/11 `secret.use` | store/use opaque references |
+| credentials | KUANG/11 `secret.use` and Security Specification 01 Credential Broker | reuse references; authenticate narrowly scoped operations without exposing secret material |
 | local/remote scope | v0.4 | preserve target provenance and grant scope |
 | evidence | v0.5 + v0.2 assistant evidence | retain references and uncertainty |
 | mutation plan | v0.6 `ChangePlan` | model may propose; Ono owns plan/apply |
@@ -487,7 +512,8 @@ v0.10 implementation and review MUST use the following ownership model.
 | Rich TTY | v0.7 | show context/model/evidence safely |
 | Deck composition | v0.8 | host assistant view in existing composition |
 | long-running view | v0.9 | show ongoing inference/tools without new live model |
-| provider-specific protocol | KUANG/11 provider package | implement outside core |
+| provider-specific protocol | KUANG/11 model-provider package | implement outside Core |
+| optional assistant capability contributions | existing KUANG/11 command/schema/capability registrations | reuse typed operations, optional context/tool hints; no independent assistant runtime |
 | account/auth connection identity | **v0.10 minimal extension** | represent multiple connections safely |
 | enforced model-egress sanitation | **v0.10 completion of v0.2 data-class policy** | make propagation/redaction mandatory |
 | final assistant result schema | **v0.10 minimal extension** | stable typed result + evidence/model metadata |
@@ -510,15 +536,13 @@ ai provider ...
 ai config ...
 ```
 
-Those forms invert Ono's language and create a provider/domain mini-shell.
-
-The canonical forms are verb-target commands such as:
+The canonical forms reuse the existing verb-target grammar:
 
 ```text
-ask assistant ops "why is nginx restarting?"
+ask assistant "why is nginx restarting?"
 get assistant
-inspect assistant ops
-enter assistant ops
+inspect assistant core
+enter assistant
 
 connect model anthropic
 get model
@@ -530,21 +554,19 @@ inspect model-policy deep
 set model-policy deep ...
 ```
 
-The exact target registry spelling MUST be validated against existing contracts before implementation, but the verb-target shape is normative.
+`assistant` resolves to the built-in generic assistant unless the user explicitly selects an existing, independently configured context/profile supported by the inherited contract. Such a profile is configuration, not a required assistant plugin. Exact target spelling MUST be verified against the current registries; verb-target shape is normative.
 
 ## 4.2 Why `ask assistant` is the primary command
 
-v0.2 already registers `ask` with the meaning "send a request to an explicitly selected assistant" and already defines `assistant` as a canonical KUANG/11 management target.
+v0.2 already registers `ask` and `assistant`. v0.10 uses these inherited semantics to address the always-available Core assistant.
 
-v0.10 therefore MUST treat:
+The canonical ordinary interaction is:
 
 ```text
-ask assistant <assistant> <request>
+ask assistant "<request>"
 ```
 
-as the primary explicit interaction.
-
-An implementation MUST NOT add `ai ask` merely because it looks familiar from other AI CLIs.
+A named assistant context/profile MAY be selected only if the inherited object model supports such selection; it MUST NOT require installing a generic assistant package. A command MUST NOT acquire provider-specific syntax or a new `ai ask` namespace.
 
 ## 4.3 Pipeline input
 
@@ -553,7 +575,7 @@ An assistant can be a typed pipeline consumer.
 ```text
 get process
 | where memory > 1GiB
-| ask assistant ops "Which of these deserve investigation?"
+| ask assistant "Which of these deserve investigation?"
 ```
 
 The pipeline value enters the context broker as typed input.
@@ -574,50 +596,36 @@ The implementation MUST NOT render the process table and pass the rendered chara
 
 If the stream is unbounded, the assistant command MUST require or derive a bounded window using existing stream semantics. It MUST NOT buffer an infinite stream.
 
-## 4.4 Default assistant
+## 4.4 Built-in default assistant
 
-Ono MAY support a configured default assistant.
+Ono MUST register exactly one built-in generic assistant as a Core-owned capability in a clean installation. It is the default for `ask assistant "..."` and MUST appear in `get/inspect assistant`, help, completion and execution metadata.
 
-If one is configured, the selector MAY be omitted where grammar permits:
+The built-in assistant MUST NOT require a KUANG/11 assistant package, separate installation or plugin activation. Its presence MUST NOT imply that a model is configured, network access is granted, tools are allowed or a conversation has persistent memory.
 
-```text
-ask assistant "summarize this"
-```
-
-The resolved assistant MUST remain visible in `explain` and result metadata.
-
-If several assistants exist and no default can be resolved deterministically:
-
-- interactive use MAY present a picker;
-- non-interactive use MUST fail with a structured ambiguity error;
-- Ono MUST NOT choose by load order or package popularity.
+Optional named contexts/profiles MAY configure model policy, tool narrowing and interaction preferences. They reuse the same Core runtime and MUST NOT be an additional assistant execution engine. Any selector ambiguity follows standard interactive-picker/non-interactive-error behavior; plugin installation order MUST NOT decide routing.
 
 ## 4.5 Assistant context
 
-The inherited form remains valid:
+The built-in assistant can be entered using the inherited command form, without installing an assistant package:
 
 ```text
-enter assistant ops
+enter assistant
 ```
 
-An entered assistant context MUST be visibly represented in the prompt/context path.
-
-Example:
+The prompt/context path MUST visibly distinguish assistant context, e.g.:
 
 ```text
-local://assistant/ops >
+local://assistant >
 ```
 
-v0.10 resolves the v0.2 open question as follows:
+For compatibility, implementations MAY retain `enter assistant <name>` when an explicit named configuration/profile exists; it MUST resolve to the same native runtime.
 
-- outside an explicitly entered assistant context, unknown shell input remains a command error and MUST NOT become a model prompt;
-- inside an explicitly entered assistant context, a line that is not resolved as an Ono command MAY be treated as natural-language input for the active assistant;
-- the prompt MUST make the assistant context visually unambiguous;
-- `leave` exits the assistant context through normal context-stack behavior;
-- recognized Ono commands keep their normal meaning inside the context;
-- completion SHOULD make the distinction visible.
+- Outside an explicitly entered assistant context, unknown shell input remains a command error and MUST NOT be sent to a model.
+- Inside the context, a line that does not resolve as an Ono command MAY be treated as natural-language input to the native assistant.
+- `leave` exits through the existing context stack; normal Ono commands retain their meaning.
+- Completion SHOULD make the boundary visible.
 
-This is not a second global grammar. The natural-language interpretation is scoped to an explicitly entered context.
+This is not a second global grammar.
 
 ## 4.6 `explain` remains the preview mechanism
 
@@ -626,13 +634,14 @@ Ono MUST reuse `explain` rather than invent `ai dry-run`.
 For example:
 
 ```text
-explain ask assistant ops --with @last "why is this failing?"
+explain ask assistant --with @last "why is this failing?"
 ```
 
 SHOULD show, without invoking the model:
 
 ```text
-assistant            ops
+assistant            core (built-in)
+profile              ops (configured context/profile)
 model policy         deep
 candidate model      claude-opus@personal
 location             remote
@@ -641,16 +650,19 @@ context sources      current result + explicit @last
 export policy        redacted-remote
 possible tools       read-only
 mutation             not permitted in this request
+effective scope      workspace profile, policy digest and enforcement report
 ```
 
 Where feasible it SHOULD also summarize which data classes would be sent, redacted or blocked.
+
+The resolved assistant and any named context/profile MUST remain visible in `explain` and in result metadata.
 
 ## 4.7 Aliases are not the canonical interface
 
 Users MAY define aliases such as:
 
 ```text
-alias ai = ask assistant ops
+alias ai = ask assistant
 ```
 
 if the existing alias system permits it.
@@ -661,26 +673,29 @@ Documentation, completion metadata, tests and plugin contributions MUST neverthe
 
 # 5. Minimal New Conceptual Model
 
-## 5.1 Assistant remains the existing v0.2 object
+## 5.1 Assistant remains the existing v0.2 object, with Core ownership
 
-v0.10 retains the inherited concept:
+v0.10 retains the inherited `Assistant` concept and completes it as a Core-owned runtime and inspectable object. There is one built-in generic assistant; model providers and capability extensions do not instantiate a competing assistant.
+
+Conceptual schema (exact existing repository types remain authoritative):
 
 ```text
 Assistant {
-    id
-    plugin
+    id                    // stable Core identity, e.g. core
+    origin                // core | optional configured contribution, if supported
     name
     model_policy
-    capabilities
+    capabilities          // effective, policy-derived; not self-granted
     context_policy
     state
     conversation?
+    plugin?               // optional contributor metadata only, never required
 }
 ```
 
-The exact repository schema is authoritative if it already exists.
+If the inherited schema requires a non-optional `plugin` field, the implementation MUST record a compatibility ADR and make the built-in Core origin representable without fabricating an installed KUANG/11 package. The change MUST retain compatibility for existing serialized assistant references and registries where feasible. Implementations MUST NOT add `AiAgent`, `ChatAgent`, `Copilot`, a second assistant runtime, or provider-specific assistant classes.
 
-v0.10 MAY extend it with references needed for production behavior, but MUST NOT introduce `AiAgent`, `ChatAgent`, `Copilot` or equivalent synonyms for the same role.
+A plugin MAY contribute capabilities or trusted-by-policy *descriptors* to the native assistant, but plugin-authored prose, prompts, examples and knowledge are not trusted instructions. They cannot grant tools, override policy or read context by themselves.
 
 ## 5.2 Model provider descriptor
 
@@ -873,32 +888,36 @@ An implementation struct may be named `DataLabelSet`, `SensitivityMetadata` or s
 The reference architecture SHOULD resemble:
 
 ```text
-operator / pipeline
-       |
-       v
+operator / typed pipeline
+         |
+         v
 existing Ono command evaluator
-       |
-       v
-assistant contribution (KUANG/11)
-       |
-       +--> existing context broker
-       |          |
-       |          v
-       |    data-class / egress policy
-       |
-       +--> existing model broker
-                  |
-                  v
-         provider-neutral ModelRequest
-                  |
-                  v
-        KUANG/11 provider adapter
-                  |
-                  v
-          local/remote model service
+         |
+         v
+  ONO CORE generic Assistant + lifecycle
+         |
+         +--> Core context broker --> Core data-class / egress policy
+         |
+         +--> Core typed-tool bridge --> existing command/schema registry
+         |                                    ^
+         |                                    |
+         |                          KUANG/11 capability plugins
+         |                          (normal typed operations and
+         |                           optional AI hints; no new runtime)
+         |
+         +--> Core model broker
+                       |
+                       v
+          sanitized provider-neutral ModelRequest
+                       |
+                       v
+              KUANG/11 model-provider plugin
+                       |
+                       v
+                 local/remote model service
 ```
 
-No provider adapter receives direct arbitrary access to the evaluator or system providers merely because it can perform inference.
+A provider plugin MUST NOT own generic assistant lifecycle, context selection, policy, tool execution or terminal rendering. Other plugins extend native capability through existing registrations, never by bypassing Core mediation. No provider adapter receives arbitrary evaluator/system-provider access merely because it can infer.
 
 ## 6.2 Provider packages
 
@@ -1088,7 +1107,7 @@ Authentication method
 
 The host owns the secret-entry/storage surface.
 
-An API key flow SHOULD use masked/secure input and store the resulting value through the existing secret mechanism. The provider plugin receives an opaque connection/credential reference whenever the underlying host API permits brokered use.
+An API key flow SHOULD use masked/secure input and store the resulting value through the existing secret mechanism. The provider plugin receives an opaque connection/credential reference, and credential use is mediated by the Security Specification 01 Credential Broker. Where a provider transport must hold the material to authenticate a request, it receives it only under that specification's trusted-transport rules (§8.4-§8.5 there): never in model context, assistant context, an agent process, configuration, history or logs.
 
 Credentials MUST NOT be stored inline in `~/.config/ono/config.ono`.
 
@@ -1189,7 +1208,7 @@ will remove
 
 will affect
   model-policy work
-  assistant ops-work
+  assistant profile ops-work
 
 provider account itself
   unchanged
@@ -1215,6 +1234,7 @@ Model resolution may consider only explicit/inspectable inputs such as:
 - operator-selected model/connection;
 - model capability requirements;
 - data-class/trust-domain policy;
+- the effective Security Scope's model and egress restrictions (Security Specification 01 §6.1 `model`, §13.1 `model-egress`);
 - tool/structured-output requirements;
 - provider/model availability state;
 - configured fallback order.
@@ -1241,12 +1261,12 @@ if that maps cleanly to existing `set` semantics.
 
 The underlying truth MUST remain inspectable as policy/configuration rather than a hidden global variable.
 
-## 8.4 Assistant-specific policy
+## 8.4 Core assistant policy and optional profiles
 
-An assistant MAY override the user default by referencing a specific `ModelPolicy`.
+The native assistant uses the operator/system `ModelPolicy` by default. A user MAY select an explicit policy per request or configure a named context/profile to use one. This is Core configuration, not an installed assistant-package dependency.
 
 ```text
-set assistant ops --model-policy deep
+set model-policy deep --default
 ```
 
 A policy might mean:
@@ -1260,7 +1280,7 @@ deep
   data       redacted-remote
 ```
 
-The UI name is human-friendly; exact model identity remains inspectable.
+Exact option spelling follows existing command conventions. The selected policy, model and account MUST remain inspectable. A plugin's optional hints cannot silently override routing or fallback policy.
 
 ## 8.5 Same provider, same model, different account
 
@@ -1341,7 +1361,7 @@ Choose model for this request
 
 Use for:
   this request
-  this assistant
+  this profile
   default policy
 ```
 
@@ -1387,11 +1407,11 @@ L4 delegated-scope remains out of scope for v0.10.
 
 ## 9.2 Default autonomy
 
-The default for a newly configured assistant SHOULD be L1 if the assistant has safe read-only capabilities; otherwise L0.
+The default for the built-in assistant and for a newly configured context/profile SHOULD be L1 if the effective scope grants safe read-only capabilities; otherwise L0.
 
 It MUST NOT default to L3.
 
-Installation of an assistant package MUST NOT itself imply permission to mutate system state.
+Installing a model-provider or capability plugin MUST NOT itself imply permission for the Core assistant to mutate system state or increase its autonomy.
 
 ## 9.3 L0 - explain-only
 
@@ -1402,7 +1422,7 @@ It cannot invoke tools.
 Example:
 
 ```text
-get process | ask assistant docs "explain these fields"
+get process | ask assistant "explain these fields"
 ```
 
 ## 9.4 L1 - observe
@@ -1412,7 +1432,7 @@ At L1 the assistant may request typed read-only tools.
 Example flow:
 
 ```text
-ask assistant ops "why is nginx restarting?"
+ask assistant "why is nginx restarting?"
 
 assistant requests:
   get service nginx
@@ -1432,7 +1452,7 @@ At L2 the assistant may convert a proposed mutation into a v0.6 `ChangePlan`.
 Example:
 
 ```text
-ask assistant ops "propose a safe fix"
+ask assistant "propose a safe fix"
 ```
 
 may produce:
@@ -1501,7 +1521,7 @@ The assistant MAY explain verification results after the fact.
 The following request:
 
 ```text
-ask assistant ops "restart nginx"
+ask assistant "restart nginx"
 ```
 
 at L1 or L2 MUST NOT restart nginx.
@@ -1547,23 +1567,27 @@ ToolDescriptor {
 
 ## 10.2 Tool availability is policy-derived
 
-A model sees only tools allowed by all applicable layers:
+The native assistant discovers candidate typed tools from existing command/target/schema/provider registries. Installed KUANG/11 plugins contribute their ordinary typed operations to those same registries; an AI-specific plugin API is not required for ordinary discoverability.
+
+A model sees only tools allowed by the intersection of:
 
 ```text
-assistant package declared tool set
+registered typed tool and side-effect metadata
 INTERSECT
-assistant capability grants
+currently installed/enabled plugin capabilities (where applicable)
+INTERSECT
+operator/system capability grants and policy
 INTERSECT
 current local/remote scope
 INTERSECT
 autonomy level
 INTERSECT
-system/user policy
+Core assistant context/tool policy
 INTERSECT
 request-specific restrictions
 ```
 
-A tool absent from the resulting set does not become available because the model asks for it in prose.
+No plugin may elevate authority by labelling a tool `AI-safe` or adding domain knowledge. Missing or ambiguous side-effect/schema metadata MUST fail closed; arbitrary generated shell commands are not a fallback. Installing, updating, disabling or uninstalling a plugin MUST update the eligible tool surface, and stale tool references MUST fail closed. The final tool list and exclusion reasons SHOULD be inspectable via the existing `explain`/registry mechanisms.
 
 ## 10.3 Tool invocation validation
 
@@ -1573,10 +1597,10 @@ For every model tool intent, Ono MUST:
 2. validate structured arguments against schema;
 3. resolve object references using current identity rules;
 4. reject stale/ambiguous targets according to existing semantics;
-5. check capability and scope;
+5. check capability and **effective Security Specification 01 scope**, including parent/system policy, sandbox enforcement eligibility, target and credential constraints;
 6. determine side-effect/risk metadata;
 7. enforce autonomy level;
-8. execute through the canonical command/provider path;
+8. execute through the canonical command/provider path **only if it preserves the declared isolation boundary**; credential-backed actions MUST pass through a trusted executor rather than granting agent access to the credential;
 9. capture typed result/provenance;
 10. pass any result back through model-context egress filtering before the model receives it.
 
@@ -1596,25 +1620,25 @@ into an external shell command merely because no typed tool matched.
 
 The existing KUANG/11 `process.exec` capability may be used only when a concrete assistant/plugin workflow genuinely requires an external program.
 
-It SHOULD be scoped to an exact executable and arguments/operation where enforceable.
+It SHOULD be scoped to an exact executable and arguments/operation where enforceable. **For protected use it MUST additionally be launched in the Security Specification 01 verified sandbox, with FD/IPC/network restrictions, child inheritance, and an effective policy that denies all undisclosed resources.**
 
 Raw generic execution MUST NOT be part of the recommended assistant permission profile.
 
 ## 10.6 Secret-bearing tool execution
 
-A model may need an authenticated tool without seeing its credential.
+A model may request a credential-backed operation without seeing or receiving its credential. The operation **MUST** use the normative Credential Broker and Operation Policy from Security Specification 01, preserving KUANG/11 `secret.use` references and using a trusted executor outside the untrusted agent's process boundary.
 
 Example:
 
 ```text
-model -> request tool cloud.query with credential_ref="aws/production"
-Ono  -> validates tool + secret.use policy
-Ono  -> resolves opaque credential handle
-host -> performs/brokers authenticated operation
-model <- receives sanitized typed result
+model   -> typed tool intent: service.inspect(target=production-web-01)
+Core    -> evaluates effective scope + tool + target + credential policy
+Broker  -> binds credential://ssh/production-readonly to exact operation
+Executor-> verifies SSH host key, remote principal, read-only remote endpoint
+model  <- receives sanitized typed service result, never SSH key or socket
 ```
 
-The secret value itself never becomes model context.
+Neither a credential alias alone nor a generic `ssh-agent` signature is authorization. The agent MUST NOT obtain raw tokens, private keys, unrestricted `SSH_AUTH_SOCK`, arbitrary authenticated shells or bearer capabilities. For remote operation-restricted claims, enforcement MUST be proven at the remote endpoint (e.g. restricted identity/forced command/trusted remote service), not inferred from local SSH authentication. Credential and tool results still pass through egress policy.
 
 ## 10.7 Tool result filtering is recursive
 
@@ -1649,6 +1673,8 @@ bounded live windows
 ```
 
 Nothing in this list is automatically included merely because it exists.
+
+Sources that read files, remote resources or plugin data are read within the effective scope (§23.6). The Core context broker is a trusted deputy and MUST NOT read, on the model's behalf, what the effective scope denies to the session (Security Specification 01 §11.4).
 
 ## 11.2 Default context
 
@@ -1702,7 +1728,7 @@ Example:
 
 ```text
 MODEL REQUEST
-assistant       ops
+assistant       core (profile ops)
 model           opus@personal
 connection      anthropic/personal
 location        remote
@@ -2007,6 +2033,8 @@ It re-enters the context/egress path before model continuation.
 
 If a conversation changes from one model connection to another, the broker MUST re-evaluate all context that will be resent against the new destination's data policy and trust domain.
 
+The switch MUST also re-evaluate the tool policy for the new destination. It MUST NOT grant, alter or widen credential use (Security Specification 01 §8.7).
+
 A conversation that was safe for:
 
 ```text
@@ -2157,6 +2185,7 @@ Even if prompt injection succeeds at influencing the model's reasoning and the m
 - tool schema;
 - allowed tool set;
 - capability scope;
+- effective Security Scope (Security Specification 01);
 - autonomy level;
 - current object identity;
 - v0.6 mutation semantics.
@@ -2165,7 +2194,7 @@ This is the primary safety boundary.
 
 ## 16.4 Plugin knowledge is not system policy
 
-Assistant/plugin-authored knowledge may guide reasoning, but a package MUST NOT smuggle capability grants or host policy inside model instructions.
+Profile- or plugin-authored knowledge may guide reasoning, but a package MUST NOT smuggle capability grants or host policy inside model instructions.
 
 The host controls the system/tool boundary.
 
@@ -2366,9 +2395,9 @@ When a conversation moves to another model connection:
 
 ## 19.5 Persistent memory capability
 
-If an assistant package supports persistent memory, it MUST declare the appropriate state/history capabilities and storage limits under existing KUANG/11 contracts.
+The Core assistant MAY support opt-in persistent memory only through the inherited v0.2 state/history policy and explicit bounded storage. It MUST be disabled by default.
 
-v0.10 does not introduce a vector database or embeddings store as a core requirement.
+KUANG/11 plugins MAY contribute storage-backed capabilities using their existing declared permissions and limits, but plugin installation MUST NOT enable assistant memory or automatic history export. v0.10 does not require a vector database or embedding store.
 
 ---
 
@@ -2387,7 +2416,7 @@ During a request, Rich TTY SHOULD make the active model boundary visible without
 A compact line may show:
 
 ```text
-ops -> opus@personal  remote  tools:observe  policy:redacted
+core/ops -> opus@personal  remote  tools:observe  policy:redacted
 ```
 
 The exact presentation is non-normative.
@@ -2466,7 +2495,7 @@ There is no mouse-only AI authority.
 
 ## 21.4 Terminal ownership
 
-Provider/assistant plugins never own terminal escape state.
+Provider/capability plugins never own terminal escape state.
 
 Any full-screen interaction uses the existing v0.8 terminal lease/view host.
 
@@ -2527,7 +2556,7 @@ This is important for privacy and cost understanding.
 
 The KUANG/11 permission specification remains authoritative.
 
-Assistant installation SHOULD describe useful human effects rather than dumping low-level capability names.
+The built-in assistant is already installed. Model connection and plugin-capability grants SHOULD describe useful human effects rather than dumping low-level capability names.
 
 Example:
 
@@ -2545,7 +2574,7 @@ Asked only when needed:
 
 ## 23.2 Model inference capability
 
-An assistant invoking the model broker requires `model.infer` scoped according to existing capability semantics.
+The built-in Core assistant invokes the model broker under `model.infer`, scoped according to existing capability semantics; its built-in status is not a blanket grant.
 
 A useful scope SHOULD be able to restrict:
 
@@ -2557,15 +2586,15 @@ If an exact scope cannot be enforced, it MUST NOT be presented as enforceable.
 
 ## 23.3 Provider capability separation
 
-The assistant's `model.infer` authority is separate from the provider plugin's network/credential authority.
+The Core assistant's mediated `model.infer` authority is separate from a model-provider plugin's network/credential authority and from a capability plugin's resource permissions.
 
-This separation prevents an assistant package from gaining arbitrary outbound networking merely because it can use a model.
+This separation prevents an ordinary capability extension from gaining model egress, secret access or arbitrary outbound networking merely because its typed operations may be exposed to the assistant.
 
 ## 23.4 Runtime mutation requests
 
 Mutation capabilities remain runtime-requested or explicitly configured according to the existing permission model.
 
-Installing an assistant does not grant:
+Installing a model provider or other capability plugin does not automatically grant the Core assistant:
 
 ```text
 service.mutate
@@ -2595,56 +2624,75 @@ This does not merge the underlying audit/event models; it correlates them.
 
 ---
 
-# 24. Provider and Assistant Package Separation
+## 23.6 Governed Execution security dependency
 
-## 24.1 Recommended ecosystem shape
+Security Specification 01 is normative for assistant tool execution. Every assistant tool call executes under the **effective Security Scope** - the intersection that specification's §6.3 defines, called *effective scope* throughout this document - and the native assistant's tool use is the v0.10 protected path. The tool bridge MUST propagate the effective `SecurityProfile`/scope digest, policy lineage, runtime enforcement report and credential bindings for every call, with checks re-applied at execution time. The intersection of administrator, operator, session, parent, KUANG/11 capability, target, credential, autonomy and approval restrictions MUST be enforced; descriptions, prompts and installed plugins do not grant authority.
 
-The preferred ecosystem is:
+**Native tools:** Core's typed read-only metadata may be used when it cannot access forbidden resources directly or through a privileged deputy. **Subprocesses:** must run in a verified OS sandbox, inherit restrictions and be denied raw credential sockets. **Credential-backed operations:** must use a trusted, operation-specific executor outside the agent boundary. **Remote operations:** must have independent target and operation enforcement or be denied in protected mode. **Mutation:** must use the normal v0.6 `ChangePlan` with any one-shot grant bound to the exact plan and target.
 
-```text
-ono-sendai core
-  model broker contracts
-  context/egress policy
-  assistant/tool integration
+A protected request MUST be refused if the active host, KUANG/11 isolation tier, adapter or remote endpoint cannot enforce a required guarantee. A UI MAY offer explicitly less-protected usage as a separate operator decision, never silently as fallback. Such a mode follows Security Specification 01 §16.4: it is visibly distinct, never selectable by the model, still evaluated against the effective scope's operation policy, and claims no protected guarantee.
 
-provider packages
-  anthropic
-  openai
-  local-runtime / ollama-like provider
-  enterprise gateways
 
-assistant packages
-  ops-assist
-  source-assist
-  incident-assist
-  domain-specific assistants
-```
+# 24. Native Assistant, Model Provider Plugins and Capability Extensions
 
-Names are illustrative.
+## 24.1 Normative component ownership
 
-## 24.2 Assistants depend on capabilities, not vendors
-
-An assistant manifest SHOULD express requirements like:
+The ecosystem has a single assistant implementation:
 
 ```text
-tools: true
-structured_output: preferred
-min_context: ...
-data_policy: system-metadata+sanitized-logs
-preferred: operator-selected
+ono-sendai Core (required)
+  generic built-in Assistant and lifecycle
+  model broker, connection resolution, ModelPolicy
+  context/egress broker and data classification
+  typed tool discovery, validation and execution
+  capability enforcement and ChangePlan integration
+
+KUANG/11 model-provider plugins (install as needed)
+  anthropic / openai / local runtime / enterprise gateway
+  provider API transport, auth, protocol, model metadata
+
+KUANG/11 capability plugins (optional)
+  kubernetes / aws / other systems and domain packages
+  normal typed objects, operations, schemas, provenance
+  optional assistant-facing metadata / context enrichments
 ```
 
-It SHOULD NOT require a specific vendor unless its functionality truly depends on provider-specific semantics.
+There MUST NOT be a required `ops-assist`, `source-assist`, `incident-assist` or equivalent package to enable ordinary questioning, typed analysis or read-only investigations. A plugin MAY contribute domain features, but the generic assistant remains the only required runtime. Model-provider plugins MUST NOT silently install independent assistants or control assistant policy.
 
-## 24.3 Provider-specific assistants are allowed but explicit
+## 24.2 Default integration for ordinary plugins
 
-A package may intentionally depend on a provider/model family.
+A plugin that already registers typed targets and operations SHOULD be usable by the built-in assistant through the existing registry and typed-tool bridge, subject to all ordinary capability and risk checks. Plugins MUST NOT need to re-register each operation in a parallel AI tool catalog.
 
-That dependency MUST be visible in manifest metadata and install planning.
+Example: installing a Kubernetes plugin contributes registered `get pod`, `inspect deployment` and similar typed operations. The native assistant MAY discover and request those operations if their schemas are machine-readable and the operator/scope/autonomy allow them. The plugin does not have to implement a `kubernetes-assistant`.
 
-It MUST NOT cause provider-specific syntax to enter the core language.
+There is no automatic grant: discovery is not permission, and a read-only descriptor MUST accurately reflect side effects. Unsupported or untrustworthy descriptors MUST be omitted or blocked.
 
----
+## 24.3 Optional AI-facing contributions
+
+A capability plugin MAY provide additional, declarative metadata when existing command/schema/target contracts cannot express a domain need. Examples include:
+
+- domain-specific tool descriptions and argument hints bound to existing typed operations;
+- bounded context-selection suggestions referencing registered object types;
+- documented investigation or remediation workflows expressed as data or existing `ChangePlan` primitives;
+- domain knowledge or examples clearly marked as lower-trust content;
+- model capability preferences expressed as non-binding requirements or compatibility metadata.
+
+The Core MUST retain final responsibility for interpretation, context assembly, model selection, egress, permissions, tool invocation, plan validation and audit. Optional AI metadata MUST pass manifest/schema validation and be versioned with the contributing plugin. It MUST NOT contain a privileged prompt that changes policy, self-authorizes tools, reads secrets, or bypasses the egress boundary. Missing metadata MUST NOT break ordinary typed tool access.
+
+## 24.4 Lifecycle, revocation and trust
+
+- A plugin's contributed tool/context descriptors exist only while its package is installed, enabled and permitted. Disable/removal MUST revoke them without restarting a separate assistant runtime.
+- Changes to plugin versions or registries MUST invalidate stale tool schemas and cached selections; requests re-check identity and permissions before execution.
+- Plugin-provided domain text is untrusted model context, even when packaged or signed. Signature/authenticity is not instruction authority.
+- Plugin extensions MUST NOT impersonate or overwrite the Core assistant identity, change its model policy or grant persistent memory.
+- A model-provider plugin MAY also register ordinary typed resource operations only through the same independently authorized KUANG/11 contracts, not as privileged model-transport side effects.
+
+If an optional AI-specific extension contract is introduced, an ADR MUST prove that existing KUANG/11 registries cannot express the required metadata and MUST preserve a single Core assistant runtime.
+
+## 24.5 Protected execution eligibility
+
+Ordinary KUANG/11 contributions only become available to the native assistant in a protected session if their declared capability and actual runtime/trusted-executor boundary satisfy Security Specification 01. A typed read-only descriptor MUST NOT mask unrestricted filesystem/network or credential authority in an unmanaged native process. Missing isolation or unsupported credential-operation restrictions exclude the tool from protected discovery with an inspectable reason. Core provides the generic sandbox, broker and operation policy; plugins MAY supply vetted concrete adapters or typed resource operations, but may not redefine policy enforcement or obtain a general signing interface.
+
 
 # 25. Structured Errors and Failure Semantics
 
@@ -2737,7 +2785,7 @@ but never the raw token/key.
 ```text
 user config
 system policy
-assistant manifest default
+Core assistant configuration default
 interactive session override
 ```
 
@@ -2751,7 +2799,7 @@ Enterprise/system policy MAY:
 - require enterprise-remote trust domain;
 - prohibit source code export;
 - require sanitation for logs;
-- limit assistants to L0/L1;
+- limit the assistant and its profiles to L0/L1;
 - deny persistent assistant memory.
 
 Such restrictions compile into the existing policy/capability model where possible.
@@ -2809,7 +2857,7 @@ Invalid structured output is an error or a documented assistant-level recovery a
 
 v0.10 explicitly considers:
 
-- malicious assistant package attempts to exfiltrate context;
+- malicious capability plugin attempts to exfiltrate model context through assistant-facing metadata or tool output;
 - malicious provider package attempts to read host data;
 - compromised provider-package update;
 - credential leakage through prompts/logs/debug traces;
@@ -2832,14 +2880,17 @@ v0.10 explicitly considers:
 
 ## 28.2 Layered mitigations
 
-The mitigation stack is:
+The mitigation stack includes **Security Specification 01** filesystem/process/network containment, operation-bound credential mediation, approval grants, and remote trusted-executor enforcement; the existing v0.10 controls remain independently required. The complete stack is:
 
 ```text
 signed/verified package acquisition
 manifest-before-code
 existing KUANG/11 confinement/isolation tier
 capability broker + deny by default
-separate provider and assistant authority
+verified sandbox scope and OS-enforced filesystem/process/network restrictions
+trusted Credential Broker + narrow typed executor; no raw secret/signer to agent
+explicit remote destination, identity, operation and approval enforcement
+separate Core assistant, model-provider and capability-extension authority
 typed context broker
 schema/provenance data classes
 secret scanning + sanitation
@@ -2859,7 +2910,7 @@ v0.10 MUST document which guarantees are policy mediation and which are process 
 
 In particular, if `native-process` plugins can access resources directly outside broker calls, capability denial alone is not claimed to sandbox that process.
 
-The project MUST not oversell model egress filtering as protection against a malicious unrestricted local process.
+The project MUST not oversell model egress filtering as protection against a malicious unrestricted local process. For protected assistant tool use, Security Specification 01 defines mandatory OS enforcement and mediation gates. An unrestricted native-process plugin or unscoped remote SSH command is ineligible for the protected tool surface unless an isolation/remote-authority boundary is actually demonstrated. A model-inference feature without tool access (L0) still operates under the Core egress policy and the effective scope's model dimension, and MUST NOT claim protected system-agent execution.
 
 ## 28.4 Debug logs
 
@@ -2993,7 +3044,7 @@ Exact flag spelling MAY follow existing option conventions, but the resulting po
 ```text
 local://~ > get process \
     | where cpu > 40 \
-    | ask assistant ops "Which of these are unexpected?"
+    | ask assistant "Which of these are unexpected?"
 ```
 
 Ono sends typed process fields allowed by policy, not the rendered table.
@@ -3001,9 +3052,9 @@ Ono sends typed process fields allowed by policy, not the rendered table.
 ## 30.6 Investigation with tools
 
 ```text
-local://~ > ask assistant ops "why is nginx restarting?"
+local://~ > ask assistant "why is nginx restarting?"
 
-ops -> opus@personal / remote / observe
+assistant -> opus@personal / remote / observe
 
 Evidence gathered
   service nginx
@@ -3023,7 +3074,7 @@ Evidence
 ## 30.7 Proposal without mutation
 
 ```text
-local://~ > ask assistant ops "propose the safest fix"
+local://~ > ask assistant "propose the safest fix"
 
 Proposed change
   @plan/7f21
@@ -3100,10 +3151,10 @@ If source code is denied for that remote model, fallback fails rather than expor
 ## 30.12 Remote Ono link
 
 ```text
-prod-web-3://~ > ask assistant ops "why is checkout unhealthy?"
+prod-web-3://~ > ask assistant "why is checkout unhealthy?"
 ```
 
-Tool operations occur through existing remote scopes and refs.
+Tool operations occur through existing remote scopes and refs. The remote peer independently enforces each operation's restrictions (Security Specification 01 §13.4); an operation it cannot restrict there is refused.
 
 The `AssistantResult` identifies:
 
@@ -3258,7 +3309,7 @@ model broker
   provider invocation
 
 assistant host
-  Assistant resolution
+  built-in generic Assistant identity and native runtime
   request lifecycle
   conversation refs
   typed AssistantResult
@@ -3296,7 +3347,7 @@ These may be modules inside existing crates rather than new crates if the reposi
 
 ## 32.2 Do not duplicate registries
 
-Provider/model/assistant registrations SHOULD integrate with existing KUANG/11 and command/schema registries.
+Provider/model registrations SHOULD integrate with existing KUANG/11 and command/schema registries. The built-in assistant is registered once by Core; plugin contributions register typed operations and optional metadata through existing registries.
 
 A new registry is justified only for genuinely new provider metadata that cannot live in existing extension metadata.
 
@@ -3306,7 +3357,8 @@ v0.10 SHOULD complete the already envisioned K11-G contract artifacts, conceptua
 
 ```text
 model-broker schema
-assistant schema
+native Core Assistant schema
+optional capability-extension AI metadata schema, only if justified by ADR
 context-policy schema
 autonomy schema
 provider contribution schema
@@ -3343,11 +3395,13 @@ The implementation SHOULD proceed in the following dependency order. A coding ag
 
 Before new code:
 
-- map current repository types for `Assistant`, model broker concepts, capabilities, `ChangePlan`, views and history;
+- map current repository types for `Assistant`, model broker concepts, capabilities, `ChangePlan`, views and history; determine how the built-in Core assistant is represented without a mandatory plugin;
 - identify which v0.2 conceptual K11-G artifacts already exist;
 - identify current machine-readable command/target/schema registries;
-- record any name collisions in ADRs;
-- explicitly verify that no `ai` command namespace is needed.
+- record any name collisions or inherited `Assistant.plugin` ownership conflicts in ADRs;
+- explicitly verify that no `ai` command namespace is needed;
+- audit Security Specification 01 ownership (its Phase S0) and write ADRs for effective-scope schema, Linux sandbox backend, broker privilege separation, credential binding/remote execution and ChangePlan-bound approvals;
+- declare the exact supported protected-mode guarantee matrix. An unsupported runtime/backend MUST not be counted as a successful gate.
 
 Deliverable: written implementation mapping from this spec to existing code owners.
 
@@ -3355,6 +3409,7 @@ Deliverable: written implementation mapping from this spec to existing code owne
 
 Implement/complete:
 
+- Core-owned built-in assistant registration and provider-neutral execution contract;
 - `ModelConnection`;
 - normalized provider descriptor;
 - normalized `Model` metadata;
@@ -3386,7 +3441,7 @@ Implement:
 - model discovery/cache semantics;
 - exact model references including connection identity;
 - user default;
-- assistant `ModelPolicy`;
+- Core assistant `ModelPolicy` and optional configured contexts/profiles;
 - ambiguity handling;
 - explicit fallback;
 - trust-domain checks;
@@ -3427,7 +3482,7 @@ This phase is a release blocker for remote provider support.
 
 Implement:
 
-- `ask assistant`;
+- `ask assistant` with the built-in assistant as default, requiring no assistant plugin;
 - typed `AssistantResult`;
 - model/connection metadata;
 - evidence refs;
@@ -3438,16 +3493,20 @@ Implement:
 
 ## Phase H - typed tool bridge / L1
 
+**Security dependency:** Security Specification 01 S1-S4 (effective scope, strict Linux sandbox, Credential Broker with narrow reference executor, native assistant and KUANG/11 mediation) must be integrated: every tool call executes under the effective scope, and a call whose required guarantee cannot be enforced is refused. Unit policy checks alone do not satisfy this requirement.
+
 Implement:
 
-- command/provider metadata to tool descriptors;
+- command/provider metadata to tool descriptors, including ordinary KUANG/11 plugin-contributed typed operations;
+- dynamic plugin enable/disable and schema revocation without a separate assistant runtime;
 - tool schema validation;
 - capability filtering;
 - read-only execution;
 - object identity re-resolution;
 - tool-result egress filtering;
 - tool-call budget;
-- prompt-injection tests.
+- strict effective-scope propagation, verified OS-enforced subprocess access, restricted broker IPC and trusted credential-backed typed operations;
+- prompt-injection tests, path/FD/IPC/network escape tests, credential leak tests and remote enforcement tests.
 
 ## Phase I - ChangePlan bridge / L2 and L3
 
@@ -3459,7 +3518,8 @@ Implement:
 - L2 no-mutation guarantee;
 - L3 apply handoff with existing confirmation/policy;
 - verification results back to assistant;
-- recovery semantics unchanged.
+- recovery semantics unchanged;
+- one-shot trusted human approval bound to the exact target, operation, credential and sealed plan digest, without widening the running sandbox.
 
 ## Phase J - Rich TTY, Deck and duration integration
 
@@ -3480,6 +3540,7 @@ Deliver at least:
 - deterministic fake/local test provider;
 - at least one real remote provider package usable end-to-end;
 - provider conformance suite;
+- native assistant running with no assistant package and an optional capability-extension fixture;
 - multi-account same-provider tests;
 - auth renewal/error tests;
 - provider streaming/tool-call tests when advertised.
@@ -3499,7 +3560,11 @@ Deliver:
 - remote-link scope tests;
 - v0.6 mutation/recovery integration tests;
 - documentation and generated reference updates;
-- spec/contract drift checks.
+- Core-assistant/no-provider and plugin-contribution/revocation proof;
+- spec/contract drift checks;
+- Security Specification 01 protected-tool gates and actual host/backend evidence, including unsupported-enforcement fail-closed proof;
+- credential-mediated SSH/remote diagnostic reference proof with no key, socket or unrestricted remote shell exposure;
+- direct and indirect escapes through plugin, subprocess, model egress and remote executor tested as release blockers.
 
 ---
 
@@ -3659,7 +3724,55 @@ A provider that does not report remaining quota/cost/context detail produces unk
 
 Before the model broker contract is declared stable, the project demonstrates either two independent real provider implementations or one real provider plus one independently implemented conformance provider sufficiently different to expose vendor coupling.
 
+## Gate AM - native assistant exists without a plugin
+
+On a clean installation, `get/inspect assistant`, help and `ask assistant` resolve the built-in Core assistant without any assistant package. Without a usable model connection, inference fails with a structured setup error rather than a missing-assistant-plugin error.
+
+## Gate AN - model providers remain plugins
+
+The Core has no concrete provider adapters, vendor protocol branches, bundled upstream credentials or hidden provider installs. Two independent KUANG/11 providers, as Gate AL defines them, satisfy the same broker contract.
+
+## Gate AO - ordinary typed plugin capabilities are reusable
+
+A KUANG/11 capability plugin registering a valid read-only typed operation becomes discoverable by the native assistant through the ordinary command/schema registries without any assistant-specific registration. Tool execution still requires all standard permissions and request policy.
+
+## Gate AP - plugin removal and permission revocation fail closed
+
+Disabling/uninstalling a capability plugin, changing its schema or revoking a grant removes its tools from eligible discovery and prevents stale cached invocation. Neither installation nor metadata update changes autonomy or grants new permissions.
+
+## Gate AQ - plugin knowledge is data, not policy
+
+A plugin-contributed description, prompt, example or workflow attempting to request secrets, change model routing, enlarge tool authority or bypass egress remains lower-trust data and cannot override Core rules.
+
+## Gate AR - one assistant runtime
+
+The implementation does not add separate default/ops/source/incident assistant execution engines, registries, duplicated policy enforcement or a mandatory assistant-plugin API. Optional configured contexts reuse the same Core runtime.
+
 ---
+
+## Gate AS - security profile and kernel boundary
+
+The assistant's protected sessions are bound to an immutable effective scope and verified Linux enforcement report. A subprocess cannot access other directories, host credential sockets or forbidden network routes; children inherit restrictions and unsupported hosts fail closed. Mandatory Security Specification 01 policy/filesystem/execution/IPC/network gates pass.
+
+## Gate AT - credential use without disclosure
+
+One real reference operation uses an SSH identity or equivalent protected credential through a trusted executor, while the model and agent subprocess cannot read the secret, its original socket or an unrestricted signer. Destination, remote principal, operation and result exposure are independently enforced and audited. Mandatory Security Specification 01 credential/operation/remote gates pass.
+
+## Gate AU - trusted approval and plan binding
+
+A model cannot self-grant privileges. An authorized mutation requires the existing sealed v0.6 plan and an independently issued, exact-target, one-shot and revocable grant. Modified, expired or replayed grants fail, and a running OS sandbox is never widened in place. Mandatory Security Specification 01 approval gates pass.
+
+## Gate AV - no unconfined plugin escape
+
+A KUANG/11 capability or model-provider plugin cannot use its runtime to bypass the effective scope or reveal secrets. If its isolation tier, trusted executor or remote endpoint cannot enforce a required restriction, it is excluded from protected tool discovery. This is verified by adversarial direct/indirect access tests.
+
+## Gate AW - truthful enforcement and audit
+
+`inspect`/`explain` report declared, compiled and actually enforced restrictions, not a marketing boolean. Correlated audit traces decisions without raw credentials. Unsupported external agents or backends are marked unsupported, never silently downgraded.
+
+---
+
+
 
 # 35. Test Matrix
 
@@ -3668,7 +3781,7 @@ Before the model broker contract is declared stable, the project demonstrates ei
 Test:
 
 - `ask assistant` parsing;
-- assistant selector completion;
+- built-in assistant discoverability with zero installed plugins and optional configured context selector completion;
 - model selector completion;
 - `connect model` parsing;
 - no required `ai` namespace;
@@ -3699,7 +3812,7 @@ Test:
 - one valid model;
 - multiple ambiguous models;
 - default policy;
-- assistant-specific policy;
+- Core assistant default policy and optional configured context/profile policy;
 - same model two accounts;
 - explicit fallback;
 - fallback denied by data policy;
@@ -3770,7 +3883,10 @@ Test:
 - secret-bearing tool result;
 - tool timeout;
 - tool cancellation;
-- tool-call budget exhaustion.
+- tool-call budget exhaustion;
+- ordinary KUANG/11 typed read-only capability discovery without AI-specific registration;
+- capability plugin disable/uninstall, schema update and cached-tool invalidation;
+- optional plugin knowledge cannot grant tools, change routing or override egress policy.
 
 ## 35.8 Mutation
 
@@ -3795,9 +3911,9 @@ Inject hostile instructions into:
 - service descriptions;
 - remote provider output;
 - tool results;
-- plugin knowledge.
+- plugin knowledge and assistant-facing metadata.
 
-Verify zero capability/policy expansion.
+Verify zero capability/policy expansion, including when the contributor is signed or otherwise installed through a trusted source.
 
 ## 35.10 Presentation
 
@@ -3817,6 +3933,22 @@ Test:
 
 ---
 
+## 35.11 Governed execution, credentials and approvals
+
+In addition to the Security Specification 01 gates that its §22.1 makes v0.10 blockers (G-LIFE-01 and G-EXT-01 apply only if v0.10 advertises protected external-agent execution), test the v0.10 integration path end to end:
+
+- Native assistant L1 tool request restricted to one read/write workspace and an independent read-only tree; denied sibling paths, `~/.ssh`, inherited FDs, malicious symlinks, network access and privileged IPC.
+- A tool subprocess (and, where advertised, an external agent process) spawning a child/nested shell under the same kernel restrictions; correct error when backend unavailable or profile unenforceable. Do not count a policy-only mock as isolation evidence.
+- Typed KUANG/11 operation from an unconfined native plugin rejected or rerouted to a proven trusted adapter before protected execution.
+- Protected reference SSH credential used for `service.inspect` without exposing key, raw SSH agent socket or a remote unrestricted shell. Host-key mismatch, unauthorized principal, forwarding, arbitrary command and target switch rejected.
+- Model tool call with `credential://` alias lacking grant rejected; revoked credential grant, expired session and replayed approval rejected.
+- Elevated mutation bound to v0.6 sealed ChangePlan; altered target/arguments/plan or provider fallback cannot reuse approval.
+- Authorized broker result still filtered for secret fields and blocked model egress according to ModelPolicy.
+- Inspectable report distinguishes verified kernel isolation from broker-only enforcement and absent guarantees. Audit never contains private keys, bearer headers or shell credential sockets.
+
+All tests MUST run against a documented supported Linux configuration with actual enforcement activated; unsupported platform/backend skips MUST appear as skips rather than passes. The mandatory v0.10 security acceptance mapping covers Gates AS-AW plus the applicable Security Specification 01 G-* gates.
+
+
 # 36. Documentation Requirements
 
 v0.10 is incomplete until documentation teaches the native path.
@@ -3829,6 +3961,8 @@ The project MUST update or add documentation for:
 - `get/inspect model`;
 - `ModelPolicy` and fallback;
 - provider plugin installation;
+- built-in Core assistant availability without any assistant plugin;
+- ordinary capability-plugin discovery, optional AI metadata and safe revocation;
 - authentication and credential storage;
 - model data boundaries;
 - data classes and redaction;
@@ -3846,7 +3980,7 @@ The first user tutorial SHOULD look like:
 
 ```text
 connect model <provider>
-ask assistant <assistant> "..."
+ask assistant "..."
 ```
 
 It SHOULD NOT begin with:
@@ -3878,7 +4012,12 @@ Documentation MUST clearly state:
 - how to inspect the context/egress summary;
 - how multiple provider accounts remain separate;
 - how fallback may change data boundaries;
-- that capability mediation is not equivalent to a sandbox for runtime tiers that do not provide one.
+- that capability mediation is not equivalent to a sandbox for runtime tiers that do not provide one;
+- how to configure and inspect a strict workspace/readonly SecurityProfile, what Linux backend/kernel guarantees are enforced, and what cannot be enforced;
+- that credential references permit only broker-authorized operations, never general access to an SSH agent/token;
+- that an SSH credential does not by itself limit remote commands, and remote-side operation restriction is required for protected claims;
+- where external-agent integration is offered, that external agents have separately reported confinement/credential/model-egress compatibility levels;
+- how human, one-time approvals bind to exact operations and v0.6 ChangePlans and how revocation/expiration work.
 
 ---
 
@@ -3892,11 +4031,13 @@ A complete v0.10 release SHOULD include the following artifact groups.
 - `ModelConnection` schema;
 - normalized `Model` schema;
 - formalized `ModelPolicy` schema;
+- Core-owned Assistant object/runtime contract;
 - assistant result schema;
 - normalized model request/response;
 - tool-call schema;
 - data-class metadata extension;
-- structured error additions.
+- structured error additions;
+- Security Specification 01 effective-scope, sandbox attestation, CredentialBinding, OperationGrant and trusted-executor contracts, reusing KUANG/11 secret references.
 
 ## 37.2 Core implementation
 
@@ -3905,11 +4046,14 @@ A complete v0.10 release SHOULD include the following artifact groups.
 - deterministic routing/fallback;
 - context broker production path;
 - egress policy/redaction;
-- typed assistant request/result;
+- built-in generic assistant registration and typed request/result;
 - tool bridge;
 - v0.6 plan bridge;
 - audit correlation;
-- presentation integration.
+- presentation integration;
+- verified Linux protected launcher, scope policy compiler and introspection;
+- authenticated Credential Broker with one narrow trusted credential-backed remote reference executor;
+- independent approval/grant validation integrated with v0.6 plan lifecycle and existing audit.
 
 ## 37.3 KUANG/11 ecosystem
 
@@ -3917,7 +4061,8 @@ A complete v0.10 release SHOULD include the following artifact groups.
 - provider conformance host;
 - at least one real remote provider;
 - a deterministic test/local provider;
-- at least one assistant package or reference assistant proving L0-L3.
+- built-in Core assistant reference implementation proving L0-L3 (no assistant package required);
+- one ordinary KUANG/11 typed capability-extension fixture proving discovery, filtering and revocation.
 
 ## 37.4 Test proof
 
@@ -3927,7 +4072,9 @@ A complete v0.10 release SHOULD include the following artifact groups.
 - prompt-injection suite;
 - ChangePlan mutation proof;
 - cancellation/long-running proof;
-- non-interactive determinism proof.
+- non-interactive determinism proof;
+- Security Specification 01 supported-runtime guarantee report and complete applicable gate evidence;
+- secret-free SSH reference operation, backend-unavailable fail-closed, remote enforcement and plugin-escape evidence.
 
 ---
 
@@ -3954,7 +4101,13 @@ The following are explicitly outside v0.10 unless already required by an inherit
 - arbitrary user declassification language;
 - a new terminal emulator;
 - a new dashboard builder;
+- mandatory assistant packages or separate generic/specialist assistant runtimes;
+- a parallel AI-only tool registry for already typed plugin operations;
 - provider-specific UI modes;
+- general-purpose container orchestration or arbitrary credential-backed SSH shells;
+- protected external-agent execution (Security Specification 01 Phase S5, compatibility Levels A-C), unless the release explicitly advertises it - then its gates, including G-LIFE-01 and G-EXT-01, become release blockers for that mode;
+- guaranteed support for every third-party external AI agent or provider-protocol-aware proxy (only truthful supported compatibility levels may be claimed);
+- broad multi-backend vault, enterprise identity or hardware key products beyond the tested Security Specification 01 reference path;
 - `ai` as a canonical command namespace.
 
 Future releases may build on v0.10, but they must do so explicitly rather than hiding these features inside implementation scope.
@@ -3966,6 +4119,10 @@ Future releases may build on v0.10, but they must do so explicitly rather than h
 | Question | Decision | Intent |
 |---|---|---|
 | Is AI a core provider implementation? | No | Keep vendors replaceable |
+| Is the generic assistant implemented in Core? | Yes, built-in and always discoverable | Native functionality without an assistant installation step |
+| Are separate assistant plugins required? | No | One runtime; reusable typed tools; minimize complexity |
+| How do existing KUANG/11 plugins extend AI? | Through registered typed objects/operations and optional declarative hints | No duplicate tools or policy model |
+| Can optional plugin knowledge change authority? | No | Host policy, egress and permissions remain Core-owned |
 | Is AI only an external plugin feature? | No | Core semantics/context/policy must make assistants native |
 | Where are concrete providers implemented? | KUANG/11 packages | Avoid vendor dependencies in core |
 | Does Ono get a new `ai` command grammar? | No | Preserve one verb-target language |
@@ -3978,6 +4135,10 @@ Future releases may build on v0.10, but they must do so explicitly rather than h
 | Are consumer subscriptions assumed usable? | No | Provider declares supported auth |
 | Can provider plugin read assistant context directly? | No | Host owns context/egress |
 | Are credentials stored in config? | No | Use opaque secret references |
+| Can a protected agent read an SSH key, raw agent socket or API token? | No | Security Specification 01 broker mediates operation-specific use |
+| Is capability mediation alone a filesystem sandbox? | No | Verified OS enforcement is mandatory for protected tool sessions |
+| Can a protected agent obtain general SSH shell rights by requesting authentication? | No | Remote operation requires independent enforcement and an exact target |
+| Can an agent elevate its own running sandbox? | No | Separate trusted executor or new approved session; v0.6 plan bound |
 | Can raw credentials be prompt context? | No in normal v0.10 path | Use secret handles instead |
 | Is typed classification enough? | No | Scan untyped text too |
 | Does formatting erase sensitivity? | No | Propagate data classes |
@@ -4011,7 +4172,7 @@ It is complete only when all of the following are true:
 8. data-class metadata survives relevant pipeline transformations;
 9. known typed and untyped secrets are blocked/redacted before model access;
 10. provider adapters receive only policy-approved normalized context;
-11. assistants can perform useful L1 read-only investigation through typed tools;
+11. the built-in Core assistant performs useful L1 read-only investigation through typed tools without an assistant package;
 12. prompt injection cannot expand authority;
 13. L2 produces real v0.6 `ChangePlan` objects without mutation;
 14. L3 uses normal plan/apply/protection/verification semantics;
@@ -4020,9 +4181,22 @@ It is complete only when all of the following are true:
 17. long-running requests are bounded, cancellable and resource-safe;
 18. provider and assistant errors are structured;
 19. security documentation does not overclaim plugin isolation or DLP completeness;
-20. at least two sufficiently independent provider implementations prove the broker is not accidentally vendor-shaped.
+20. at least two sufficiently independent provider implementations prove the broker is not accidentally vendor-shaped;
+21. a fresh installation exposes the built-in Core assistant without installing a KUANG/11 assistant package;
+22. ordinary typed capabilities contributed by KUANG/11 plugins are discoverable without a second AI tool registration path;
+23. plugin removal, permission revocation, hostile extension knowledge and stale tool metadata fail closed;
+24. there is exactly one generic Core assistant runtime, with optional contexts/profiles and no provider-specific assistant implementation;
+25. strict protected tool sessions use verified OS-enforced filesystem/process/network boundaries or fail closed;
+26. secret-bearing actions use an operation-bound Credential Broker and trusted executor, never a raw token/signer/SSH_AUTH_SOCK exposed to the model or agent process;
+27. a reference SSH/remote operation proves destination identity, remote operation constraint and safe result egress;
+28. human one-shot approvals bind to exact operations/targets and the sealed v0.6 plan for mutation;
+29. unconfined plugins, unsupported sandboxes and unsupported third-party agent integrations cannot masquerade as protected execution;
+30. every applicable Security Specification 01 release gate passes with reproducible evidence from a supported host/backend.
+
+
+
+**Security integration contract:** The operator-selected `SecurityProfile`, authenticated scoped Credential Broker and trusted operation executor are part of the same Ono authority boundary as KUANG/11 capability checks and v0.6 planning, not an AI-specific parallel runtime. The Security Specification 01 gates its §22.1 makes v0.10 blockers are release requirements for the native assistant's protected tool use. Any further protected feature, such as an external-agent mode or another credential backend, is released only with its own gates passing; anything unimplemented is reported as unavailable rather than approximated with prompts or policy-only assertions.
 
 The final v0.10 product contract is therefore:
 
-> **Ono lets a reasoning model participate in the same typed systems interface as the operator. The model may ask questions, gather evidence and propose change, but it never receives authority by implication. Provider identity, account identity, context, data export, tools, plans and execution all remain explicit Ono objects and policies. AI becomes native by obeying Ono - not by creating a second shell inside it.**
-
+> **Ono Core provides one native, provider-neutral assistant, extended through existing KUANG/11 capabilities and connected to concrete models by KUANG/11 provider plugins. It lets a reasoning model participate in the same typed systems interface as the operator. The model may ask questions, gather evidence and propose change, but it never receives authority by implication. Provider identity, account identity, context, data export, tools, plans and execution all remain explicit Ono objects and policies. AI becomes native by obeying Ono - not by creating a second shell inside it.**

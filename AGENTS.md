@@ -73,7 +73,11 @@ ono-sendai/
     │   ├── cloud-native-vision.md
     │   └── cncf-readiness.md
     ├── architecture/             cross-cutting contracts tied to no numbered release
-    │   └── external-system-provider.md
+    │   ├── external-system-provider.md
+    │   └── security-spec-01-governed-execution.md
+    │                             Security Specification 01: sandbox, Credential Broker and
+    │                             operation policy as generic Core mechanisms; checksummed in
+    │                             spec.sha256 and immutable like the narrative specs (ADR-1035)
     ├── specs/kuang11/            the KUANG/11 plugin installation, resolution and permission
     │   │                         UX specification (K11P) and its acquisition and system
     │   │                         distribution addendum (K11A) — narrative, cross-cutting, and
@@ -223,8 +227,13 @@ Concretely:
 
 `docs/architecture/` sits beside level 2: an architecture specification is normative for the
 extension boundary it defines, but it is tied to no numbered release and it never overrides a
-narrative specification. `docs/strategy/` is outside this order entirely — it is direction, not
-contract, and no increment is measured against it.
+narrative specification. A narrative specification may incorporate one by reference, and then it
+carries that specification's authority for the path it names: v0.10 does so with
+`docs/architecture/security-spec-01-governed-execution.md` for assistant tool execution. That
+security specification is checksummed in `docs/specs/spec.sha256` and is as immutable as the
+narrative specifications: the rules of §5.1 apply to it (ADR-1035). `docs/strategy/` is
+outside this order entirely — it is direction, not contract, and no increment is measured
+against it.
 
 Lower levels must never silently contradict higher ones. If implementation reality forces a
 change at level 2 or below, **change it explicitly** in the same commit and note it in the
@@ -259,7 +268,13 @@ The enhancements present, newest first:
   observes, validates and acts; data crosses a model boundary only after context and egress
   policy; agency is capability, scope and plan. Built on the existing K11-G surface and
   deliberately after v0.7–v0.9, whose presentation, long-running and Deck semantics it uses.
-  Added 2026-09-15, **not implemented**; `docs/STATE.md` records it behind v0.9.
+  Added 2026-09-15, **not implemented**; `docs/STATE.md` records it behind v0.9. Revised by the
+  user on 2026-11-15: the generic assistant is a native Core capability present in every
+  installation, model providers are KUANG/11 packages, other packages extend the assistant
+  through their typed objects and operations (ADR-1034), and every assistant tool call executes
+  under the effective Security Scope of Security Specification 01
+  (`docs/architecture/security-spec-01-governed-execution.md`, ADR-1035), whose phases S0–S4
+  block v0.10.
 - `docs/specs/ono_sendai_shell_spec_v0.9_live_view_integration.md` — Live View Integration &
   Long-Running Workspace Ergonomics: small, bounded presentation-local bindings that keep the
   v0.8 Deck's live views — streams, `watch`, spatial `--live`, the v0.5 temporal cursor — usable,

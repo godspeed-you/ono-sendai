@@ -524,7 +524,10 @@ and aarch64). One stabilization release comes next, a milestone in the tracker: 
 links and change). Four
 further enhancement specifications follow it — Presentation Consolidation & Rich TTY (v0.7), Deck
 Workspace Composition (v0.8), Live View Integration (v0.9) and Native AI Assistance (v0.10) — and
-are specified but not yet implemented.
+are specified but not yet implemented. v0.10 builds on [Security Specification
+01](docs/architecture/security-spec-01-governed-execution.md), Governed Execution: a Core sandbox,
+Credential Broker and operation policy that shells, plugins, automation and the assistant are all
+held to — specified as well, and not yet implemented.
 
 **By the numbers.** These are measured, not typed: `cargo run -p xtask -- metrics` reads them out of
 the tree and the quality gate fails when this block and the repository disagree. `tests` counts test
@@ -544,7 +547,7 @@ tests=7831
 tests_that_can_skip=123
 expected_ci_skips=16
 acceptance_cases=319
-adrs=731
+adrs=733
 command_contract_files=16
 commands=226
 stripped_bytes.kuang-compile.aarch64-unknown-linux-gnu=5591976
