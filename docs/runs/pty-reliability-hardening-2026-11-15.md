@@ -19,9 +19,9 @@ load recorded at its start (`~/.cache/ono-pty/bin/repeat.sh`).
 | Pause | 10:58–13:15 CET: the owner needed the machine; nothing ran |
 | Starting point | `abc4e314` on `implementation`, clean, equal to `origin/implementation`; `main` at `4bfbd890` (v0.6.5) |
 | Root cause | the prompt read the spatial session state with `try_lock()` and dropped the place when another task held it; since v0.6.4 the read behind the prompt (ADR-0984) holds it at exactly that moment (#311) |
-| Fixes | `c4ed3a3d` (#311, ADR-1032); `7d8c1b0a` (a fuzzy match ended `enter`'s sweep); `8bb2f748` (PTY harness waits); `71b1f2fb` (`change_gates.rs` fixture); `3c238222` (signal tests at default dispositions) |
+| Fixes | `c4ed3a3d` (#311, ADR-1032); `7d8c1b0a` (a fuzzy match ended `enter`'s sweep); `8bb2f748` (PTY harness waits); `71b1f2fb` (`change_gates.rs` fixture); `3c238222` (signal tests at default dispositions); `576ebc24` (the gate flushes its build before testing, ADR-1033) |
 | Tests added | 5 unit tests; the PTY suites unchanged in what they assert |
-| ADRs | ADR-1032 |
+| ADRs | ADR-1032, ADR-1033 |
 | Subagents | one, an independent read-only review on Opus |
 | Disk budget | 300 GB for this run (owner, 2026-11-15); peak below 100 GB used on `/` (*Resources*) |
 
@@ -95,6 +95,8 @@ prompt did arrive. No environmental cause was involved in #311.
 | `71b1f2fb` | test | `change_gates.rs` plans units with a unit file (below) |
 | `91706f92` | docs | STATE, CONTRIBUTING, this record |
 | `3c238222` | test | the tests that signal their shell start it at default signal dispositions (below) |
+| `d0c41e91` | docs | STATE and this record |
+| `576ebc24` | fix | the gate builds its tests, flushes the build's writes (`sync`), then runs them (ADR-1033) |
 
 Regression tests. Each of these failed before its fix, and each holds the contended state itself
 while it reads:
@@ -147,6 +149,18 @@ next Tab asks again. No production path is special-cased for tests.
   and pass under both runners. The qualification driver is now started with default dispositions
   too.
 
+- **Tests that ran while the build was still being flushed (`576ebc24`, ADR-1033).** The third
+  qualification attempt stopped in `authorized_clients.rs`: `add client-key`, which `fsync`s,
+  took over 20 s. The sampler shows the dirty page cache at 6 GB, written at up to 128 MB/s in
+  the gate's first minutes. The gate was recompiling the workspace because I had built
+  `-p ono-cli` in between. That is the normal shape of every gate after a change, and the same
+  mechanism as the `acquisition.rs` stops (*Found*): the kernel flushes the build behind it, and
+  the first tests' writes queue behind the flush. The gate now builds its tests, runs `sync`, and
+  then tests. Validation under the very condition: `cargo clean -p ono-cli` (20.5 GiB of
+  artifacts), then the full gate of `576ebc24`. The build left 7.4 GB dirty at 14:01:31, the
+  flush drained it by about 14:03, and the tests then ran with less than 1 GB dirty: **green**
+  (14:00–14:12).
+
 ## Review
 
 One independent read-only review on Opus. It read the diff and the code without building or
@@ -198,12 +212,13 @@ A second gate was stopped because a test build of mine ran beside it. The gate o
 
 ## Qualification
 
-Two attempts broke before the final one, and each streak counts from zero:
+Three attempts broke before the final one, and each streak counts from zero:
 
 | Attempt | SHA | Run | Result | Cause |
 |---|---|---|---|---|
 | 1 | `91706f92` | 1 | stopped in the gate (`acquisition.rs`, 3 watchdogs) | write-back throttling after an aborted start (*Found*) |
 | 2 | `91706f92` | 1 | stopped in the gate (`jobs_shutdown.rs`, the `SIGHUP` test) | the runner's ignored signals, fixed in `3c238222` |
+| 3 | `d0c41e91` | 1 | stopped in the gate (`authorized_clients.rs`, one watchdog) | the build's write-back under the first tests, fixed in `576ebc24` |
 
 `scripts/release-check.sh` then runs ten consecutive times on the commit that adds this
 paragraph. The tree is clean, nothing changes between runs, the runs go one at a time with
@@ -228,5 +243,5 @@ widened window that turns the failure deterministic before the fix and harmless 
 regression tests fail on the old code for exactly that reason. Repetition cannot prove a race
 absent. What it shows here is 360 post-fix runs without a failure, under the conditions that
 failed 3 in 8 before. The fix also removes the race in kind: the prompt no longer touches the
-lock. The lock-order inversion is unfixed, and `acquisition.rs`'s sensitivity to write-back is
-explained but not removed. Both are on the board.
+lock. The lock-order inversion is unfixed and on the board. Write-back from a concurrent writer outside
+the gate can still slow a test; ADR-1033 removes the gate's own build from under its tests.

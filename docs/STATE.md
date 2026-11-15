@@ -165,7 +165,8 @@ holder now publishes where the session stands when it lets the state go, and the
 read that publication (ADR-1032). Two more defects blocked the gate on the way and are fixed: a fuzzy
 match ended `enter`'s sweep before the service manager was asked (`7d8c1b0a`), and the bulk-restart
 fixture of `change_gates.rs` planned transient units (`71b1f2fb`); and the tests that signal their shell
-inherited the runner's ignored signals (`3c238222`). The run record,
+inherited the runner's ignored signals (`3c238222`); and the gate's tests ran while the build was still
+being flushed (`576ebc24`, ADR-1033). The run record,
 `docs/runs/pty-reliability-hardening-2026-11-15.md`, holds the reproduction, the evidence and the
 release-check qualification.
 
@@ -198,6 +199,8 @@ only what finished since the last release and has no issue of its own.
 - [x] The tests that signal their shell start it with default signal dispositions, so a
   release-check under `nohup` or in a script's background no longer hands them a shell that
   rightly keeps an ignored `SIGHUP` or `SIGINT` (`3c238222`, `ono_testkit::ono_command`).
+- [x] The gate builds its tests, flushes the build's writes and then tests, so the first suites no
+  longer queue behind gigabytes of write-back (`576ebc24`, ADR-1033).
 
 ---
 
@@ -230,15 +233,6 @@ tracker (no existing issue):
   command running the other can deadlock both. Found by the #311 review; not reproduced. Severity
   medium (a hang, needs a job). Exit: one order everywhere, or the inner borrow taken after the outer
   one is released, with a test that runs both at once.
-- `acquisition.rs` stalls behind the kernel's writeback. Twice — the gate of `7d90f92f`
-  (2026-11-15 09:51) and the first qualification run of `91706f92` (13:18) — three to six of its 22
-  tests hit their 30 s watchdog on `install plugin`, each time just after gigabytes had been written
-  (a fresh build, an aborted run). Reproduced at will by writing 8 GB beside the suite: 134 s
-  instead of 11.5 s, three watchdogs, and the shells sampled in `D` state on `rq_qos_wait` and
-  `folio_wait_bit_common` (write-back throttling on this VM's disk). Quiet, the suite is CPU-bound
-  and its own writes never reach the disk; twice the CPU load costs 20 s and passes. Severity low
-  (an environmental bound, not a hang). Exit: a release gate that does not follow heavy writes
-  within a minute, or a watchdog that scales with I/O wait as it does with load.
 - `temporal_view.rs`'s terminal does not answer the cursor-position report the shell asks for
   before the prompt after a command (ADR-0861), so the first such prompt of every test waits out
   the two-second bound. `spatial_interactive.rs` answers it. Severity low (two seconds per test).
