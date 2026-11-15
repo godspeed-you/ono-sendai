@@ -58,6 +58,13 @@ run: |
   ono -c "why event $FAILURE" > /tmp/t8k-why.out 2>&1
   ono -c "why event $FAILURE | to json" > /tmp/t8k-why.json 2>&1
   cat /tmp/t8k-why.out
+  # The short reference was printed by one shell and is resolved by the next; every shell after
+  # this one records events of its own, and a prefix that named one event when it was printed can
+  # name two a few shells later (§11.6, ADR-0783's headroom makes that rarer, not impossible). The
+  # commands below are about the answer, not about the reference, so they name the event by the
+  # identity the answer itself reports.
+  FAILURE_ID=$(sed -e 's/.*"explained_event":"//' -e 's/".*//' /tmp/t8k-why.json)
+  [ -n "$FAILURE_ID" ] && FAILURE="@$FAILURE_ID"
 
   echo '== §16.6, §55.3: what came first is not moved into `known cause` =='
   prove t8k4 "the explanation opens no \`known cause\` section (§16.6)" \
@@ -71,6 +78,7 @@ run: |
   # on the change reports the very id the ledger holds for it.
   CHANGE_ID=$(ono -c "why event $CHANGE | to json" 2>/dev/null | sed -e 's/.*"explained_event":"//' -e 's/".*//')
   echo "preceding event id: ${CHANGE_ID:-<none>}"
+  [ -n "$CHANGE_ID" ] && CHANGE="@$CHANGE_ID"
   prove t8k7 "the preceding event has an identity the answer could have named (§3.3)" \
     'test -n "'"$CHANGE_ID"'"'
   sed -e 's/.*"cause":/"cause":/' -e 's/"correlations":.*//' /tmp/t8k-why.json > /tmp/t8k-causal.json
