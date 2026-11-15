@@ -192,6 +192,14 @@ if runs tests; then
     cargo build --locked --workspace --bins
   fi
 
+  # Built first, and the build's writes on the disk before the first test runs (ADR-1033). A
+  # build writes gigabytes, and the kernel flushes them behind it: the tests that started while
+  # it did found their own writes and `fsync`s throttled behind the flush, and missed liveness
+  # watchdogs they meet in a dozen seconds on a quiet disk (`acquisition.rs`,
+  # `authorized_clients.rs`; #311's qualification). Nothing is skipped — the flush happens either
+  # way, here before the tests rather than underneath them.
+  cargo test "${selection[@]}" --all-features --no-run
+  sync
   cargo test "${selection[@]}" --all-features "${test_filter[@]}" 2>&1 | tee "$TEST_LOG"
 
   # §38.3: "A test that becomes skipped when it was expected to run MUST fail the CI gate or an
