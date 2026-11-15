@@ -396,13 +396,15 @@ pub fn follow_cwd(session: &mut Session, destination: &Path) {
 /// Whether the current place belongs to the filesystem/storage navigation family (§30.3).
 ///
 /// Read without awaiting: `cd` is a shell builtin and runs outside the runtime the spatial
-/// commands hold the state under. A state some other task holds is not a state that says `yes` —
-/// the working directory still moves, and the place stays where it was.
+/// commands hold the state under. It reads what the last holder of the state published, so a
+/// `cd` that meets a read behind the prompt (ADR-0984) still moves the place (issue #311,
+/// ADR-1032).
 fn place_is_storage() -> bool {
-    let state = crate::spatial::session::session_state();
-    let Ok(state) = state.try_lock() else {
-        return false;
-    };
+    crate::spatial::session::standing().in_storage
+}
+
+/// Whether the place `state` stands in belongs to the storage navigation family (§30.3).
+pub(crate) fn is_storage_place(state: &crate::spatial::SpatialSessionState) -> bool {
     let here = state.current_place().clone();
     if let Some(space) = ono_spatial_query::resolve::space_of(&here) {
         return ono_spatial_core::path_to_space(space.id)
@@ -552,4 +554,33 @@ pub(crate) async fn observe_children(
         index.record_withheld(place, "children", state_word, &detail);
     }
     state.remember(key, observation);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::place_is_storage;
+    use crate::spatial::session::tests::{TURN, stand_in_space};
+
+    #[tokio::test]
+    async fn should_know_the_place_is_in_storage_while_a_background_read_holds_the_session() {
+        // §30.3: with `spatial.follow_cwd = "storage-only"`, `cd` moves the place while the place
+        // is inside the storage family. The question is asked from the `cd` builtin while the
+        // interactive loop's read behind the prompt (ADR-0984) may be holding the state; a `cd`
+        // that met it left the place behind the working directory for good.
+        let _turn = TURN.lock().await;
+        stand_in_space("storage").await;
+
+        let background = crate::spatial::spatial_session().await;
+        assert!(
+            crate::spatial::session::is_held(),
+            "the background read holds the state while `cd` asks"
+        );
+        let storage = place_is_storage();
+        drop(background);
+
+        assert!(
+            storage,
+            "§30.3: the session stands in `storage`, so `cd` must move the place with it"
+        );
+    }
 }

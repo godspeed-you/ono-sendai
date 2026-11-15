@@ -55,7 +55,7 @@ pub fn places_here(prefix: &str) -> Vec<Offer> {
         // would promise a `enter compute` that refuses.
         return Vec::new();
     }
-    let Ok(state) = crate::spatial::session::session_state().try_lock() else {
+    let Some(state) = crate::spatial::session::try_spatial_session() else {
         return Vec::new();
     };
     let here = state.current_place().clone();
@@ -116,7 +116,7 @@ pub fn relations_here() -> Vec<Offer> {
     if !crate::spatial::session::configured_flag_or("spatial.enabled", true) {
         return Vec::new();
     }
-    let Ok(state) = crate::spatial::session::session_state().try_lock() else {
+    let Some(state) = crate::spatial::session::try_spatial_session() else {
         return Vec::new();
     };
     let here = state.current_place().clone();

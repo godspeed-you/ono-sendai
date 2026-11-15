@@ -854,18 +854,243 @@ impl SpatialSessionState {
 /// shell. The lock is asynchronous because the commands that hold it reach providers while they
 /// do, and a blocking guard held across an `await` would be a deadlock waiting to happen.
 ///
+/// Every holder borrows it through [`spatial_session`], so what a reader outside the lock may
+/// know — [`standing`] — is published by whoever held it last. Locking it directly is for
+/// nobody but this module.
+///
 /// [`Invocation`]: ono_command::Invocation
-pub fn session_state() -> &'static Mutex<SpatialSessionState> {
+fn session_state() -> &'static Mutex<SpatialSessionState> {
     static STATE: std::sync::OnceLock<Arc<Mutex<SpatialSessionState>>> = std::sync::OnceLock::new();
     STATE.get_or_init(|| {
-        Arc::new(Mutex::new(SpatialSessionState::new(
-            crate::spatial::local_scope(),
-            Timestamp::now(),
-        )))
+        let state = SpatialSessionState::new(crate::spatial::local_scope(), Timestamp::now());
+        publish(&state);
+        Arc::new(Mutex::new(state))
     })
 }
 
 /// Borrows this process's spatial state.
-pub async fn spatial_session() -> MutexGuard<'static, SpatialSessionState> {
-    session_state().lock().await
+///
+/// The borrow publishes where the session stands when it ends (see [`standing`]), so every
+/// movement a command makes is visible to the prompt by the time the command has returned.
+pub async fn spatial_session() -> SpatialSession {
+    SpatialSession {
+        guard: session_state().lock().await,
+    }
+}
+
+/// Borrows this process's spatial state if nobody holds it, without waiting.
+///
+/// For completion, which runs inside the line editor and may not wait for a holder that is
+/// reading a provider (§34's 50 ms for Tab). A Tab that finds the state held offers nothing that
+/// once; nothing it shows is wrong, and the next Tab asks again (ADR-1032).
+#[must_use]
+pub fn try_spatial_session() -> Option<SpatialSession> {
+    session_state()
+        .try_lock()
+        .ok()
+        .map(|guard| SpatialSession { guard })
+}
+
+/// A borrow of the spatial state, as [`spatial_session`] hands it out.
+///
+/// It is the state itself to whoever holds it. What it adds is the one thing a plain guard
+/// cannot do: on release, while the lock is still held, it publishes the [`Standing`] the
+/// state now has. Publications are therefore made in the order the holders held the state, and
+/// the last one is always the state as the last holder left it.
+pub struct SpatialSession {
+    guard: MutexGuard<'static, SpatialSessionState>,
+}
+
+impl std::ops::Deref for SpatialSession {
+    type Target = SpatialSessionState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+
+impl std::ops::DerefMut for SpatialSession {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
+    }
+}
+
+impl Drop for SpatialSession {
+    fn drop(&mut self) {
+        publish(&self.guard);
+    }
+}
+
+/// Where the session stands, as a reader that must not wait for the spatial state sees it.
+///
+/// Two readers run outside the runtime and may not wait: the line editor drawing a prompt, which
+/// names the host and the place (v0.4 §19.2, §21.1), and the `cd` builtin asking whether the place follows the working directory
+/// (§30.3). Since ADR-0984 and ADR-0982 the state is held behind the prompt as a matter of
+/// course — the collection the session arrived in is read on the runtime after every command,
+/// and a slow horizon provider's answer is registered whenever it arrives — so "the lock is free
+/// between commands" stopped being true. A reader that degraded whenever it found the state held
+/// painted the root's prompt over a session standing in `compute`, and left the place behind a
+/// `cd` (issue #311). This is what they read instead (ADR-1032).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Standing {
+    /// The place as the prompt names it: `local`, `local/compute`, `local/process/nginx`
+    /// (§21.2).
+    pub path: String,
+    /// Whether the place is inside the filesystem/storage navigation family (§30.3).
+    pub in_storage: bool,
+    /// The linked host the session stands on, as the prompt names it; `None` on the local one
+    /// (§19.2).
+    pub host: Option<String>,
+}
+
+impl Standing {
+    fn of(state: &SpatialSessionState) -> Self {
+        Self {
+            path: ono_spatial_query::resolve::concise_path(state.index(), state.current_place()),
+            in_storage: crate::spatial::storage::is_storage_place(state),
+            host: state
+                .host()
+                .map(|host| host.scope.host_scope().id().to_owned()),
+        }
+    }
+}
+
+/// The last published [`Standing`]; `None` only before the state exists.
+static PUBLISHED: std::sync::RwLock<Option<Arc<Standing>>> = std::sync::RwLock::new(None);
+
+/// Publishes what `state` says about where the session stands, unless it says it already.
+fn publish(state: &SpatialSessionState) {
+    let standing = Standing::of(state);
+    let current = PUBLISHED
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    if current.as_deref() != Some(&standing) {
+        *PUBLISHED
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::new(standing));
+    }
+}
+
+/// Where the session stands, as the last holder of the spatial state left it.
+///
+/// Never waits and never degrades: a holder that is still working has not moved the session
+/// yet, so what it will publish is not yet true. A process that never borrowed the state stands
+/// where a fresh one does, at the root (§46.1).
+#[must_use]
+pub fn standing() -> Arc<Standing> {
+    let _ = session_state();
+    PUBLISHED
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .unwrap_or_else(|| unreachable!("creating the state publishes its standing"))
+}
+
+/// Whether the process's spatial state is held right now — for a test that has to prove a
+/// reader does not depend on it being free.
+#[cfg(test)]
+pub(crate) fn is_held() -> bool {
+    session_state().try_lock().is_err()
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+    use ono_spatial_core::{Movement, NavigationStep};
+
+    /// The tests of this binary that move the process's one spatial state take turns at it.
+    ///
+    /// Every unit test that moves the place or the host, or reads either back — through the
+    /// prompt, `cd` or the state itself — takes this first; the ones here leave the place where
+    /// they moved it, so a test that does not take it would race them.
+    pub(crate) static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    /// Moves the session into the canonical space `id`, as `enter` does.
+    pub(crate) async fn stand_in_space(id: &str) {
+        let mut session = spatial_session().await;
+        let here = session.current_place().clone();
+        let there = space::space(id).expect("a canonical space").spatial_id();
+        let now = Timestamp::now();
+        session.trail_mut().record(NavigationStep::new(
+            now,
+            here,
+            there.clone(),
+            Movement::Enter,
+        ));
+        session.arrive_at(&there, now);
+    }
+
+    #[tokio::test]
+    async fn should_name_the_current_place_in_the_prompt_while_a_background_read_holds_the_session()
+    {
+        // v0.4 §21.1: the prompt names the current place. Since ADR-0984 the interactive loop
+        // reads the collection the session stands in behind the prompt, on the runtime, and the
+        // read holds this state while the line editor draws the next prompt; ADR-0982's late
+        // horizon answers do the same. A prompt that could only name the place while nobody else
+        // held the state painted `local://~/work` instead of `local/compute://~/work` whenever
+        // the two met — the place had not moved, the prompt said it had (issue #311).
+        let _turn = TURN.lock().await;
+        stand_in_space("compute").await;
+
+        let background = spatial_session().await;
+        assert!(
+            is_held(),
+            "the background read holds the state while the prompt is drawn"
+        );
+        let segment = crate::spatial::place_segment();
+        drop(background);
+
+        assert_eq!(
+            segment.as_deref(),
+            Some("local/compute"),
+            "§21.1: the prompt names where the session stands whoever else is reading the state"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_name_the_host_and_the_place_of_one_moment_in_the_prompt_while_a_holder_crosses_a_link()
+     {
+        // §19.2, §21.1: the prompt's host and place are one fact — where the next command runs.
+        // A command that crosses a link moves both while it holds the state; until it lets the
+        // state go the session has not arrived, so the prompt drawn meanwhile names neither the
+        // new host beside the old place nor anything else of the move.
+        let _turn = TURN.lock().await;
+        let scope = SpatialScope::remote_host(
+            "peer-311",
+            ono_spatial_core::BootIdentity::unknown_boot("peer-311"),
+        );
+        let now = Timestamp::now();
+
+        let mut crossing = spatial_session().await;
+        crossing.stand_in(
+            Some(RemoteHost {
+                link: "peer-311".to_owned(),
+                scope,
+            }),
+            now,
+        );
+        let during = crate::spatial::host_segment();
+        drop(crossing);
+        let after = crate::spatial::host_segment();
+
+        let mut back = spatial_session().await;
+        back.stand_in(None, Timestamp::now());
+        drop(back);
+
+        assert_eq!(
+            during, None,
+            "§19.2: the session has not crossed while the command that crosses still holds it"
+        );
+        assert_eq!(
+            after.as_deref(),
+            Some("peer-311"),
+            "§19.2: once the command has let the state go, the prompt names the linked host"
+        );
+    }
 }

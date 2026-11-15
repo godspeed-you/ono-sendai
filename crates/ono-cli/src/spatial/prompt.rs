@@ -39,14 +39,22 @@ pub fn at_terminal() -> bool {
 
 /// The place segment of the prompt: `local`, `local/compute`, `local/process/nginx` (§21.1, §21.2).
 ///
-/// `None` when the spatial state cannot be read — while a spatial command holds it, which is not
-/// a moment at which a prompt is drawn — so the prompt degrades to what v0.2 always showed
-/// rather than blocking on a lock.
+/// Read from what the last holder of the spatial state published rather than from the state
+/// itself: the state is held behind the prompt by the reads ADR-0984 and ADR-0982 start, and a
+/// prompt that waited for it would wait on a provider, while one that gave up named the root
+/// over a session standing elsewhere (issue #311, ADR-1032).
 #[must_use]
 pub fn place_segment() -> Option<String> {
-    let state = crate::spatial::session::session_state().try_lock().ok()?;
-    Some(ono_spatial_query::resolve::concise_path(
-        state.index(),
-        state.current_place(),
-    ))
+    Some(crate::spatial::session::standing().path.clone())
+}
+
+/// The host segment of the prompt where the session stands on a linked host (§19.2, §21.1);
+/// `None` on the local one.
+///
+/// Read from the same publication as [`place_segment`], so the two always describe one moment:
+/// a command crossing a link changes the geography the moment it moves, and a prompt drawn
+/// before it lets the state go named the new host beside the old place (ADR-1032).
+#[must_use]
+pub fn host_segment() -> Option<String> {
+    crate::spatial::session::standing().host.clone()
 }

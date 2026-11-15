@@ -42,7 +42,7 @@ pub use links::LinkFacts;
 pub use map::{Map, MapLinks};
 pub use movement::{Back, Jump, Trail, Up};
 pub use pins::{PinPlace, PinStore, UnpinPlace, pin_path};
-pub use prompt::{at_terminal, mark_interactive, place_segment};
+pub use prompt::{at_terminal, host_segment, mark_interactive, place_segment};
 pub use session::{RemoteHost, SpatialSessionState, spatial_session};
 pub use view::set_horizon_patience;
 

@@ -744,9 +744,7 @@ fn prompt_of(session: &mut Session) -> ono_editor::Prompt {
             .then(|| frame.frame.identity().to_string())
     });
     #[cfg(feature = "spatial")]
-    let linked = linked.or_else(|| {
-        ono_spatial_core::space::standing_in().map(|scope| scope.host_scope().id().to_owned())
-    });
+    let linked = linked.or_else(crate::spatial::host_segment);
     let location = linked.unwrap_or_else(|| "local".to_owned());
     let mut prompt = ono_editor::Prompt::plain("").segment(location, Token::PromptLink);
 
