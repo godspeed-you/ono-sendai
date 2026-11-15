@@ -140,11 +140,6 @@ showcase: a live view of the machine should feel like instrumentation, not like 
 
 ## In progress
 
-- [git-0a | 2026-11-15 09:20 CET] #311, the prompt that drops the current place while a background
-  read holds the spatial state (the PTY flake of v0.6.4/v0.6.5), and ten consecutive
-  `release-check` runs — files: `crates/ono-cli/src/spatial/{session,prompt,storage}.rs`,
-  `docs/adr/`, `docs/runs/`, this board.
-
 ## What is left, and why
 
 **`v0.6.6` — Remote and Change Stabilization — is the next tranche**, then v0.7 (above); `v0.6.5`
@@ -161,6 +156,17 @@ good by ADR-0114 and ADR-0968 (#221). `v0.6.2` — the test suite, the harness, 
 release tooling and binary size — `v0.6.3` — command contracts, errors and diagnostics, the shell
 language, pipelines and completion — and `v0.6.4` — providers, adapters, process execution,
 spatial navigation and the map — are implemented and released.
+
+**PTY reliability hardening (2026-11-15), on `implementation` after v0.6.5, not released.**
+**#311** is fixed: the prompt dropped the current place, and `cd` left the place behind, whenever
+the read behind the prompt (ADR-0984) or a late horizon answer (ADR-0982) held the spatial state.
+That was the PTY flake that kept `scripts/release-check.sh` from completing for v0.6.5. Every
+holder now publishes where the session stands when it lets the state go, and the prompt and `cd`
+read that publication (ADR-1032). Two more defects blocked the gate on the way and are fixed: a fuzzy
+match ended `enter`'s sweep before the service manager was asked (`7d8c1b0a`), and the bulk-restart
+fixture of `change_gates.rs` planned transient units (`71b1f2fb`). The run record,
+`docs/runs/pty-reliability-hardening-2026-11-15.md`, holds the reproduction, the evidence and the
+release-check qualification.
 
 **The performance baseline was measured again for v0.6.4** (ADR-0989): every §33.2 target holds,
 and every moved row says why. Two rows are worth a look at the next re-measurement:
@@ -182,6 +188,12 @@ only what finished since the last release and has no issue of its own.
   MIGRATION (with a §14 draft for the next release), the temporal guide, the fuzz and demo READMEs,
   five ADR status lines, the contract sources of the generated reference, and the generator itself
   (`docs/reference/language.md`, ADR-0960) — branch `implementation-docs-063`.
+- [x] `enter <name>` finds the place a name means even when a cheaper target holds something that
+  only resembles it — systemd's `/run/credentials/<unit>.service` mount beside the unit — commit
+  `7d8c1b0a`.
+- [x] The PTY suites wait for the prompt they read rather than reading what arrived within a fixed
+  time (`8bb2f748`), and `change_gates.rs` plans units with a unit file, which outlast the test
+  (`71b1f2fb`).
 
 ---
 
@@ -203,6 +215,25 @@ gh issue list --limit 100        # the backlog
 gh issue view <NN>               # the evidence for one problem
 gh issue list --label class-c    # the large ones, a tranche each
 ```
+
+**Found during the PTY reliability hardening (2026-11-15).** Outside #311; each checked against the
+tracker (no existing issue):
+
+- The spatial and the temporal state are taken in opposite orders. `timeline --view`
+  (`crates/ono-cli/src/temporal/views.rs`, around lines 116 and 139) holds the temporal state and then
+  takes the spatial one. The map (`spatial/map.rs:111`, then `spatial/interactive.rs:719`) holds the
+  spatial state and then takes the temporal one. A background job running one beside a foreground
+  command running the other can deadlock both. Found by the #311 review; not reproduced. Severity
+  medium (a hang, needs a job). Exit: one order everywhere, or the inner borrow taken after the outer
+  one is released, with a test that runs both at once.
+- Once, in the gate of `7d90f92f` (2026-11-15 09:51, load 6.5), six of the 22 `acquisition.rs` tests
+  hit their 30 s watchdog on `install plugin echo`. The binary passed alone in 12 s and in the next
+  two gates; not reproduced since. Severity low until it recurs. Exit: a recurrence with a stack of
+  the hung `ono`, or none over the next releases' qualification.
+- `temporal_view.rs`'s terminal does not answer the cursor-position report the shell asks for
+  before the prompt after a command (ADR-0861), so the first such prompt of every test waits out
+  the two-second bound. `spatial_interactive.rs` answers it. Severity low (two seconds per test).
+  Exit: the temporal harness answers it as the spatial one does.
 
 **Found during the v0.6.5 run (2026-11-10 …).** Outside the milestone's issues; each checked
 against the tracker (no existing issue):

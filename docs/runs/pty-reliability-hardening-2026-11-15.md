@@ -1,0 +1,206 @@
+# Run report — PTY reliability hardening, 2026-11-15
+
+An autonomous run the owner authorised on 2026-11-15. It had two goals: find and remove the
+intermittent PTY failure that kept `scripts/release-check.sh` from completing for v0.6.5, and then
+qualify `release-check` ten consecutive times on one committed SHA. The work runs from `abc4e314`
+(v0.6.5 plus its post-tag documents) on `implementation`. Nothing was merged into `main`, nothing
+was tagged and nothing was released. The tracking issue is #311.
+
+Figures come from the run's own logs in `~/.cache/ono-pty/` (outside the repository), the gate and
+CI logs, and commit timestamps. Anything not measured is marked **not measured**. Every run in a
+repetition table is one execution of a test binary, timed with a monotonic clock, with the host
+load recorded at its start (`~/.cache/ono-pty/bin/repeat.sh`).
+
+## Summary
+
+| | |
+|---|---|
+| Start | 2026-11-15 08:59 CET |
+| Pause | 10:58–13:15 CET: the owner needed the machine; nothing ran |
+| Starting point | `abc4e314` on `implementation`, clean, equal to `origin/implementation`; `main` at `4bfbd890` (v0.6.5) |
+| Root cause | the prompt read the spatial session state with `try_lock()` and dropped the place when another task held it; since v0.6.4 the read behind the prompt (ADR-0984) holds it at exactly that moment (#311) |
+| Fixes | `c4ed3a3d` (#311, ADR-1032); `7d8c1b0a` (a fuzzy match ended `enter`'s sweep); `8bb2f748` (PTY harness waits); `71b1f2fb` (`change_gates.rs` fixture) |
+| Tests added | 5 unit tests; the PTY suites unchanged in what they assert |
+| ADRs | ADR-1032 |
+| Subagents | one, an independent read-only review on Opus |
+| Disk budget | 300 GB for this run (owner, 2026-11-15); peak below 100 GB used on `/` (*Resources*) |
+
+## The failure
+
+The v0.6.5 run record (`docs/runs/v0.6.5-2026-11-10.md`, *Qualification*) records six consecutive
+`release-check` runs that stopped in `spatial_interactive` or `temporal_view`. It also records 4
+failures in 20 runs of the `temporal_view` test at `v0.6.4`, 1 in 8 at the v0.6.5 release commit,
+and 1 in 8 suite runs of `spatial_interactive` at `v0.6.4`. The board described the symptom as
+"`enter compute` leaves the prompt at `~/work`". It had already ruled out load, process churn,
+leftover processes and units, and a slower `enter`.
+
+### Reproduction at `abc4e314` (load 1–2 on 8 cores)
+
+| Selection | Runs | Failures |
+|---|---|---|
+| `temporal_view::should_enter_the_historical_place_and_keep_the_coordinate_when_enter_is_pressed_on_a_past_node` alone (`--exact`) | 20 | 0 |
+| the whole `temporal_view` binary | 8 | 3 |
+| the whole `spatial_interactive` binary | 8 | 0 |
+
+Every failure had the same transcript. The prompt after the map closed was
+`local://~/work git:implementation @09:06:46!  [PAST?] >`. The place segment was missing
+entirely, so the prompt looked like the root place's. The board's "names the place before
+`Enter`" was not what the transcripts show.
+
+### Diagnosis
+
+1. **A marker on the degraded path.** A diagnostic build (never committed;
+   `~/.cache/ono-pty/diag-*.patch`) painted `local/DIAG-LOCKED` where `place_segment()`'s
+   `try_lock()` failed. The next failing run read `local/DIAG-LOCKED://~/work …`. The prompt was
+   drawn while another task held the spatial state. The place itself had never moved.
+2. **Which holder.** A second diagnostic build numbered the background holders. 2 of 12 suite runs
+   failed, both with holder 1: the first critical section of `spatial::view::discover`, the read
+   behind the prompt that `repl.rs` spawns after **every** interactive command (ADR-0984). That
+   section decides on a runtime worker whether the new place needs reading, at the moment the main
+   thread draws the next prompt.
+3. **Widening the window makes it deterministic.** With that critical section held 200 ms, the
+   five named `spatial_interactive` tests and two more failed on every run (7 and 6 of 20 in two
+   runs), and `temporal_view` failed 2 of 8 twice. Every failure carried `DIAG-LOCKED-1://~/work`.
+4. **When it began.** Both background holders arrived with v0.6.4 (ADR-0982, ADR-0984;
+   `7ca20366`, 2026-11-10), which is when the flake was first seen.
+
+Why it was intermittent: the window is an in-memory critical section on another thread, a few
+microseconds to a millisecond long. A whole PTY binary running its tests in parallel stretches it
+enough to be hit. A single test rarely is.
+
+Why nothing caught it: the prompt degraded silently, by design, to the v0.2 prompt. That is the
+same text the root place shows, so no assertion inside the shell could tell. Only the PTY tests
+that read the place off a prompt saw it, intermittently, and the board took it for load noise.
+
+**The same mechanism elsewhere.** `place_is_storage()` gave `cd` the same degraded answer under
+`spatial.follow_cwd = "storage-only"`, and a `cd` that met the read left the *place itself*
+behind the working directory. The review found the prompt's `[PAST]` marker behind the same kind
+of `try_lock` on the temporal state. It also found that the prompt's host came from a geography a
+holder changes the moment it moves, which can pair a new host with the old place.
+
+**Product, harness, environment.** The defect was in the product. The harness had a weakness of
+its own: `spatial_interactive`'s `prompt()` took whatever had arrived 400 ms after a command's
+output as the prompt. With the widened window that failed once in five runs even though the
+prompt did arrive. No environmental cause was involved in #311.
+
+## The correction
+
+| Commit | Kind | What |
+|---|---|---|
+| `b2ca74ad` | docs | the claim; the board's PTY entry moved into #311 |
+| `c4ed3a3d` | fix | `spatial_session()` hands out a guard that publishes a `Standing` (place path, storage flag, linked host) on release, under the lock; the prompt's place and host segments and `cd` read it; completion keeps a non-waiting borrow of the same guard; the `[PAST]` marker reads the coordinate that is already published (ADR-1032, closes #311) |
+| `7d8c1b0a` | fix | a fuzzy match no longer ends `enter`'s sweep (below) |
+| `8bb2f748` | test | the PTY suites wait for the prompt they read, within the existing budget; no assertion changed |
+| `7d90f92f` | chore | metrics |
+| `71b1f2fb` | test | `change_gates.rs` plans units with a unit file (below) |
+
+Regression tests. Each of these failed before its fix, and each holds the contended state itself
+while it reads:
+
+- `crates/ono-cli/src/spatial/session.rs::tests::should_name_the_current_place_in_the_prompt_while_a_background_read_holds_the_session`
+  (left: `None`, right: `Some("local/compute")` before the fix)
+- `…::should_name_the_host_and_the_place_of_one_moment_in_the_prompt_while_a_holder_crosses_a_link`
+- `crates/ono-cli/src/spatial/storage.rs::tests::should_know_the_place_is_in_storage_while_a_background_read_holds_the_session`
+- `crates/ono-cli/src/temporal/prompt.rs::tests::should_keep_the_past_marker_in_the_prompt_while_another_task_holds_the_temporal_state`
+- `crates/ono-cli/src/spatial/commands.rs::tests::should_enter_a_service_by_its_name_when_a_mount_is_named_like_it`
+
+A control run of the first two without the concurrent holder passed on the old code. That
+confirms contention alone caused the failure.
+
+Behavioural consequences (ADR-1032): the prompt and `cd` never wait and never degrade. A prompt
+drawn while a job's command still holds the state shows where the session stands until that
+command lets it go. `cd` into storage waits for a job that holds the state, as every spatial
+command does. Completion offers nothing on a Tab that meets a background registration, and the
+next Tab asks again. No production path is special-cased for tests.
+
+### Two more defects on the way
+
+- **A fuzzy match ended the sweep (`7d8c1b0a`).** The first full `ono-cli` run after the fix failed
+  `spatial_topology.rs::should_say_a_name_is_no_place_without_reading_every_service`. It failed on
+  every run (10 of 10) and also at `abc4e314` (3 of 3), so it predates this run, and it would have
+  kept the gate red. systemd 256 mounts each unit's credentials at
+  `/run/credentials/<unit>.service`, and this host has two of them (journald, resolved).
+  `resolved_place` sweeps the cheapest targets first and stopped at the first resolution that was
+  not `NotFound`, so the mount's *fuzzy* match ended the search before the service manager was
+  asked. §27.3 says a fuzzy match is never taken, so it is no answer either. The sweep now goes on
+  while the resolution is `NotFound` or only fuzzy.
+- **A fixture that read the live machine twice (`71b1f2fb`).** CI run 43695926135 on `7d90f92f` was
+  red in four `change_gates.rs` tests. The fixture planned the first fifty units the runner listed,
+  one of them the transient `collect-logs.scope`, which ended before the plan froze it. The fixture
+  now plans fifty units with a unit file. Every assertion is unchanged.
+
+## Review
+
+One independent read-only review on Opus. It read the diff and the code without building or
+running anything, after the fix and before the harness and selector commits (149,501 tokens, 38
+tool uses, 4 min 50 s). It found no critical or major defect.
+
+| Finding | Severity | Resolution |
+|---|---|---|
+| `cd` into storage now waits for a holder (before, it answered "not storage") | minor | recorded in ADR-1032's consequences: the same as every spatial command, and nothing holds the state long behind an ordinary prompt |
+| the prompt's host came from a geography a holder changes immediately, the place from the publication | minor | fixed in `c4ed3a3d`: `Standing` carries the host; test `…holder_crosses_a_link` |
+| the `[PAST]` marker had the same `try_lock` | minor | fixed in `c4ed3a3d`; test `…keep_the_past_marker…` |
+| `TURN` serialises only the tests that know about it | minor (test) | documented on `TURN` |
+| fixed `settle` after `enter compute` in `temporal_view` | minor (test) | `8bb2f748`: waits for the prompt naming `local/compute`; the 3 s remain because the ledger must reach `-3s` |
+| `screen()`'s "only for failure messages" was no longer true | nit | doc corrected |
+| publishing while a panic unwinds | preference | not adopted: nothing in the publication panics, and skipping it would leave a move unpublished (ADR-1032) |
+| the spatial and the temporal state taken in opposite orders | out of scope | `docs/STATE.md` → *Found* |
+| publication order, init, bypass, deadlock, terminal effects, cost | checked | sound |
+
+## Reliability
+
+| What | Runs | Failures |
+|---|---|---|
+| **Historical** — `temporal_view` test at `v0.6.4` | 20 | 4 |
+| **Historical** — `temporal_view` test at the v0.6.5 release commit | 8 | 1 |
+| **Historical** — `spatial_interactive` suite at `v0.6.4` | 8 | 1 |
+| **Historical** — full `release-check` on 2026-11-11 | 6 | 6 |
+| **Before the fix** (`abc4e314`) — `temporal_view` test alone | 20 | 0 |
+| **Before the fix** — `temporal_view` suite | 8 | 3 |
+| **Before the fix** — `spatial_interactive` suite | 8 | 0 |
+| **Before the fix, window widened to 200 ms** — `spatial_interactive` suite | 2 | 2 (7 and 6 tests each) |
+| **Before the fix, window widened** — `temporal_view` suite | 2 | 2 |
+| **Fix in the tree, window widened** (working tree over `b2ca74ad`) — `spatial_interactive` suite | 5 | 1 (the harness's 400 ms window, then fixed) |
+| **Fix in the tree, window widened** — `temporal_view` suite | 5 | 0 |
+| **Fix and harness, window widened** — `spatial_interactive` suite | 10 | 0 |
+| **Fix and harness, window widened** — `temporal_view` suite | 10 | 0 |
+| **After, `71b1f2fb`** — `temporal_view` test alone | 100 | 0 |
+| **After, `71b1f2fb`** — `temporal_view` suite | 100 | 0 |
+| **After, `71b1f2fb`** — `spatial_interactive` suite | 100 | 0 |
+| **After, `71b1f2fb`, eight busy loops (load 8–13)** — `temporal_view` suite | 30 | 0 |
+| **After, `71b1f2fb`, eight busy loops** — `spatial_interactive` suite | 30 | 0 |
+
+The suite runs execute every test of the binary in parallel, the conditions under which the
+failure was seen. The full `ono-cli` and workspace runs are the gates below and the qualification.
+
+Gates on the way: the gate of `7d90f92f` stopped once in `acquisition.rs`. Six tests hit their
+30 s watchdog at load 6.5, and the binary passed alone in 12 s and in both later gates (*Found*).
+A second gate was stopped because a test build of mine ran beside it. The gate of `71b1f2fb` is
+**green** (10:00–10:11). CI on `71b1f2fb` (run 43697064271) is **green** in all 19 jobs.
+
+## Qualification
+
+`scripts/release-check.sh` runs ten consecutive times on the commit that adds this record, a
+clean tree with nothing changed between runs, one at a time, nothing else heavy beside it. The
+runs and their results are recorded in the commit that follows it, which changes documentation
+only. The two SHAs are kept apart there.
+
+## Resources
+
+| | |
+|---|---|
+| At the start | `/` 393 GB, 45 GB used, 331 GB free; no `target/` in the checkout; Docker empty (0 images, 0 build cache); `/tmp` 648 MB used of 31 GB |
+| During the fix | `target/` 12–17 GB for `ono-cli` alone, 45 GB after the first workspace gate |
+| Worktrees | none: the run worked in the main checkout (the limit was two) |
+
+The temporary 300 GB budget applied to this run only.
+
+## Remaining uncertainty
+
+The mechanism is proven three ways: the marker on the degraded path, the holder's identity, and a
+widened window that turns the failure deterministic before the fix and harmless after it. The
+regression tests fail on the old code for exactly that reason. Repetition cannot prove a race
+absent. What it shows here is 360 post-fix runs without a failure, under the conditions that
+failed 3 in 8 before. The fix also removes the race in kind: the prompt no longer touches the
+lock. The `acquisition.rs` watchdog seen once and the lock-order inversion are unexplained or
+unfixed, and both are on the board.
