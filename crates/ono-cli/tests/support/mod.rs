@@ -941,14 +941,19 @@ impl Streaming {
 
     /// The same shell, started with `ignored` signals already ignored — as `nohup`, or a
     /// non-job-control shell's background list, starts a command (POSIX: signals ignored on entry).
+    ///
+    /// Every other termination signal starts at its default, whatever the test runner was started
+    /// with (`ono_testkit::DEFAULT_SIGNALS`).
     pub fn start_ignoring(home: &Path, script: &str, ignored: &[&str]) -> Self {
         let mut command = if ignored.is_empty() {
-            let mut command = std::process::Command::new(ono_testkit::ono_binary());
+            let mut command = ono_testkit::ono_command();
             command.args(["-c", script]);
             command
         } else {
-            let mut command = std::process::Command::new("sh");
+            let mut command = std::process::Command::new("env");
             command.args([
+                ono_testkit::DEFAULT_SIGNALS,
+                "sh",
                 "-c",
                 &format!("trap '' {}; exec \"$0\" -c \"$1\"", ignored.join(" ")),
                 &ono_testkit::ono_binary().display().to_string(),

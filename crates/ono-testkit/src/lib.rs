@@ -69,6 +69,29 @@ pub fn ono_within(script: &str, budget: Duration) -> Run {
     Shell::new().args(["-c", script]).timeout(budget).run()
 }
 
+/// The `env` argument that starts a program with every termination signal at its default.
+///
+/// A shell keeps a signal ignored that was ignored on entry (POSIX; ono's ADR-0959, review B2).
+/// A test runner started under `nohup` ignores `SIGHUP`, and one started as a background command
+/// of a script ignores `SIGINT`; a test that sends its shell one of those, and that started the
+/// shell with the runner's dispositions, waited for a shell doing exactly what it should (#311's
+/// qualification). `env --default-signal` resets them before `exec`, with no code of ours in
+/// between.
+pub const DEFAULT_SIGNALS: &str = "--default-signal=HUP,INT,QUIT,TERM";
+
+/// The command that starts `ono` with every termination signal at its default disposition,
+/// whatever the test runner was started with — for a test that signals the shell it starts.
+///
+/// # Panics
+///
+/// As [`ono_binary`].
+#[must_use]
+pub fn ono_command() -> std::process::Command {
+    let mut command = std::process::Command::new("env");
+    command.arg(DEFAULT_SIGNALS).arg(ono_binary());
+    command
+}
+
 /// Absolute path of the `ono` binary belonging to the current build profile.
 ///
 /// # Panics

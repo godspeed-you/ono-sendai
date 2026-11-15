@@ -229,7 +229,7 @@ fn should_release_the_query_task_promptly_when_a_live_map_is_cancelled() {
     // process is required to have gone by a budget wide enough that only a shell waiting for a
     // recomputation could miss it, and — the part that matters — nothing is left behind.
     let mut child = ono_testkit::OwnedChild::new(
-        std::process::Command::new(ono_testkit::ono_binary())
+        ono_testkit::ono_command()
             .args(["-c", "map --live --json | take 3 | to json"])
             .env("NO_COLOR", "1")
             .env("HOME", std::env::temp_dir().display().to_string())

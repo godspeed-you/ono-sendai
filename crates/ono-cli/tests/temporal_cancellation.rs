@@ -122,7 +122,7 @@ fn seed(home: &Scratch) {
 /// behind (issue #162, ADR-0892).
 fn long_historical_query(home: &Scratch) -> ono_testkit::OwnedChild {
     let root = home.path().display().to_string();
-    let child = std::process::Command::new(ono_testkit::ono_binary())
+    let child = ono_testkit::ono_command()
         .args([
             "-c",
             &format!(
