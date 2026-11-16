@@ -17,13 +17,17 @@ load recorded at its start (`~/.cache/ono-pty/bin/repeat.sh`).
 |---|---|
 | Start | 2026-11-15 08:59 CET |
 | Pause | 10:58–13:15 CET: the owner needed the machine; nothing ran |
+| Interruption | 2026-11-15 19:48 – 2026-11-16 09:18: systemd-oomd ended the terminal scope during a cold build, and the host was rebooted (*Qualification*) |
+| End | 2026-11-16 15:37 CET, the tenth consecutive `release-ready` |
+| Qualified SHA | `8c916c03`: ten consecutive `release-check: the shell is release-ready`, no failure, no retry; CI green (run 43747427380) |
 | Starting point | `abc4e314` on `implementation`, clean, equal to `origin/implementation`; `main` at `4bfbd890` (v0.6.5) |
 | Root cause | the prompt read the spatial session state with `try_lock()` and dropped the place when another task held it; since v0.6.4 the read behind the prompt (ADR-0984) holds it at exactly that moment (#311) |
 | Fixes | `c4ed3a3d` (#311, ADR-1032); `7d8c1b0a` (a fuzzy match ended `enter`'s sweep); `8bb2f748` (PTY harness waits); `71b1f2fb` (`change_gates.rs` fixture); `3c238222` (signal tests at default dispositions); `576ebc24` (the gate flushes its build before testing, ADR-1033); `298cec9b` (acceptance case 249) |
 | Tests added | 5 unit tests; the PTY suites unchanged in what they assert |
 | ADRs | ADR-1032, ADR-1033 |
 | Subagents | one, an independent read-only review on Opus |
-| Disk budget | 300 GB for this run (owner, 2026-11-15); peak below 100 GB used on `/` (*Resources*) |
+| Tokens | the review: 149,501; the main session's own usage: **not measured** |
+| Disk budget | 300 GB for this run (owner, 2026-11-15); peak 118 GB above the starting point on `/` (*Resources*) |
 
 ## The failure
 
@@ -218,11 +222,11 @@ failure was seen. The full `ono-cli` and workspace runs are the gates below and 
 Gates on the way: the gate of `7d90f92f` stopped once in `acquisition.rs`. Six tests hit their
 30 s watchdog at load 6.5, and the binary passed alone in 12 s and in both later gates (*Found*).
 A second gate was stopped because a test build of mine ran beside it. The gate of `71b1f2fb` is
-**green** (10:00–10:11). CI on `71b1f2fb` (run 43697064271) is **green** in all 19 jobs.
+**green** (10:00–10:11). CI on `71b1f2fb` (run 43697064271) is **green** in all 18 jobs.
 
 ## Qualification
 
-Four attempts ended before the final one, and each streak counts from zero:
+Six attempts ended before the final one, and each streak counts from zero:
 
 | Attempt | SHA | Run | Result | Cause |
 |---|---|---|---|---|
@@ -231,15 +235,47 @@ Four attempts ended before the final one, and each streak counts from zero:
 | 3 | `d0c41e91` | 1 | stopped in the gate (`authorized_clients.rs`, one watchdog) | the build's write-back under the first tests, fixed in `576ebc24` |
 | 4 | `5a0d5a16` | 1 | **release-ready** (54 min) | — |
 | 4 | `5a0d5a16` | 2 | stopped by me during the gate | CI on `5a0d5a16` was red in case 249, fixed in `298cec9b`; the final SHA had to carry the fix |
+| 5 | `3974a5bf` | 1–8 | **release-ready** eight times (1924–2097 s) | — |
+| 5 | `3974a5bf` | 9 | not started: the driver stopped because `implementation` moved | another session committed `8c916c03` (documentation and specifications only) during run 8; a qualified SHA that is not the branch's tip would not qualify the branch |
+| 6 | `8c916c03` | 1 | lost during the cold build of a second worktree | systemd-oomd ended the whole terminal scope, the driver with it (2026-11-15 19:48); the owner rebooted the host the next morning. No test had run |
 
-`scripts/release-check.sh` then runs ten consecutive times on the commit that adds this
-paragraph. The tree is clean, nothing changes between runs, the runs go one at a time with
-nothing else heavy beside them, and a sampler records dirty pages and write-back throughout. The
-driver is started with default signal dispositions. Every run's gate recompiles four crates
-(`tokio-rustls`, `ono-remote`, `ono-cli`, `xtask`) that a later step of the previous run left with
-another fingerprint; the cause was not investigated, and ADR-1033's flush covers the writes. The
-runs and their results are recorded in the
-commit that follows, which changes documentation only. The two SHAs are kept apart there.
+Attempts 6 and 7 ran in a second worktree (`implementation-qual` at `8c916c03`) so that the main
+checkout stayed free. From attempt 7 on, every heavy job ran as its own systemd user unit with a
+memory cap (`MemoryMax=40G`, no swap) instead of inside the terminal scope, and a warm-up gate in
+that worktree (09:34–09:47, green) built it before the first counted run.
+
+**Attempt 7: `scripts/release-check.sh` ran ten consecutive times on `8c916c03`, and each run
+printed `release-check: the shell is release-ready` and exited 0.** The tree was clean and equal to
+`origin/implementation` before every run, nothing changed between runs, the runs went one at a
+time with nothing else heavy beside them, the driver ran with default signal dispositions, and a
+sampler recorded dirty pages and write-back once a second throughout (20,416 samples).
+
+| Run | Start (2026-11-16) | Duration | Exit | release-ready |
+|---|---|---|---|---|
+| 1 | 09:47:40 | 2848 s | 0 | yes |
+| 2 | 10:35:08 | 2009 s | 0 | yes |
+| 3 | 11:08:38 | 2005 s | 0 | yes |
+| 4 | 11:42:03 | 2001 s | 0 | yes |
+| 5 | 12:15:25 | 2011 s | 0 | yes |
+| 6 | 12:48:57 | 2047 s | 0 | yes |
+| 7 | 13:23:04 | 2027 s | 0 | yes |
+| 8 | 13:56:52 | 2004 s | 0 | yes |
+| 9 | 14:30:17 | 2017 s | 0 | yes |
+| 10 | 15:03:54 | 2001 s | 0 | yes |
+
+Ten runs took 20,970 s (5 h 50 min). Runs 2–10 took 2001–2047 s, 2014 s on average; run 1 was
+longer because its acceptance image and the release build were cold in the worktree. The sampler
+saw up to 7.7 GB of dirty pages and load 13 during builds, and at most seven `ono` processes in
+`D` state at once; no watchdog fired. Every run's gate recompiles four crates (`tokio-rustls`,
+`ono-remote`, `ono-cli`, `xtask`) that a later step of the previous run left with another
+fingerprint; the cause was not investigated, and ADR-1033's flush covers the writes. The logs
+(`run-1.log` … `run-10.log`, `summary.txt`, `io.samples`) are in `~/.cache/ono-pty/qual/`, and the
+earlier attempts in `~/.cache/ono-pty/qual-attempt1` … `qual-attempt6-oom`.
+
+**The qualified SHA is `8c916c03`.** This record and the board entry that cites it were committed
+after the qualification, as documentation only, so `implementation`'s tip is a later commit than
+the one qualified. That commit changes no code, test, script or contract; `scripts/gate.sh` ran
+on its tree before the commit and was green (2026-11-16, 15:40–15:53), and CI runs on it after the push.
 
 ## Resources
 
@@ -247,7 +283,8 @@ commit that follows, which changes documentation only. The two SHAs are kept apa
 |---|---|
 | At the start | `/` 393 GB, 45 GB used, 331 GB free; no `target/` in the checkout; Docker empty (0 images, 0 build cache); `/tmp` 648 MB used of 31 GB |
 | During the fix | `target/` 12–17 GB for `ono-cli` alone, 45 GB after the first workspace gate |
-| Worktrees | none: the run worked in the main checkout (the limit was two) |
+| During the qualification | `target/` 50 GB in the main checkout and 40 GB in the worktree; Docker 2.4 GB of images and 9.1 GB of build cache; lowest free space on `/` 230 GB, so at most 118 GB above the starting point |
+| Worktrees | one beside the main checkout, `ono-sendai-qual` (the limit was two), removed after the qualification |
 
 The temporary 300 GB budget applied to this run only.
 

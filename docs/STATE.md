@@ -185,9 +185,11 @@ read that publication (ADR-1032). Two more defects blocked the gate on the way a
 match ended `enter`'s sweep before the service manager was asked (`7d8c1b0a`), and the bulk-restart
 fixture of `change_gates.rs` planned transient units (`71b1f2fb`); and the tests that signal their shell
 inherited the runner's ignored signals (`3c238222`); and the gate's tests ran while the build was still
-being flushed (`576ebc24`, ADR-1033). The run record,
-`docs/runs/pty-reliability-hardening-2026-11-15.md`, holds the reproduction, the evidence and the
-release-check qualification.
+being flushed (`576ebc24`, ADR-1033); and acceptance case 249 named an event by a short ref that
+could become ambiguous (`298cec9b`). `scripts/release-check.sh` printed `the shell is release-ready`
+ten consecutive times on `8c916c03` (2026-11-16, 09:47–15:37, no failure, no retry), and CI on
+`8c916c03` is green. The run record, `docs/runs/pty-reliability-hardening-2026-11-15.md`, holds the
+reproduction, the evidence and the release-check qualification.
 
 **The performance baseline was measured again for v0.6.4** (ADR-0989): every §33.2 target holds,
 and every moved row says why. Two rows are worth a look at the next re-measurement:
