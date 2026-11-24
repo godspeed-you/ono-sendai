@@ -791,6 +791,14 @@ where
 
     let service = Arc::new(service);
     let streams: Streams = Arc::new(Mutex::new(HashMap::new()));
+    // However this loop ends — the caller hung up, the transport failed, or the session was
+    // dropped from outside (a revocation, a shutdown) — its streams end with it: every producer is
+    // cancelled, and the wire is hung up before any of them can write a closing `end` that the
+    // caller would read as a complete answer (#219 (b), ADR-1099).
+    let _ended = Ended {
+        streams: Arc::clone(&streams),
+        frames: frames.clone(),
+    };
 
     loop {
         let Some(frame) = reader.next().await? else {
@@ -985,6 +993,27 @@ where
                     detail: "an agent is asked, it is not told".to_owned(),
                 }));
             }
+        }
+    }
+}
+
+/// Ends a session's streams when its serving loop ends, however it ends.
+struct Ended {
+    streams: Streams,
+    frames: FrameSink,
+}
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        // The hang-up is queued first, so whatever a cancelled producer queues after it — the
+        // `end` its stream would close with — is never written.
+        self.frames.hangup();
+        let open: Vec<ServerStream> = with_streams(&self.streams, |open| {
+            open.drain().map(|(_, stream)| stream).collect()
+        });
+        for stream in open {
+            stream.cancel.cancel();
+            stream.credit.close();
         }
     }
 }
