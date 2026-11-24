@@ -573,6 +573,38 @@ pub fn handshake_timeout_refusal(timeout: std::time::Duration) -> ErrorValue {
     )
 }
 
+/// Refuses a link whose opening frame is not a hello this agent can read, and says so.
+///
+/// The peer is told `remote.protocol_mismatch` with this side's reading of what it sent, the
+/// decision is recorded (§14.1), and the failure is returned: from the agent's side the caller
+/// was not speaking this protocol, which is what `serve` reports.
+async fn refuse_opening<R, W>(
+    failure: ErrorValue,
+    reader: &mut FrameReader<R>,
+    writer: W,
+    limits: &Limits,
+    record: &impl Fn(AuditEvent),
+) -> Result<(), ErrorValue>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    record(
+        AuditEvent::new(AuditKind::ProtocolMismatch, "unaccepted", "denied")
+            .with_error_code(failure.code()),
+    );
+    let payload = encode_message(&Message::Reject(Reject::refusing(&failure)), limits)
+        .map_err(ErrorValue::from)?;
+    refuse_within(
+        reader,
+        writer,
+        &Frame::new(FrameKind::Reject, 0, payload),
+        limits,
+    )
+    .await;
+    Err(failure)
+}
+
 /// Answers one link with `service` until the caller disconnects.
 ///
 /// The handshake happens first (spec §21.2). A caller that is refused — it shares no protocol
@@ -620,8 +652,28 @@ where
     // cryptographic handshake and then says nothing must not hold the connection open for ever.
     // It has a channel, so it is told why it is being let go (§54.1, issue #181).
     let opening = match tokio::time::timeout(limits.handshake_timeout(), reader.next()).await {
-        Ok(opening) => {
-            opening?.ok_or_else(|| unreachable("the caller closed the link before saying hello"))?
+        Ok(Ok(Some(opening))) => opening,
+        Ok(Ok(None)) => {
+            // Gone before it said anything: there is nobody to tell, and still a decision to
+            // record (§14.1) — a handshake that never finished is not a session that ended.
+            let lost = unreachable("the caller closed the link before saying hello");
+            record(
+                AuditEvent::new(AuditKind::ClientDisconnected, "unaccepted", "ended")
+                    .with_error_code(lost.code()),
+            );
+            return Err(lost);
+        }
+        Ok(Err(failure)) if failure.code() == ErrorCode::RemoteProtocolMismatch => {
+            // Bytes that are not a frame this build reads — an unknown framing version or kind,
+            // a length over the limit: the peer is told the two ends share no protocol.
+            return refuse_opening(failure, &mut reader, writer, &limits, &record).await;
+        }
+        Ok(Err(failure)) => {
+            record(
+                AuditEvent::new(AuditKind::ClientDisconnected, "unaccepted", "ended")
+                    .with_error_code(failure.code()),
+            );
+            return Err(failure);
         }
         Err(_elapsed) => {
             let refusal = handshake_timeout_refusal(limits.handshake_timeout());
@@ -634,14 +686,27 @@ where
             return Ok(());
         }
     };
-    let Message::Hello(hello) =
-        decode_message(opening.kind(), opening.payload(), &schemas, &limits)
-            .map_err(ErrorValue::from)?
-    else {
-        return Err(ErrorValue::from(ProtocolError::MalformedPayload {
-            kind: opening.kind(),
-            detail: "a link opens with a hello".to_owned(),
-        }));
+    let hello = match decode_message(opening.kind(), opening.payload(), &schemas, &limits) {
+        Ok(Message::Hello(hello)) => hello,
+        Ok(_) => {
+            let failure = ErrorValue::from(ProtocolError::MalformedPayload {
+                kind: opening.kind(),
+                detail: "a link opens with a hello".to_owned(),
+            });
+            return refuse_opening(failure, &mut reader, writer, &limits, &record).await;
+        }
+        // A hello this build cannot read — what an older agent meets from a client whose hello
+        // changed shape — is a protocol this agent does not share, and the peer is told so.
+        Err(failure) => {
+            return refuse_opening(
+                ErrorValue::from(failure),
+                &mut reader,
+                writer,
+                &limits,
+                &record,
+            )
+            .await;
+        }
     };
 
     let authorization = match resolve(&config.authorization, peer_key.as_ref()) {
