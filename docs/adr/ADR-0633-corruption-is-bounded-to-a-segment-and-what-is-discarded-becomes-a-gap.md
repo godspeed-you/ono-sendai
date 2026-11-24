@@ -1,6 +1,6 @@
 # ADR-0633: Corruption is bounded to a segment, and what is discarded becomes a gap
 
-- Status: accepted
+- Status: accepted; decision 1 (`PRAGMA integrity_check` at every open) superseded by ADR-1068
 - Date: 2026-09-09
 - Spec refs: v0.5 §7.5, §10.8, §31.7, §34, §43.2, §55.5; ADR-0630
 - Decided by: agent (autonomous)

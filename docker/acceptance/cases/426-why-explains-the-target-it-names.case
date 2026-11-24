@@ -1,0 +1,39 @@
+# Issue #148, ADR-1066 — `why <target> <selector>` is about the target it names (v0.5 §16.2,
+# §16.3). The words are a v0.4 selector, resolved the way `enter` resolves one; two targets are two
+# subjects, and a target that does not resolve is refused as such rather than explained as the
+# place the session stands in.
+case: why explains the target it names
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  subject() { ono -c "$1 | to json" 2>&1 | grep -oE '"subject":"[^"]+"' | head -1; }
+
+  SLEEPER=$(sh -c 'sleep 90 >/dev/null 2>&1 </dev/null & echo $!')
+  INIT=$(subject "why process 1")
+  OTHER=$(subject "why process $SLEEPER")
+  HERE=$(subject "why field state")
+  echo "process 1: ${INIT:-<none>}; process $SLEEPER: ${OTHER:-<none>}; here: ${HERE:-<none>}"
+  prove w1 "both targets are explained with a subject (§16.4)" 'test -n "$INIT" && test -n "$OTHER"'
+  prove w2 "two targets are two subjects (§16.3)" 'test "$INIT" != "$OTHER"'
+  prove w3 "the target is not the place the session stands in (issue #148)" 'test "$INIT" != "$HERE"'
+  prove w4 "a target nothing answers to is refused as such (v0.4 §40)" \
+    'ono -c "why process 4294967294" 2>&1 | grep -q "spatial.not_found"'
+  kill "$SLEEPER" 2>/dev/null
+  echo 'why targets: done'
+exit: 0
+stdout-contains: PROVED w1
+stdout-contains: PROVED w2
+stdout-contains: PROVED w3
+stdout-contains: PROVED w4
+stdout-contains: why targets: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

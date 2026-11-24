@@ -11,9 +11,12 @@
 //! 5. mark temporal coverage gaps resulting from discarded corrupt data — [`IntegrityReport::gaps`]
 //!    carries a `corrupt_segment` gap for every interval that was dropped.
 //!
-//! `PRAGMA integrity_check` finds the damage SQLite can see. The damage it cannot see is a row
-//! whose payload no longer decodes, and that is found on read: the row fails, the query answers,
-//! and the affected interval becomes a gap.
+//! Opening the store checks what a damaged file breaks first — the root and the first and last
+//! leaf of every table and index — at a cost that does not grow with the store (ADR-1068); the
+//! whole-file `PRAGMA integrity_check` runs where a migration is about to rewrite the store. Damage
+//! elsewhere in the file is met by the read that reaches it and refused as corruption naming the
+//! store. The damage SQLite cannot see is a row whose payload no longer decodes, and that is found
+//! on read too: the row fails, the query answers, and the affected interval becomes a gap.
 
 use std::sync::Arc;
 

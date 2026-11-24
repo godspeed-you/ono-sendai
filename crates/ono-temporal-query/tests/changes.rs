@@ -418,3 +418,158 @@ fn should_keep_a_field_only_one_side_answered_when_the_other_is_silent() {
     assert_eq!(merged[0].value, Some(Value::Int(1842)));
     assert_eq!(merged[0].contributors.len(), 1);
 }
+
+/// The store a test fakes is the outside world: this one counts the events it hands over in one
+/// read, which is what a bound on the work is a bound on (issue #150).
+#[derive(Debug)]
+struct CountingLedger {
+    inner: SessionLedger,
+    largest_read: std::sync::atomic::AtomicUsize,
+}
+
+impl CountingLedger {
+    fn holding(events: &[ono_temporal_core::TemporalEvent]) -> Self {
+        Self {
+            inner: ledger(events),
+            largest_read: std::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+
+    fn largest_read(&self) -> usize {
+        self.largest_read.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl ono_temporal_core::LedgerRead for CountingLedger {
+    fn events(
+        &self,
+        query: &ono_temporal_core::EventQuery,
+    ) -> Result<Vec<ono_temporal_core::TemporalEvent>, ono_value::ErrorValue> {
+        let read = self.inner.events(query)?;
+        self.largest_read
+            .fetch_max(read.len(), std::sync::atomic::Ordering::Relaxed);
+        Ok(read)
+    }
+
+    fn event(
+        &self,
+        id: &ono_temporal_core::EventId,
+    ) -> Result<Option<ono_temporal_core::TemporalEvent>, ono_value::ErrorValue> {
+        self.inner.event(id)
+    }
+
+    fn shortest_unique_prefixes(
+        &self,
+        ids: &[ono_temporal_core::EventId],
+        minimum: usize,
+    ) -> Result<Vec<usize>, ono_value::ErrorValue> {
+        self.inner.shortest_unique_prefixes(ids, minimum)
+    }
+
+    fn evidence(
+        &self,
+        ids: &[ono_temporal_core::EvidenceId],
+    ) -> Result<Vec<ono_temporal_core::Evidence>, ono_value::ErrorValue> {
+        self.inner.evidence(ids)
+    }
+
+    fn causal_links(
+        &self,
+        effect: &ono_temporal_core::EventId,
+    ) -> Result<Vec<ono_temporal_core::CausalLink>, ono_value::ErrorValue> {
+        self.inner.causal_links(effect)
+    }
+
+    fn coverage(
+        &self,
+        query: &ono_temporal_core::CoverageQuery,
+    ) -> Result<Vec<ono_temporal_core::TemporalCoverage>, ono_value::ErrorValue> {
+        self.inner.coverage(query)
+    }
+
+    fn checkpoint_before(
+        &self,
+        scope: &ono_spatial_core::SpatialScope,
+        at: jiff::Timestamp,
+    ) -> Result<Option<ono_temporal_core::Checkpoint>, ono_value::ErrorValue> {
+        self.inner.checkpoint_before(scope, at)
+    }
+
+    fn actions(
+        &self,
+        range: ono_temporal_core::TimeRange,
+    ) -> Result<Vec<ono_temporal_core::ActionEvent>, ono_value::ErrorValue> {
+        self.inner.actions(range)
+    }
+
+    fn retention(&self) -> ono_temporal_core::RetentionState {
+        self.inner.retention()
+    }
+}
+
+/// `count` appearances of distinct processes, one a second from 12:01.
+fn busy_window(count: usize) -> Vec<ono_temporal_core::TemporalEvent> {
+    (0..count)
+        .map(|index| {
+            let at = instant("2026-08-31T12:01:00Z")
+                .checked_add(jiff::Span::new().seconds(i64::try_from(index).unwrap_or(0)))
+                .expect("the instant stays in range");
+            event(
+                EventKind::ObjectAppeared,
+                &at.to_string(),
+                "linux.procfs",
+                Some(subject(SpatialType::Process, &format!("worker-{index}"))),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn should_read_no_more_than_its_bound_when_the_window_holds_more_events() {
+    // Issue #150: `changes` read its whole window with `limit: None` and capped the answer
+    // afterwards. The bound now reaches the read: a window holding ten times the bound hands over
+    // at most one event past it, and the comparison is refused rather than made over a part.
+    let held = CountingLedger::holding(&busy_window(200));
+    let mut bounded = request();
+    bounded.max_events = 20;
+
+    let refused = changes(&held, &bounded, instant("2026-08-31T12:30:00Z"))
+        .expect_err("a window holding more events than the bound is refused");
+
+    assert_eq!(
+        refused.code(),
+        ono_core::ErrorCode::ResourceItemLimit,
+        "the refusal is a resource bound, by its code: {refused:?}"
+    );
+    assert!(
+        held.largest_read() <= 21,
+        "the ledger handed over {} events for a bound of 20 — the bound did not reach the read",
+        held.largest_read()
+    );
+}
+
+#[test]
+fn should_compare_the_whole_window_when_it_holds_no_more_than_the_bound() {
+    let held = CountingLedger::holding(&busy_window(20));
+    let mut bounded = request();
+    bounded.max_events = 20;
+
+    let found = changes(&held, &bounded, instant("2026-08-31T12:30:00Z"))
+        .expect("a window inside the bound is compared");
+
+    assert_eq!(found.len(), 20, "every appearance is a change (§13.2)");
+}
+
+#[test]
+fn should_return_one_change_past_the_limit_when_the_limit_cuts_the_answer() {
+    // The answer is cut by its limit, and one more than the limit is how the caller learns that
+    // it was, rather than taking the first `limit` for all of them (issue #150).
+    let held = ledger(&busy_window(30));
+    let mut limited = request();
+    limited.limit = 10;
+
+    let found = changes(&held, &limited, instant("2026-08-31T12:30:00Z"))
+        .expect("the changes are computed");
+
+    assert_eq!(found.len(), 11, "ten, and one that says there were more");
+}

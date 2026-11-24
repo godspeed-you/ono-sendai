@@ -72,8 +72,15 @@ impl TimeResolution {
 /// A ledger implements it. The selector does not reach for one itself, because §39.2 keeps this
 /// crate free of anything that goes and looks.
 pub trait EventAnchors {
-    /// The instant of `id`, or `None` where the ledger holds no such event.
-    fn instant_of(&self, id: &EventId) -> Option<Timestamp>;
+    /// The instant of `id`, or `Ok(None)` where the ledger holds no such event.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the ledger raised while looking: `temporal.ambiguous_event` for a shortened
+    /// reference that names more than one event, and a store refusal where it could not be read.
+    /// Neither is "no such event", and answering `None` for them would make a failure to look
+    /// read as an empty ledger (issue #142).
+    fn instant_of(&self, id: &EventId) -> Result<Option<Timestamp>, ErrorValue>;
 }
 
 impl TimeSelector {
@@ -248,7 +255,7 @@ impl TimeSelector {
                 })
             }
             TimeSelector::Event(id) => anchors
-                .instant_of(id)
+                .instant_of(id)?
                 .map(TimeResolution::Resolved)
                 .ok_or_else(|| {
                     error::invalid_time(&id.to_string(), "no event with that reference is retained")

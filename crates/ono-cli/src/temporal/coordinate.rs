@@ -20,19 +20,69 @@ use super::session::TemporalState;
 
 /// The instants the ledger can anchor `at event @e42` to (§12.2).
 ///
-/// A thin adapter rather than an implementation: resolving a prefix to one event and refusing an
-/// ambiguous one is the ledger's job, and this only turns the event it found into the instant a
-/// person navigates by (`EventTimes::presentation_instant`).
-struct LedgerAnchors<'a>(&'a dyn LedgerRead);
+/// A thin adapter rather than an implementation: resolving a reference is [`retained_event`]'s,
+/// the one resolution `inspect event` and `why event` use as well, and this only turns the event
+/// it found into the instant a person navigates by (`EventTimes::presentation_instant`).
+struct LedgerAnchors<'a>(&'a TemporalState);
 
 impl EventAnchors for LedgerAnchors<'_> {
-    fn instant_of(&self, id: &EventId) -> Option<Timestamp> {
-        self.0
-            .event(id)
-            .ok()
-            .flatten()
-            .map(|event| event.times.presentation_instant())
+    fn instant_of(&self, id: &EventId) -> Result<Option<Timestamp>, ErrorValue> {
+        retained_event(self.0, &id.to_string(), Timestamp::now())
+            .map(|event| Some(event.times.presentation_instant()))
     }
+}
+
+/// The event `reference` names, or the reason it cannot be named (§11.6, §34).
+///
+/// Each answer says what happened, and none of them is "nothing" (issue #142):
+///
+/// - the event, where the ledger holds exactly one that the reference names;
+/// - `temporal.ambiguous_event`, where a shortened reference names several, and the store's own
+///   refusal (`temporal.store_unavailable`, `temporal.store_corrupt`, …) where it could not be
+///   read — both are the ledger's, and are carried as it raised them;
+/// - `temporal.out_of_retention`, where this session issued the reference from a rendering and the
+///   ledger no longer holds the event — it was retained, and is not any more;
+/// - `temporal.store_unavailable`, where the ledger holds no such event *and* persistent recording
+///   was asked for and could not be brought up, so the place the event would be is the one that
+///   could not be read;
+/// - `temporal.invalid_time`, where none of that is so and simply no retained event matches.
+///
+/// # Errors
+///
+/// The refusals above, and `temporal.invalid_time` for text that is not an event reference.
+pub fn retained_event(
+    state: &TemporalState,
+    reference: &str,
+    now: Timestamp,
+) -> Result<ono_temporal_core::TemporalEvent, ErrorValue> {
+    let ledger = state.ledger();
+    let issued = state.issued_references().issued_as(reference).cloned();
+    let found = state.issued_references().resolve(reference, ledger)?;
+    if let Some(event) = found {
+        return Ok(event);
+    }
+    if let Some(issued) = issued {
+        return Err(error::event_out_of_retention(
+            &issued.to_string(),
+            issued.at(),
+            ledger.retention().earliest,
+        ));
+    }
+    if let Some(unavailable) = super::recorder::persistence_failure(now) {
+        let help = format!(
+            "no event in this session's own ledger answers to `{}`, and the persistent store it \
+             may be retained in could not be opened: {}",
+            reference.trim(),
+            unavailable.help().unwrap_or("the store did not say why")
+        );
+        return Err(unavailable
+            .with_metadata("reference", Value::string(reference.trim()))
+            .with_help(help));
+    }
+    Err(error::invalid_time(
+        reference.trim(),
+        "no event with that reference is retained",
+    ))
 }
 
 /// The historical context `text` names, resolved but not yet committed (§12.1).
@@ -51,7 +101,7 @@ pub fn resolve(
 ) -> Result<TemporalContext, ErrorValue> {
     let selector = TimeSelector::parse(text)?;
     let ledger = state.ledger();
-    let anchors = LedgerAnchors(ledger);
+    let anchors = LedgerAnchors(state);
     let resolved_at = match selector.resolve(state.zone(), now, &anchors)? {
         TimeResolution::Resolved(instant) => instant,
         TimeResolution::Ambiguous { earlier, later } => {
@@ -236,8 +286,7 @@ pub fn resolve_instant(
     now: Timestamp,
 ) -> Result<Timestamp, ErrorValue> {
     let selector = TimeSelector::parse(text)?;
-    let ledger = state.ledger();
-    let anchors = LedgerAnchors(ledger);
+    let anchors = LedgerAnchors(state);
     match selector.resolve(state.zone(), now, &anchors)? {
         TimeResolution::Resolved(instant) => Ok(instant),
         TimeResolution::Ambiguous { earlier, later } => {

@@ -23,9 +23,7 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 use ono_spatial_core::SpatialScope;
-use ono_temporal_core::{
-    ClockDomain, EvidenceSource, GapReason, LedgerRead as _, TemporalGap, gap_detail,
-};
+use ono_temporal_core::{ClockDomain, EvidenceSource, GapReason, TemporalGap, gap_detail};
 use ono_temporal_ledger::{IntegrityReport, LedgerStore, SourceSequence};
 use ono_value::ErrorValue;
 
@@ -106,7 +104,7 @@ pub fn restart(
     });
 
     // 3. Mark any unobserved downtime as a coverage gap.
-    let last_observed = store.retention().latest;
+    let last_observed = store.latest()?;
     let mut gaps = integrity.gaps.clone();
     gaps.extend(store.sequence_gaps()?);
     if let Some(from) = last_observed

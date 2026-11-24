@@ -4,8 +4,9 @@
 //! affected history as valid, identify the affected store or segment, preserve current shell
 //! functionality, offer diagnostic guidance, and mark the discarded interval as a coverage gap.
 //!
-//! `PRAGMA integrity_check` is the cheap half. The interesting half is a file SQLite still opens:
-//! a payload someone has scribbled on decodes to nothing, and that has to fail its row rather than
+//! The structural check at open is the cheap half, and a damaged page deeper in the file is met by
+//! the read that reaches it (ADR-1068). The interesting half is a file SQLite still opens: a
+//! payload someone has scribbled on decodes to nothing, and that has to fail its row rather than
 //! the process.
 
 #![allow(
@@ -236,4 +237,56 @@ fn should_open_a_fresh_store_when_the_damaged_one_has_been_removed() {
     let store = LedgerStore::open(&path_in(home.path())).expect("a fresh store opens");
     assert!(store.integrity().is_healthy());
     assert_eq!(store.retention().events, 0);
+}
+
+#[test]
+fn should_name_the_store_as_corrupt_when_a_read_meets_damage_the_open_did_not_read() {
+    // Issue #147, ADR-1068: opening no longer reads every page — that made opening cost as much
+    // as the store is large. Damage away from what the open checks is met by the read that
+    // reaches it, and §31.7's first two obligations hold there: the history is refused, as
+    // corruption, naming the store — not reported as a store that "cannot be read".
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = {
+        let store = store_in(home.path());
+        let events: Vec<_> = (0..2_000)
+            .map(|index| {
+                let at = common::instant("2026-08-31T14:00:00Z")
+                    .checked_add(jiff::Span::new().seconds(index))
+                    .expect("an instant in range");
+                event_about(EventKind::ObjectAppeared, &at.to_string(), index)
+            })
+            .collect();
+        store.append(&events, &[]).expect("an append succeeds");
+        store.flush().expect("a flush succeeds");
+        store.path().to_path_buf()
+    };
+
+    let store = LedgerStore::open(&path).expect("an undamaged store opens");
+    {
+        // The middle fifth of the file, after the open: pages no check at open has read.
+        let length = std::fs::metadata(&path).expect("the store exists").len();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("the store is writable");
+        file.seek(SeekFrom::Start((length * 2 / 5) / 4_096 * 4_096))
+            .expect("the middle is reachable");
+        let span = usize::try_from(length / 5).expect("a test-sized store");
+        file.write_all(&vec![0x5a; span])
+            .expect("the scribble lands");
+        file.sync_all().expect("the scribble is durable");
+    }
+
+    let refused = store
+        .events(&EventQuery::in_range(TimeRange::all()))
+        .expect_err("§31.7: a read that meets damaged pages is refused");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::TemporalStoreCorrupt,
+        "§31.7: damage met on read is corruption, not unavailability: {refused:?}"
+    );
+    assert!(
+        format!("{refused:?}").contains("ledger.sqlite3"),
+        "§31.7's second obligation: the affected store is identified: {refused:?}"
+    );
 }

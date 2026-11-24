@@ -261,13 +261,29 @@ impl CommandImpl for Changes {
             //
             // Inside the window a thin record stays §13.4's business rather than a refusal: a
             // side without evidence is reported unknown and the command answers.
-            if let Some(max_age) = ledger.retention().max_age {
+            if let Some(max_age) = state.ledger().max_age() {
                 let horizon = now.as_nanosecond().saturating_sub(max_age.nanoseconds());
                 if request.since.as_nanosecond() < horizon {
                     return Err(super::coordinate::unreachable(&state, request.since, now));
                 }
             }
-            let changes = ono_temporal_query::changes::changes(ledger.as_ref(), &request, anchor)?;
+            let mut changes =
+                ono_temporal_query::changes::changes(ledger.as_ref(), &request, anchor)?;
+            // The engine answers one change past the limit where the limit cut the answer
+            // (ADR-1067). Every value printed is exact; that there were more is said, the way
+            // `timeline` says its list was truncated, rather than left to read as all of them.
+            if changes.len() > request.limit {
+                changes.truncate(request.limit);
+                crate::report::Reporter::new(ono_render::Presentation::choose(
+                    std::io::IsTerminal::is_terminal(&std::io::stderr()),
+                    &[],
+                ))
+                .note(&format!(
+                    "`changes` shows the first {} changes of the window, and more changed; narrow \
+                     `--since`/`--until` to see the rest",
+                    request.limit
+                ));
+            }
             let mut values = Vec::with_capacity(changes.len());
             for change in &changes {
                 values.push(Value::Record(Arc::new(change.to_record()?)));
@@ -305,9 +321,20 @@ impl CommandImpl for Why {
                      <name>`",
                 ));
             }
-            let mut state = temporal_session().await;
+            // A target and a field are places, resolved before the temporal state is taken: the
+            // resolution may ask a provider, and holding one state while waiting for the other
+            // is the nesting ADR-1066 removes from this command.
+            let spatial = spatial_request(ctx.providers(), &subject).await?;
+            let state = temporal_session().await;
             let anchor = state.context().instant().unwrap_or(now);
-            let request = why_request(&mut state, &subject).await?;
+            let request = match spatial {
+                Some(request) => request,
+                None => {
+                    let reference = subject.get(1).map(String::as_str).unwrap_or_default();
+                    let event = super::coordinate::retained_event(&state, reference, now)?;
+                    WhyRequest::event(&event.event_id)
+                }
+            };
 
             let ledger = state.ledger_handle();
             let window = TimeRange::until(anchor);
@@ -345,37 +372,43 @@ impl CommandImpl for Why {
     }
 }
 
-/// §16.2's three forms, read from the words after `why`.
-async fn why_request(
-    state: &mut TemporalState,
+/// §16.2's first and third forms, read from the words after `why`; `None` for `why event`.
+///
+/// The first form's words are a v0.4 selector — `why process 1` asks about `process/1` — and it
+/// is resolved by the same resolution `enter` uses, at the session's coordinate (§14.1). The
+/// request names the identity that resolved, so the explanation is about the target that was
+/// named (§16.3, issue #148); a selector nothing answers to is that resolution's own refusal.
+async fn spatial_request(
+    providers: &ono_provider_api::ProviderRegistry,
     subject: &[String],
-) -> Result<WhyRequest, ErrorValue> {
+) -> Result<Option<WhyRequest>, ErrorValue> {
     match subject.split_first() {
-        Some((head, rest)) if head == "event" => {
-            let reference = rest.first().map(String::as_str).unwrap_or_default();
-            let ledger = state.ledger_handle();
-            let event = state
-                .references()
-                .resolve(reference, ledger.as_ref())?
-                .ok_or_else(|| {
-                    error::invalid_time(reference, "no event with that reference is retained")
-                })?;
-            Ok(WhyRequest::event(&event.event_id))
-        }
+        Some((head, _)) if head == "event" => Ok(None),
         Some((head, rest)) if head == "field" => {
             let field = rest.first().map(String::as_str).unwrap_or_default();
             let spatial = crate::spatial::spatial_session().await;
             let place = spatial.current_place().clone();
             let label = ono_spatial_query::resolve::concise_path(spatial.index(), &place);
-            Ok(WhyRequest::field(&place, &label, field))
+            Ok(Some(WhyRequest::field(&place, &label, field)))
         }
-        Some((_, _)) => {
-            // `why service nginx`: the words are a spatial selector, and resolving one is v0.4's.
-            let spelling = subject.join(" ");
-            let spatial = crate::spatial::spatial_session().await;
-            let place = spatial.current_place().clone();
-            let label = subject.last().cloned().unwrap_or(spelling);
-            Ok(WhyRequest::target(&place, &label))
+        Some((head, rest)) => {
+            let selector = if rest.is_empty() {
+                head.clone()
+            } else {
+                format!("{head}/{}", rest.join(" "))
+            };
+            let mut spatial = crate::spatial::spatial_session().await;
+            let here = spatial.current_place().clone();
+            let target = crate::spatial::commands::resolved_place(
+                providers,
+                &mut spatial,
+                &here,
+                &selector,
+                Timestamp::now(),
+            )
+            .await?;
+            let label = ono_spatial_query::resolve::concise_path(spatial.index(), &target);
+            Ok(Some(WhyRequest::target(&target, &label)))
         }
         None => Err(ErrorValue::new(
             ErrorCode::TypeMismatch,
@@ -521,14 +554,8 @@ impl CommandImpl for InspectEvent {
                 .and_then(|value| value.as_str().ok())
                 .unwrap_or_default()
                 .to_owned();
-            let mut state = temporal_session().await;
-            let ledger = state.ledger_handle();
-            let event = state
-                .references()
-                .resolve(&reference, ledger.as_ref())?
-                .ok_or_else(|| {
-                    error::invalid_time(&reference, "no event with that reference is retained")
-                })?;
+            let state = temporal_session().await;
+            let event = super::coordinate::retained_event(&state, &reference, Timestamp::now())?;
             let record = ono_temporal_core::value::event_record_with_reference(
                 &event,
                 Some(reference.trim_start_matches('@')),

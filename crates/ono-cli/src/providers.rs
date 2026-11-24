@@ -266,15 +266,13 @@ fn coordinate_of(query: &Query) -> Result<Option<PastQuery>, ErrorValue> {
     if let Some(text) = option_text(query.option_value("at")) {
         // §12.1: the selector is resolved before anything is answered, so an unreadable one is a
         // refusal rather than a differently-timed answer.
-        let state = crate::temporal::session::session_state()
-            .try_lock()
-            .map_err(|_| {
-                ErrorValue::new(
-                    ErrorCode::TemporalStoreUnavailable,
-                    "the session's temporal coordinate is busy and `--at` could not be resolved",
-                )
-                .with_help("run the command again; nothing was answered from the present")
-            })?;
+        let state = crate::temporal::session::try_temporal_session().ok_or_else(|| {
+            ErrorValue::new(
+                ErrorCode::TemporalStoreUnavailable,
+                "the session's temporal coordinate is busy and `--at` could not be resolved",
+            )
+            .with_help("run the command again; nothing was answered from the present")
+        })?;
         let context = crate::temporal::coordinate::resolve(&state, &text, Timestamp::now())?;
         return Ok(context.instant().map(|at| PastQuery {
             at,
@@ -457,9 +455,9 @@ fn nothing_reconstructs(
              directory contents are not the past (spec v0.5 §14.5)",
         );
     }
-    let available = match crate::temporal::session::session_state().try_lock() {
-        Ok(state) => crate::temporal::coordinate::availability(&state, Timestamp::now()),
-        Err(_) => Vec::new(),
+    let available = match crate::temporal::session::try_temporal_session() {
+        Some(state) => crate::temporal::coordinate::availability(&state, Timestamp::now()),
+        None => Vec::new(),
     };
     ono_temporal_core::error::not_recorded(scope, at, &available)
         .with_metadata("target", Value::string(target))

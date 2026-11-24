@@ -18,22 +18,34 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use ono_core::ErrorCode;
 use ono_temporal_core::{EventAnchors, EventId, TimeResolution, TimeSelector};
+use ono_value::ErrorValue;
 
 use common::instant;
 
 struct NoAnchors;
 
 impl EventAnchors for NoAnchors {
-    fn instant_of(&self, _id: &EventId) -> Option<Timestamp> {
-        None
+    fn instant_of(&self, _id: &EventId) -> Result<Option<Timestamp>, ErrorValue> {
+        Ok(None)
     }
 }
 
 struct OneAnchor(EventId, Timestamp);
 
 impl EventAnchors for OneAnchor {
-    fn instant_of(&self, id: &EventId) -> Option<Timestamp> {
-        (id == &self.0).then_some(self.1)
+    fn instant_of(&self, id: &EventId) -> Result<Option<Timestamp>, ErrorValue> {
+        Ok((id == &self.0).then_some(self.1))
+    }
+}
+
+/// A ledger that cannot be read, as a store that went away answers (§34 E1307).
+struct UnreadableAnchors;
+
+impl EventAnchors for UnreadableAnchors {
+    fn instant_of(&self, _id: &EventId) -> Result<Option<Timestamp>, ErrorValue> {
+        Err(ono_temporal_core::error::store_unavailable(
+            "the ledger file went away",
+        ))
     }
 }
 
@@ -95,6 +107,40 @@ fn should_resolve_to_the_anchor_instant_when_the_selector_names_an_event() {
             .expect("the anchor resolves"),
         TimeResolution::Resolved(instant("2026-08-31T11:03:00Z")),
         "§12.2: `at event` resolves through the event's own instant"
+    );
+}
+
+#[test]
+fn should_carry_the_ledger_refusal_when_the_event_anchor_cannot_be_read() {
+    // Issue #142: a ledger that could not answer is not a ledger that holds no such event. The
+    // refusal the store raised is the one the reader gets, so "no event with that reference is
+    // retained" is said only where it is true.
+    let selector = TimeSelector::parse("event @efa3").expect("it parses");
+    let refused = selector
+        .resolve(
+            &berlin(),
+            instant("2026-08-31T14:00:00Z"),
+            &UnreadableAnchors,
+        )
+        .expect_err("an unreadable ledger is a refusal");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::TemporalStoreUnavailable,
+        "the store's own refusal, not `temporal.invalid_time`: {refused:?}"
+    );
+}
+
+#[test]
+fn should_refuse_an_event_selector_by_name_when_no_event_matches() {
+    let selector = TimeSelector::parse("event @efa3").expect("it parses");
+    let refused = selector
+        .resolve(&berlin(), instant("2026-08-31T14:00:00Z"), &NoAnchors)
+        .expect_err("a reference nothing answers to is refused");
+    assert_eq!(refused.code(), ErrorCode::TemporalInvalidTime);
+    assert!(
+        refused.message().contains("@efa3"),
+        "the refusal names the reference: {}",
+        refused.message()
     );
 }
 

@@ -1,0 +1,65 @@
+# Issue #142, ADR-1065 — an event reference that does not resolve says why (v0.5 §11.6, §12.2,
+# §34, §44.3). `at event`, `inspect event` and `why event` resolve a reference the same way, and a
+# reference that does not resolve is refused with the code of what happened: ambiguous, no longer
+# retained, a store that could not be read, or simply nothing matching. "No event with that
+# reference is retained" is said only where it is true.
+case: an event reference that does not resolve says why
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  recording() { ONO_TEMPORAL_RECORDING_ENABLED=true ono -c "$1"; }
+
+  echo '== a store with enough events that one hex digit names two of them =='
+  # Every recording shell writes its own coverage events, so the store grows until sixteen hex
+  # digits cannot keep seventeen events apart.
+  for _ in 1 2 3 4 5 6; do recording 'get recorder' >/dev/null 2>&1; done
+  recording 'find event | select event_id | to json' > /tmp/e425-ids.json 2>&1
+  DIGIT=$(grep -oE '"event_id":"e[0-9a-f]' /tmp/e425-ids.json | sed 's/.*"e//' | sort | uniq -d | head -1)
+  echo "shared digit: ${DIGIT:-<none>}"
+  prove r1 "two retained events share a first digit" 'test -n "$DIGIT"'
+  prove r2 "\`at event\` refuses the shared prefix as ambiguous, with the candidates (§11.6, §34)" \
+    'recording "at event @e$DIGIT" 2>&1 | grep -q "temporal.ambiguous_event"'
+  prove r3 "and does not call it unretained" \
+    '! recording "at event @e$DIGIT" 2>&1 | grep -q "temporal.invalid_time"'
+  prove r4 "a reference nothing matches is still \`temporal.invalid_time\`" \
+    'recording "at event @edeadbeefdeadbeef" 2>&1 | grep -q "temporal.invalid_time"'
+
+  echo '== a shown event the bounded session ledger dropped (§10.7) =='
+  prove r5 "is refused as out of retention, not as a typo (§34 E1303)" \
+    'ONO_TEMPORAL_SESSION_MAX_EVENTS=4 ono -c "stop process 4294967294
+     let shown = (find event | take 1)
+     let reference = (\$shown.reference)
+     stop process 4294967293
+     stop process 4294967292
+     inspect event \$reference" 2>&1 | grep -q "temporal.out_of_retention"'
+
+  echo '== a store that cannot be opened (§44.3) =='
+  BROKEN=$(mktemp -d)
+  mkdir -p "$BROKEN/ono" && : > "$BROKEN/ono/temporal"
+  prove r6 "\`get recorder\` reports the failed health and its reason (§43.4)" \
+    'XDG_DATA_HOME=$BROKEN recording "get recorder | to json" 2>&1 | grep -q "\"health\":\"failed\""'
+  prove r7 "\`at event\` says the store could not be read (§34 E1307)" \
+    'XDG_DATA_HOME=$BROKEN recording "at event @efa3" 2>&1 | grep -q "temporal.store_unavailable"'
+  rm -rf "$BROKEN"
+
+  echo 'event reference refusals: done'
+exit: 0
+stdout-contains: PROVED r1
+stdout-contains: PROVED r2
+stdout-contains: PROVED r3
+stdout-contains: PROVED r4
+stdout-contains: PROVED r5
+stdout-contains: PROVED r6
+stdout-contains: PROVED r7
+stdout-contains: event reference refusals: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

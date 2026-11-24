@@ -436,8 +436,11 @@ fn time_selectors(data: &[u8]) {
     };
     struct NoAnchors;
     impl ono_temporal_core::EventAnchors for NoAnchors {
-        fn instant_of(&self, _id: &ono_temporal_core::EventId) -> Option<jiff::Timestamp> {
-            None
+        fn instant_of(
+            &self,
+            _id: &ono_temporal_core::EventId,
+        ) -> Result<Option<jiff::Timestamp>, ono_value::ErrorValue> {
+            Ok(None)
         }
     }
     for zone in [

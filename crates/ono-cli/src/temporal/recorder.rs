@@ -127,6 +127,19 @@ pub(crate) fn note_started(at: Option<Timestamp>) {
     }
 }
 
+/// Why the start the session's configuration asked for was refused, where it was (issue #142).
+fn start_refusal() -> &'static RwLock<Option<ErrorValue>> {
+    static REFUSAL: OnceLock<RwLock<Option<ErrorValue>>> = OnceLock::new();
+    REFUSAL.get_or_init(|| RwLock::new(None))
+}
+
+/// Keeps the refusal of a start nobody typed, so `get recorder` can say what happened.
+pub(crate) fn note_start_refusal(refusal: ErrorValue) {
+    if let Ok(mut held) = start_refusal().write() {
+        *held = Some(refusal);
+    }
+}
+
 /// The §10.4 and §10.7 limits this session was configured with (§33).
 ///
 /// Read once, from the resolved settings, and kept for every later `start recorder`: the settings
@@ -172,9 +185,39 @@ pub(crate) fn start_recorder(
     now: Timestamp,
 ) -> Result<ono_recorder::StartOutcome, ErrorValue> {
     let outcome = recorder().start(&configured_settings(), now)?;
-    state.set_shared_ledger(recorder().ledger());
     note_started(outcome.status.since);
+    if let Ok(mut held) = start_refusal().write() {
+        *held = None;
+    }
+    // The recorder is running whatever the carry-over answers; a failure there is the session's
+    // own history not coming across, and it is said rather than dropped.
+    state.set_shared_ledger(recorder().ledger())?;
     Ok(outcome)
+}
+
+/// Why persistent recording is not running although it was asked for, where that is the case.
+///
+/// §44.3 lets a shell whose store could not be opened keep working on §10.7's session ledger, and
+/// the recorder keeps the reason as its diagnostic. A question that the session ledger cannot
+/// answer is then a question about a store that could not be read, and the answer has to say so
+/// rather than read as "nothing retained" (issue #142). `None` where recording was never asked
+/// for, or is running.
+pub(crate) fn persistence_failure(now: Timestamp) -> Option<ErrorValue> {
+    let status = recorder().status(now);
+    if status.running || status.health != ono_recorder::RecorderHealth::Failed {
+        return None;
+    }
+    // The diagnostic is the refusal's terse rendering — its message, then its help — and the
+    // help is the part that names the store and the reason.
+    let reason = status.diagnostic.as_deref().map_or(
+        "persistent recording was asked for and could not be brought up",
+        |diagnostic| {
+            diagnostic
+                .split_once('\n')
+                .map_or(diagnostic, |(_, help)| help)
+        },
+    );
+    Some(error::store_unavailable(reason))
 }
 
 /// One turn of the recorder's own maintenance, where the shell has a turn to give (§10.4, §31.8).
@@ -198,11 +241,23 @@ pub(crate) fn maintain(now: Timestamp) {
 /// is writing coverage and gaps of its own (ADR-0777).
 fn status_record(state: &TemporalState, now: Timestamp) -> Result<Value, ErrorValue> {
     let mut status = recorder().status(now);
-    let retention = state.ledger().retention();
-    status.events = retention.events;
-    status.size = retention.stored_size;
-    status.earliest = retention.earliest;
-    status.latest = retention.latest;
+    // §43.4 and issue #142: a start the configuration asked for and the recorder refused is part
+    // of the recorder's health, not something to forget. The recorder's own diagnostic wins
+    // where it has one, because it is the newer word.
+    if status.diagnostic.is_none()
+        && let Some(refusal) = start_refusal().read().ok().and_then(|held| held.clone())
+    {
+        status.diagnostic = Some(Arc::from(refusal.render_terse().as_str()));
+    }
+    // The recorder's figures are already the session's when the session reads the recorder's
+    // own ledger, and counting a store twice is twice the cost of the largest thing in it.
+    if !std::ptr::eq(state.ledger(), recorder().ledger().as_ref()) {
+        let retention = state.ledger().retention();
+        status.events = retention.events;
+        status.size = retention.stored_size;
+        status.earliest = retention.earliest;
+        status.latest = retention.latest;
+    }
     status.since = status.since.or_else(started_at);
     // §33: the limits the status states are the session's resolved ones. A recorder nobody has
     // started is still holding a session ledger bounded by `temporal.session.max_events`, and
@@ -308,8 +363,9 @@ impl CommandImpl for StopRecorder {
             // instant and what was buffered is written before the store is let go, so the
             // interval that follows is a declared gap rather than lost events (§44.1).
             recorder().stop(now)?;
-            state.set_shared_ledger(recorder().ledger());
+            let carried = state.set_shared_ledger(recorder().ledger());
             note_started(None);
+            carried?;
             let record = status_record(&state, now)?;
             Ok(Outcome::Values(ValueStream::from_values([record])))
         })
@@ -370,7 +426,9 @@ impl CommandImpl for RemoveTemporalHistory {
                 // writing into a database nobody can find.
                 let mut state = temporal_session().await;
                 let _ = recorder().stop(Timestamp::now());
-                state.set_ledger(session_ledger());
+                // The history is about to be destroyed, so what did not come across is what was
+                // asked to go; the session's new ledger is what matters.
+                let _ = state.set_ledger(session_ledger());
                 note_started(None);
             }
             let removed = remove_store(&path);

@@ -33,6 +33,9 @@ exemptions:
   - command: ono.image.get
     example: get image
     reason: needs a container engine, and a fresh environment runs none.
+  - command: ono.temporal.why
+    example: why service nginx
+    reason: names the service `nginx`, and a fresh environment runs none; `why` resolves its target and refuses one that does not exist (ADR-1066). `why process 1` is the example that runs.
   - command: ono.change-plan.get
     example: get plan a82f
     reason: names the plan `a82f`, and a fresh state directory holds no plan.

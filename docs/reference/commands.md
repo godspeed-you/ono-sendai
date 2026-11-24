@@ -7093,7 +7093,7 @@ Resolve a time selector and evaluate everything that follows at that instant.
 |---|---|---|
 | `selector` | `string` | The instant to stand at: an RFC 3339 timestamp, a local date and time, a local time today, a negative relative duration, or `event @e42` (v0.5 §4.4). Written as words so `at event @e42` and `at 2026-08-31 12:17:00` both read as themselves. *(repeatable)* |
 
-**Note.** §12.1: the selector and its coverage are resolved before the session moves, so an unresolvable selector leaves the coordinate exactly where it was. §4.2: only the temporal coordinate changes — the spatial place is untouched.
+**Note.** §12.1: the selector and its coverage are resolved before the session moves, so an unresolvable selector leaves the coordinate exactly where it was. §4.2: only the temporal coordinate changes — the spatial place is untouched. `event @e42` resolves exactly as `inspect event` and `why event` do, and a reference that does not resolve says why (ADR-1065): `temporal.invalid_time` where no retained event matches, `temporal.out_of_retention` where this session showed the event and the ledger no longer holds it, `temporal.ambiguous_event` where it names several, and the store's own refusal (`temporal.store_unavailable`, …) where the store could not be read or persistent recording was asked for and could not be brought up.
 
 **Examples**
 
@@ -7234,7 +7234,7 @@ What is different between two instants, classified and with per-field certainty.
 | `--until` | `string` | The later instant. Defaults to the active temporal coordinate, normally now. |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
-**Note.** §13.4: where one side lacks evidence the field is reported as unknown with the coverage that explains it, never as a zero or an empty string.
+**Note.** §13.4: where one side lacks evidence the field is reported as unknown with the coverage that explains it, never as a zero or an empty string. The comparison reads at most 50,000 events of its window and refuses a window that holds more with `resource.item_limit`, because a change folds every event of its subject and a part of the window would be a wrong answer rather than a shorter one; at most 500 changes are printed, and where more changed the diagnostic stream says so (ADR-1067).
 
 **Examples**
 
@@ -7264,7 +7264,7 @@ Explain a state, an event or a field from registered causal rules and their evid
 
 | name | type | meaning |
 |---|---|---|
-| `subject` | `string` | One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place. *(repeatable)* |
+| `subject` | `string` | One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place. A target and a selector are resolved to the place they name — `process 1` is `process/1` — exactly as `enter` resolves them, and a selector nothing answers to is refused with `spatial.not_found` rather than explained as something else (ADR-1066). *(repeatable)* |
 
 **Options**
 
@@ -7279,6 +7279,7 @@ Explain a state, an event or a field from registered causal rules and their evid
 
 ```text
 why service nginx
+why process 1
 why event @e42
 why field state
 ```
@@ -7342,7 +7343,7 @@ One event with its times, its subject and the evidence it rests on.
 
 | name | type | meaning |
 |---|---|---|
-| `reference` | `string` | The event reference a timeline printed, `@e42` — a prefix of the content digest, refused with `temporal.ambiguous_event` where it names more than one (v0.5 §11.6). |
+| `reference` | `string` | The event reference a timeline printed, `@e42` — a prefix of the content digest, refused with `temporal.ambiguous_event` where it names more than one (v0.5 §11.6), `temporal.out_of_retention` where this session showed it and the ledger no longer holds it, `temporal.store_unavailable` where the store it would be in could not be read, and `temporal.invalid_time` where no retained event matches (ADR-1065). |
 
 **Examples**
 

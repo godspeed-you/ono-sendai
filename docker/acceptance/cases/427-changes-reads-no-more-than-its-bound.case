@@ -1,0 +1,38 @@
+# Issue #150, ADR-1067 — `changes` bounds the read, not only the answer (v0.5 §13, §32.3, §43.1).
+# A change folds every event its subject had in the window, so a part of the window would be a
+# wrong answer: a window holding more events than one comparison may read (50,000) is refused with
+# `resource.item_limit`, and a window inside the bound is compared whole.
+case: changes reads no more than its bound
+timeout: 600
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  # Every failed `stop process` records the four lifecycle events of one Ono action (§17.2), so
+  # 12,600 of them put 50,400 events into the last few minutes of the store.
+  ono --no-config -c 'start recorder' > /dev/null
+  i=0; : > /tmp/c427.ono
+  while [ $i -lt 12600 ]; do echo 'stop process 4294967294' >> /tmp/c427.ono; i=$((i+1)); done
+  ONO_TEMPORAL_RECORDING_ENABLED=true ono /tmp/c427.ono > /dev/null 2>&1
+  prove b1 "a window over the bound is refused as a resource bound (§43.1)" \
+    'ono --no-config -c "start recorder; changes --since 1h" 2>&1 | grep -q "resource.item_limit"'
+  prove b2 "and the refusal says how to narrow the question" \
+    'ono --no-config -c "start recorder; changes --since 1h" 2>&1 | grep -q -- "--since"'
+  sleep 2
+  prove b3 "a window inside the bound is compared whole" \
+    'ono --no-config -c "start recorder; changes --since 1s | count"'
+  echo 'changes bound: done'
+exit: 0
+stdout-contains: PROVED b1
+stdout-contains: PROVED b2
+stdout-contains: PROVED b3
+stdout-contains: changes bound: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked
