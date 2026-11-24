@@ -73,9 +73,12 @@ labelled `handshake`.
 
 - Cost, measured by the suites below: one probe is two frames of twelve-byte header and a
   four-byte payload (`null`) out, twelve bytes back. Per link, at most one probe per 5 s while a
-  view that shows latency is being drawn, and **zero** while nothing is drawn.
-  `crates/ono-cli/tests/link_latency.rs` counts the agent's audit-free probe answers through the
-  agent's own stream accounting rather than timing anything.
+  view that shows latency is being drawn, and **zero** while nothing is drawn: nothing in the
+  shell schedules a probe; `measure` runs only inside `look` at a root, `map links` and a host
+  listing (ADR-1096). `crates/ono-cli/tests/link_latency.rs::
+  should_reuse_one_probe_for_every_view_drawn_within_the_reuse_window` shows three views drawn
+  back to back carrying one measurement with one `latency_measured_at`; the protocol suite
+  shows that a probe nobody negotiated puts nothing on the wire.
 - Tests: `crates/ono-protocol/tests/probe.rs` (answered without a provider; refused locally when
   not announced and when not negotiated — nothing on the wire; a probe that times out is released
   and the link is unharmed; a link that is gone; an agent that receives a probe it did not offer
