@@ -1,0 +1,88 @@
+# v0.4 §19.3's federated map draws `prod/web01 ----- prod/db01`, a link between two remote hosts;
+# `map links` drew one hop (#310). ADR-1097: a listening agent holds the links it is told to
+# (`--link`), serves its link table (`ono.link.links/1`) to a peer that may observe it — under the
+# check `get link` is served under — and `map links --depth 2` draws each far link as a report:
+# `inferred` here, the far side's own claim beside it, the peer that said so named. A refusal is
+# "not permitted to see", never "no links", and nothing is relayed past the peer asked.
+#
+# Three agents on 127.0.0.2-4, each with its own home and key: A (the shell) → B → C.
+case: map links --depth 2 draws a far host's links as its report, and a refusal as a refusal
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+  a=$(mktemp -d); b=$(mktemp -d); c=$(mktemp -d); d=$(mktemp -d)
+  at() { local home="$1"; shift; HOME="$home" XDG_CONFIG_HOME="$home" ono -c "$*"; }
+  key() { HOME="$1" XDG_CONFIG_HOME="$1" ono --print-peer-key; }
+  start() {
+    local home="$1" host="$2"; shift 2
+    HOME="$home" XDG_CONFIG_HOME="$home" ono --agent --listen "$host:0" "$@" 2> "$home/log" &
+    echo $! > "$home/pid"
+    for _ in $(seq 1 200); do grep -q 'listening on' "$home/log" && grep -q 'host key' "$home/log" && break; sleep 0.05; done
+    sed -n 's/.*listening on \([^ ]*\).*/\1/p' "$home/log" | head -1 > "$home/address"
+    sed -n 's/.*host key \([^ ]*\).*/\1/p' "$home/log" | head -1 > "$home/key"
+  }
+
+  start "$c" 127.0.0.4
+  at "$c" "add client-key $(key "$b") --label b" >/dev/null 2>&1
+  at "$b" "add host-key 127.0.0.4 --fingerprint $(cat "$c/key")" >/dev/null 2>&1
+  start "$b" 127.0.0.3 --link "c=$(cat "$c/address")"
+  for _ in $(seq 1 200); do grep -q 'held link `c` connected' "$b/log" && break; sleep 0.05; done
+  at "$b" "add client-key $(key "$a") --label a" >/dev/null 2>&1
+  at "$a" "add host-key 127.0.0.3 --fingerprint $(cat "$b/key")" >/dev/null 2>&1
+  # D may connect to B and may not observe it.
+  at "$b" "add client-key $(key "$d") --label d; set client-key $(key "$d") --observe false" >/dev/null 2>&1
+  at "$d" "add host-key 127.0.0.3 --fingerprint $(cat "$b/key")" >/dev/null 2>&1
+
+  B=$(cat "$b/address")
+  at "$a" "link host $B --transport tcp; map links --depth 2 --json" 2>/dev/null | grep '^{' > /tmp/two.json
+  at "$a" "link host $B --transport tcp; map links --depth 2" > /tmp/two.txt 2>/dev/null
+  at "$a" "link host $B --transport tcp; map links --json" 2>/dev/null | grep '^{' > /tmp/one.json
+  at "$a" "try { map links --depth 3 } catch e { \$e | to json }" > /tmp/three.json 2>/dev/null
+  at "$d" "link host $B --transport tcp; map links --depth 2" > /tmp/refused.txt 2>/dev/null
+  kill "$(cat "$b/pid")" "$(cat "$c/pid")" 2>/dev/null
+
+  echo "== the far side's link, as its report (§19.4) =="
+  prove f1 "B's link to C is drawn, inferred here" \
+    "grep -qE '\"confidence\":\"inferred\",\"direction\":\"bidirectional\",\"provider\":\"ono.link.links\"' /tmp/two.json"
+  prove f2 "with B's own claim and B named as the reporter" \
+    "grep -qE '\"reported_by\":\"$B\",\"reported_confidence\":\"exact\",\"verified\":false' /tmp/two.json"
+  prove f3 "and C named by the key it proved to B" \
+    "grep -qF \"\\\"fingerprint\\\":\\\"$(cat "$c/key")\\\"\" /tmp/two.json"
+  prove f4 "the map says what B answered" \
+    "grep -qE '\"federation\":\[\{\"link\":\"$B\",\"status\":\"listed\",\"count\":1' /tmp/two.json"
+  prove f5 "the text map lists the far link and B's answer" \
+    "grep -qF '$B/c' /tmp/two.txt && grep -qE '$B +1 reported by its agent' /tmp/two.txt"
+
+  echo "== bounded, and asked only when asked for =="
+  prove b1 "the default depth asks nobody" \
+    "grep -q '\"federation\":null' /tmp/one.json && ! grep -q 'ono.link.links' /tmp/one.json"
+  prove b2 "a third hop is refused, with the reason" \
+    "grep -q 'asks nobody further' /tmp/three.json"
+
+  echo "== a refusal is a refusal =="
+  prove r1 "a client B does not let observe is told it may not see B's links" \
+    "grep -qE 'not permitted to see its links' /tmp/refused.txt"
+  prove r2 "and B recorded the denial under link.list" \
+    "grep -q 'event=authorization.denied.*requested_capability=link.list' $b/log"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED f1
+stdout-contains: PROVED f2
+stdout-contains: PROVED f3
+stdout-contains: PROVED f4
+stdout-contains: PROVED f5
+stdout-contains: PROVED b1
+stdout-contains: PROVED b2
+stdout-contains: PROVED r1
+stdout-contains: PROVED r2
+stdout-contains: done=ok
+stdout-not-contains: FAILED

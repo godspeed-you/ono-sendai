@@ -44,6 +44,9 @@ pub struct LinkFacts {
     pub boot_id: Option<String>,
     /// What probes the link while it is open, where the far side is an agent (ADR-1095).
     pub prober: Option<Prober>,
+    /// The fingerprint of the key the far side proved, where the transport proved one: what a
+    /// far link table names a host by (ADR-1097).
+    pub fingerprint: Option<String>,
 }
 
 /// A handle that probes one link without holding it open (ADR-1095).
@@ -326,6 +329,7 @@ pub fn publish(rows: &[LinkRow]) {
                 prober: row.prober.clone(),
                 #[cfg(not(feature = "remote"))]
                 prober: None,
+                fingerprint: row.transport_fingerprint.clone(),
             },
         );
     }

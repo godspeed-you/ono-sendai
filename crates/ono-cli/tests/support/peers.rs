@@ -40,6 +40,75 @@ pub struct Peer {
     process: Option<ono_testkit::OwnedChild>,
     log: Arc<Mutex<String>>,
     _lines: mpsc::Receiver<String>,
+    extra: Vec<String>,
+}
+
+/// A started agent process, and what it said about itself.
+struct Launched {
+    process: ono_testkit::OwnedChild,
+    log: Arc<Mutex<String>>,
+    lines: mpsc::Receiver<String>,
+    address: String,
+    fingerprint: String,
+}
+
+/// Starts `ono --agent --listen <listen> <extra…>` in `home` and reads where it listens.
+fn launch(home: &Scratch, listen: &str, extra: &[String]) -> Launched {
+    let mut args: Vec<&str> = vec!["--agent", "--listen", listen];
+    args.extend(extra.iter().map(String::as_str));
+    let mut process: ono_testkit::OwnedChild = Command::new(binary())
+        .args(&args)
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the agent starts")
+        .into();
+    let stderr = process.stderr.take().expect("stderr was piped");
+    let log = Arc::new(Mutex::new(String::new()));
+    let collecting = Arc::clone(&log);
+    let (sender, lines) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                return;
+            }
+            collecting
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push_str(&line);
+            // The suite reads the start-up lines; after that nobody listens, and that is fine —
+            // the log keeps collecting.
+            let _ = sender.send(line.trim().to_owned());
+        }
+    });
+    let (mut address, mut fingerprint) = (None, None);
+    while address.is_none() || fingerprint.is_none() {
+        let line = lines.recv_timeout(STARTUP).unwrap_or_else(|_| {
+            panic!(
+                "the agent on {listen} ended before it said where it listens: {}",
+                log.lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            )
+        });
+        if let Some(bound) = line.split("listening on ").nth(1) {
+            address = Some(bound.trim().to_owned());
+        } else if let Some(printed) = line.split("host key ").nth(1) {
+            fingerprint = Some(printed.trim().to_owned());
+        }
+    }
+    Launched {
+        process,
+        log,
+        lines,
+        address: address.unwrap_or_default(),
+        fingerprint: fingerprint.unwrap_or_default(),
+    }
 }
 
 impl Peer {
@@ -51,64 +120,32 @@ impl Peer {
 
     /// Starts an agent in `home`, which may already hold pins and grants.
     pub fn start_in(home: Scratch, host: &str, extra: &[&str]) -> Self {
-        let listen = format!("{host}:0");
-        let mut args = vec!["--agent", "--listen", listen.as_str()];
-        args.extend_from_slice(extra);
-        let mut process: ono_testkit::OwnedChild = Command::new(binary())
-            .args(&args)
-            .env("HOME", home.path())
-            .env("XDG_CONFIG_HOME", home.path())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("the agent starts")
-            .into();
-        let stderr = process.stderr.take().expect("stderr was piped");
-        let log = Arc::new(Mutex::new(String::new()));
-        let collecting = Arc::clone(&log);
-        let (sender, lines) = mpsc::channel::<String>();
-        std::thread::spawn(move || {
-            let mut reader = BufReader::new(stderr);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                if reader.read_line(&mut line).unwrap_or(0) == 0 {
-                    return;
-                }
-                collecting
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push_str(&line);
-                // The suite reads the start-up lines; after that nobody listens, and that is
-                // fine — the log keeps collecting.
-                let _ = sender.send(line.trim().to_owned());
-            }
-        });
-        let (mut address, mut fingerprint) = (None, None);
-        while address.is_none() || fingerprint.is_none() {
-            let line = lines.recv_timeout(STARTUP).unwrap_or_else(|_| {
-                panic!(
-                    "the agent on {host} ended before it said where it listens: {}",
-                    log.lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                )
-            });
-            if let Some(bound) = line.split("listening on ").nth(1) {
-                address = Some(bound.trim().to_owned());
-            } else if let Some(printed) = line.split("host key ").nth(1) {
-                fingerprint = Some(printed.trim().to_owned());
-            }
-        }
+        let extra: Vec<String> = extra.iter().map(|word| (*word).to_owned()).collect();
+        let launched = launch(&home, &format!("{host}:0"), &extra);
         Self {
             home,
-            address: address.unwrap_or_default(),
+            address: launched.address,
             host: host.to_owned(),
-            fingerprint: fingerprint.unwrap_or_default(),
-            process: Some(process),
-            log,
-            _lines: lines,
+            fingerprint: launched.fingerprint,
+            process: Some(launched.process),
+            log: launched.log,
+            _lines: launched.lines,
+            extra,
         }
+    }
+
+    /// Ends the peer and starts it again in the same home, on the same address and port: the
+    /// same host coming back, with the same key.
+    pub fn restart(&mut self) {
+        self.kill();
+        let launched = launch(&self.home, &self.address, &self.extra);
+        assert_eq!(
+            launched.fingerprint, self.fingerprint,
+            "a peer restarted in its home proves the same key"
+        );
+        self.process = Some(launched.process);
+        self.log = launched.log;
+        self._lines = launched.lines;
     }
 
     /// Lets the shell (or agent) whose home is `client` observe this peer (§9.4).
@@ -161,6 +198,26 @@ impl Peer {
         if let Some(mut process) = self.process.take() {
             let _ = process.kill();
             let _ = process.wait();
+        }
+    }
+
+    /// Stops the peer without ending it — a host that holds its connections and answers nothing.
+    pub fn freeze(&self) {
+        self.signal("-STOP");
+    }
+
+    /// Lets a frozen peer run again.
+    pub fn thaw(&self) {
+        self.signal("-CONT");
+    }
+
+    fn signal(&self, which: &str) {
+        if let Some(pid) = self.pid() {
+            let sent = Command::new("kill")
+                .args([which, &pid.to_string()])
+                .status()
+                .expect("kill runs");
+            assert!(sent.success(), "kill {which} {pid}");
         }
     }
 
@@ -247,4 +304,21 @@ impl Drop for Streaming {
         let _ = self.process.kill();
         let _ = self.process.wait();
     }
+}
+
+/// A home whose agent will hold a link to each of `onward` (`--link <name>=<address>`): it pins
+/// each one, and each one authorizes it, before the agent starts (ADR-1097).
+pub fn holding(host: &str, onward: &[(&str, &Peer)]) -> Peer {
+    let home = scratch();
+    let mut extra = Vec::new();
+    for (name, next) in onward {
+        pin(&home, next);
+        next.authorize(&home);
+        extra.push("--link".to_owned());
+        extra.push(format!("{name}={}", next.address));
+    }
+    let extra: Vec<&str> = extra.iter().map(String::as_str).collect();
+    let peer = Peer::start_in(home, host, &extra);
+    peer.wait_for("connected to", onward.len());
+    peer
 }

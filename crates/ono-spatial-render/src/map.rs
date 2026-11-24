@@ -24,7 +24,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use ono_value::RecordValue;
+use ono_value::{RecordValue, Value};
 
 use crate::{fit, integer, list, record, text};
 
@@ -232,6 +232,41 @@ pub fn map_lines(map: &RecordValue, width: usize, charset: Charset) -> Vec<MapLi
                     charset.landmark(),
                     charset.dash()
                 ),
+                width,
+            )));
+        }
+    }
+
+    // ADR-1097: what each linked host answered when asked for its own links. A refusal is
+    // printed as one — "not permitted to see" is never drawn as a host without links.
+    let federation = far_links(map);
+    if !federation.is_empty() {
+        lines.push(MapLine::plain(String::new()));
+        lines.push(MapLine::plain("  far links".to_owned()));
+        for asked in &federation {
+            let field = |name: &str| match asked.get(name) {
+                // A reason may quote the far side's own message: sanitised like every text a
+                // map draws (ADR-0015 T1).
+                Some(Value::String(text)) => ono_render::sanitise(text),
+                _ => String::new(),
+            };
+            let count = match asked.get("count") {
+                Some(Value::Int(count)) => *count,
+                _ => 0,
+            };
+            let link = field("link");
+            let said = match field("status").as_str() {
+                "listed" => format!("{count} reported by its agent"),
+                "partial" => format!("{count} reported, more held than it may send"),
+                "not_permitted" => "not permitted to see its links".to_owned(),
+                "not_offered" => "its agent does not offer its links".to_owned(),
+                "unavailable" => {
+                    format!("could not be asked {} {}", charset.dash(), field("reason"))
+                }
+                _ => format!("not asked {} {}", charset.dash(), field("reason")),
+            };
+            lines.push(MapLine::plain(fit(
+                &format!("    {link:<16} {said}"),
                 width,
             )));
         }
@@ -543,5 +578,19 @@ fn hidden_line(map: &RecordValue) -> Option<String> {
         Some(format!("{count} more not drawn"))
     } else {
         Some(format!("{count} more not drawn ({})", how.join(", ")))
+    }
+}
+
+/// The `federation` entries of a `map links --depth 2` (ADR-1097), or none.
+fn far_links(map: &RecordValue) -> Vec<ono_value::MapValue> {
+    match map.get("federation") {
+        Some(Value::List(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                Value::Map(entry) => Some(ono_value::MapValue::clone(entry)),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
     }
 }

@@ -8,7 +8,7 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 132 examples run; 242 are not run, each for the reason listed at the end of this file.
+//! 133 examples run; 242 are not run, each for the reason listed at the end of this file.
 //! 52 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
 //! Commands no example of which runs (144):
@@ -1379,6 +1379,18 @@ fn should_produce_what_ono_place_map_links_declares_when_example_2_runs() {
     harness::assert_example_conforms(&harness::ExampleCase {
         command: "ono.place.map-links",
         example: "map links --json",
+        output: "ono.spatial-map/1 | string",
+        may_be_empty: None,
+    });
+}
+
+/// `map links --depth 2`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_place_map_links_declares_when_example_3_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.place.map-links",
+        example: "map links --depth 2",
         output: "ono.spatial-map/1 | string",
         may_be_empty: None,
     });

@@ -1042,7 +1042,7 @@ fn connect_agent(
 /// read of one record, when the link is made; a far side that serves no `kernel` target, or
 /// whose kernel publishes no boot id, leaves it unstated.
 #[cfg(feature = "remote")]
-async fn far_boot(registry: &ono_provider_api::ProviderRegistry) -> Option<String> {
+pub(crate) async fn far_boot(registry: &ono_provider_api::ProviderRegistry) -> Option<String> {
     let stream = registry
         .snapshot(&ono_provider_api::Query::target("kernel"))
         .ok()?;

@@ -2211,6 +2211,7 @@ Default view: `center`, `zoom_level`, `completeness`, `generated_at`
 | `freshness` | `enum` | — | required | §25.3's five words: how the data behind this projection is kept current. A live view MUST expose it, and a still one answers for the observation it was built from. |
 | `change_source` | `enum` | — | nullable | What the changes below were observed through (§25.4), or null where nothing was watching. |
 | `changes` | `list<ono.spatial-change/1>` | — | required | What moved since the previous value of a live stream (§25.1). Empty for the opening snapshot and for a `map` asked once — §24.3 forbids inventing a change where no event source or comparison snapshot exists, and §25.2 forbids reporting one where nothing moved. |
+| `federation` | `list<map>` | — | nullable | What each link answered when `map links --depth 2` asked its far side for the links it holds (`ono.link.links/1`, v0.4 §19.3, ADR-1097): one entry per link this session holds, with `link`, `status`, `count`, `code` and `reason`. `status` is `listed`, `partial` (the far side holds more than it may send and said so), `not_permitted` (the far side refused — never "no links"), `not_offered` (an older agent, or no agent), `unavailable` (the link is down, or the request failed or timed out) or `not_asked` (the link is not connected and followed, or beyond the bound on peers one map asks). Null for every map that asked nobody. |
 
 ## SpatialNeighbor — `ono.spatial-neighbor/1`
 

@@ -41,6 +41,8 @@ compile_error!(
 );
 
 pub mod absent;
+#[cfg(feature = "remote")]
+pub mod agent_links;
 pub mod builtin;
 #[cfg(feature = "change")]
 pub mod change;
@@ -147,7 +149,10 @@ pub fn usage_text() -> String {
         name = ono_core::SHORT_NAME,
         // A flag of the remote tier is offered only by a build that has it (ADR-0911).
         peer_key = if cfg!(feature = "remote") {
-            "  --print-peer-key print this shell's own link fingerprint and exit\n"
+            "  --print-peer-key print this shell's own link fingerprint and exit\n  \
+             --agent [--listen [<address>]] [--link <name>=<host:port>]...\n                   \
+             serve this machine to a linked shell; a listening agent holds the\n                   \
+             links it is told to and tells a peer that may observe it about them\n"
         } else {
             ""
         },

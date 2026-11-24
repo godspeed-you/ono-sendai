@@ -18,6 +18,7 @@ pub mod commands;
 pub mod complete;
 pub mod contributions;
 pub mod cursor;
+pub mod federation;
 pub mod find;
 pub mod historical;
 pub mod interactive;

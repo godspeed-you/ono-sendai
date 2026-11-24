@@ -222,3 +222,14 @@ async fn should_probe_through_a_handle_that_does_not_keep_the_link_open() {
         .expect_err("a handle to a dropped link measures nothing");
     assert_eq!(refusal.code(), ErrorCode::RemoteUnreachable);
 }
+
+#[tokio::test]
+async fn should_tell_a_holder_when_its_link_is_gone() {
+    let fixture = common::try_connect(client_config("testhost"), probing_agent(), None)
+        .await
+        .expect("the handshake succeeds");
+    assert!(fixture.link.is_alive());
+    fixture.server.abort();
+    within(fixture.link.closed()).await;
+    assert!(!fixture.link.is_alive());
+}

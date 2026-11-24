@@ -210,6 +210,7 @@ commands:
     options:
       - {name: json, type: bool, doc: "Write the `SpatialMap` as one JSON document rather than rendering it (v0.4 §22, §29.4)."}
       - {name: all, type: bool, doc: "The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2)."}
+      - {name: depth, type: int, doc: "`1` (the default): this host and the links it holds. `2`: also each linked host's own links, as its agent reports them where this session may observe it — drawn `inferred`, attributed to the peer that reported them (v0.4 §19.3, §19.4, ADR-1097). Nothing deeper is drawn: an agent asks nobody further on your behalf."}
     privilege: none
     streaming: false
     acquisition: {scope: local, cost: cheap}
@@ -224,6 +225,7 @@ commands:
     examples:
       - map links
       - map links --json
+      - map links --depth 2
 
   - id: ono.place.home
     verb: home

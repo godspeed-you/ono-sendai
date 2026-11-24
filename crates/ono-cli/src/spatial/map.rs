@@ -395,6 +395,7 @@ pub fn record_of(
         crate::spatial::live::capable(providers, session, &map.center),
         map,
         changes,
+        Value::Null,
     )
 }
 
@@ -413,7 +414,7 @@ pub fn historical_record_of(
     world: &crate::spatial::HistoricalWorld,
     map: &SpatialMap,
 ) -> Result<RecordValue, ErrorValue> {
-    map_record(world.index(), world.scope(), false, map, None)
+    map_record(world.index(), world.scope(), false, map, None, Value::Null)
 }
 
 /// The places and edges around `center`, as the providers answer for them (§2.16, §45.6).
@@ -613,6 +614,7 @@ fn map_record(
     live_capable: bool,
     map: &SpatialMap,
     changes: Option<&ono_spatial_events::ChangeSet>,
+    federation: Value,
 ) -> Result<RecordValue, ErrorValue> {
     let mut nodes = Vec::with_capacity(map.nodes.len());
     for node in &map.nodes {
@@ -674,6 +676,9 @@ fn map_record(
         }),
     )?
     .set("changes", change_records(changes)?)?
+    // ADR-1097: what each linked host answered when `map links --depth 2` asked it for its own
+    // links; null for every map that asked nobody.
+    .set("federation", federation)?
     .build())
 }
 
@@ -939,7 +944,36 @@ impl CommandImpl for MapLinks {
         Box::pin(async move {
             let arguments = ctx.arguments();
             let json = arguments.flag("json");
-            let request = MapRequest::new().all(arguments.flag("all")).depth(1);
+            // §19.3: the federated map stops at the links this session holds unless more is
+            // asked for, and `--depth 2` — each linked host's own links — is the most there is:
+            // nothing relays a question past the peer it was asked of (ADR-1097).
+            let depth = match arguments.option("depth") {
+                None | Some(Value::Null) => 1,
+                Some(Value::Int(depth))
+                    if (1..=crate::spatial::federation::MAX_DEPTH as i128).contains(depth) =>
+                {
+                    usize::try_from(*depth).unwrap_or(1)
+                }
+                Some(other) => {
+                    return Err(ErrorValue::new(
+                        ErrorCode::TypeMismatch,
+                        format!(
+                            "`map links --depth` is 1 or {}, not {}",
+                            crate::spatial::federation::MAX_DEPTH,
+                            ono_value::canonical_text(other).unwrap_or_default()
+                        ),
+                    )
+                    .with_metadata(
+                        "limit",
+                        Value::Int(crate::spatial::federation::MAX_DEPTH as i128),
+                    )
+                    .with_help(
+                        "a linked host tells about the links it holds; it asks nobody further on \
+                         your behalf, so a third hop is never drawn (ADR-1097)",
+                    ));
+                }
+            };
+            let request = MapRequest::new().all(arguments.flag("all")).depth(depth);
             let now = Timestamp::now();
 
             let mut session = spatial_session().await;
@@ -953,6 +987,7 @@ impl CommandImpl for MapLinks {
             crate::spatial::links::measure().await;
             let mut horizon = MapHorizon::new();
             horizon.place(HorizonPlace::new(center.clone(), 0, None));
+            let mut hop1 = Vec::new();
             for link in crate::spatial::links::all() {
                 let scope = ono_spatial_core::SpatialScope::remote_host(
                     &link.name,
@@ -965,7 +1000,23 @@ impl CommandImpl for MapLinks {
                         .in_state(Some(link.state().to_owned())),
                 );
                 horizon.edge(link_edge(&center, &root, &link, now));
+                hop1.push((link, root));
             }
+            let federation = if depth >= 2 {
+                let own = own_fingerprint();
+                let federation =
+                    crate::spatial::federation::second_hop(&center, &hop1, own.as_deref(), now)
+                        .await?;
+                for place in federation.places {
+                    horizon.place(place);
+                }
+                for edge in federation.edges {
+                    horizon.edge(edge);
+                }
+                Value::list(federation.report)
+            } else {
+                Value::Null
+            };
 
             let pins = session.pins().clone();
             let map = ono_spatial_query::project_map(
@@ -977,7 +1028,14 @@ impl CommandImpl for MapLinks {
                 session.preferences().map_node_budget,
                 now,
             );
-            let record = record_of(ctx.providers(), &session, &map, None)?;
+            let record = map_record(
+                session.index(),
+                session.scope(),
+                crate::spatial::live::capable(ctx.providers(), &session, &map.center),
+                &map,
+                None,
+                federation,
+            )?;
 
             if json {
                 let document = ono_value::to_json_data(&Value::Record(Arc::new(record)));
@@ -996,6 +1054,25 @@ impl CommandImpl for MapLinks {
             ])))
         })
     }
+}
+
+/// This shell's own link fingerprint, where it has an identity already — never creating one to
+/// draw a map (ADR-1097): a far link back to it is a cycle to this host.
+fn own_fingerprint() -> Option<String> {
+    #[cfg(feature = "remote")]
+    {
+        let environment: Vec<(String, String)> = std::env::vars().collect();
+        let sources = crate::hosts::HostSources::from_environment(
+            environment
+                .iter()
+                .map(|(name, value)| (name.as_str(), value.as_str())),
+        );
+        let directory = sources.config_dir?;
+        crate::trust::existing_link_identity(&directory)
+            .map(|identity| identity.fingerprint().to_string())
+    }
+    #[cfg(not(feature = "remote"))]
+    None
 }
 
 /// The edge one link draws on the federated map (§19.3, §19.4, §11.5).

@@ -433,3 +433,26 @@ pub async fn try_connect(
         server: handle,
     })
 }
+
+/// An audit sink a suite reads back: every event the agent recorded, rendered (§14.1).
+#[derive(Debug, Default)]
+pub struct Recording(std::sync::Mutex<Vec<String>>);
+
+impl ono_protocol::AuditSink for Recording {
+    fn record(&self, event: &ono_protocol::AuditEvent) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(event.render());
+    }
+}
+
+impl Recording {
+    /// Every event recorded so far, in order.
+    pub fn lines(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+}

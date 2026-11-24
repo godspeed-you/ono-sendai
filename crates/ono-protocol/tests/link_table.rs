@@ -12,18 +12,20 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use ono_core::ErrorCode;
 use ono_protocol::{
-    AuditEvent, AuditSink, AuthorizedClient, AuthorizedClients, FrameKind, LINKS_CAPABILITY,
-    LinkEntry, LinkTable, MAX_LINK_FIELD_BYTES, MAX_LINK_TABLE_ENTRIES, PROBE_CAPABILITY,
-    ServerAuthorization, ServerConfig,
+    AuthorizedClient, AuthorizedClients, FrameKind, LINKS_CAPABILITY, LinkEntry, LinkTable,
+    MAX_LINK_FIELD_BYTES, MAX_LINK_TABLE_ENTRIES, PROBE_CAPABILITY, ServerAuthorization,
+    ServerConfig,
 };
 
 mod common;
-use common::{DemoService, Observed, client_config, client_key, server_config, tap, within};
+use common::{
+    DemoService, Observed, Recording, client_config, client_key, server_config, tap, within,
+};
 
 const WAIT: Duration = Duration::from_secs(5);
 
@@ -54,18 +56,6 @@ fn entry(name: &str, state: &str) -> LinkEntry {
 
 fn service(table: LinkTable) -> DemoService {
     DemoService::new(Arc::new(Observed::default())).with_links(table)
-}
-
-#[derive(Debug, Default)]
-struct Recording(Mutex<Vec<String>>);
-
-impl AuditSink for Recording {
-    fn record(&self, event: &AuditEvent) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(event.render());
-    }
 }
 
 #[tokio::test]
@@ -164,11 +154,7 @@ async fn should_refuse_and_record_a_link_table_the_connection_may_not_observe() 
         .await
         .expect_err("a connection that may not observe is refused the table");
     assert_eq!(refusal.code(), ErrorCode::RemoteCapabilityDenied);
-    let recorded = audit
-        .0
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .join("\n");
+    let recorded = audit.lines().join("\n");
     assert!(
         recorded.contains("authorization.denied") && recorded.contains("link.list"),
         "the denial is recorded with the capability `get link` declares, got {recorded}"

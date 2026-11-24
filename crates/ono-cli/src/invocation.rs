@@ -53,6 +53,8 @@ pub struct AgentOptions {
     pub host_key: Option<PathBuf>,
     /// Print this host's key fingerprint and exit — what a person pins the host by.
     pub print_host_key: bool,
+    /// The links a listening agent holds of its own, `<name>=<host:port>` each (ADR-1097).
+    pub links: Vec<String>,
 }
 
 /// Settings taken from the command line rather than from configuration.
@@ -112,12 +114,29 @@ impl Invocation {
                                 None => return Self::Usage("--host-key needs a path".to_owned()),
                             },
                             "--print-host-key" => agent.print_host_key = true,
+                            "--link" => match rest.next() {
+                                Some(link) => agent.links.push(link),
+                                None => {
+                                    return Self::Usage(
+                                        "--link needs <name>=<host:port>".to_owned(),
+                                    );
+                                }
+                            },
                             other => {
                                 return Self::Usage(format!(
                                     "unrecognised arguments after --agent: {other}"
                                 ));
                             }
                         }
+                    }
+                    // ADR-1097: an agent reached over stdio serves one caller and holds no
+                    // links of its own; only a listening agent does.
+                    if !agent.links.is_empty() && agent.listen.is_none() {
+                        return Self::Usage(
+                            "--link needs --listen: an agent that serves one caller over stdio \
+                             holds no links of its own"
+                                .to_owned(),
+                        );
                     }
                     return Self::Agent(options, agent);
                 }

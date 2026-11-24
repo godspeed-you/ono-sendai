@@ -291,11 +291,14 @@ struct LinkInner {
     failure: Mutex<Option<ErrorValue>>,
     limits: Limits,
     window: u32,
+    /// Woken when the link fails, for whoever waits on [`Link::closed`].
+    gone: tokio::sync::Notify,
 }
 
 impl LinkInner {
     fn fail(&self, error: &ErrorValue) {
         self.alive.store(false, Ordering::SeqCst);
+        self.gone.notify_waiters();
         if let Ok(mut slot) = self.failure.lock()
             && slot.is_none()
         {
@@ -492,6 +495,7 @@ impl Link {
             failure: Mutex::new(None),
             limits: limits.clone(),
             window,
+            gone: tokio::sync::Notify::new(),
         });
         spawn_reader(
             Arc::clone(&inner),
@@ -614,6 +618,7 @@ impl Link {
         Prober {
             inner: Arc::downgrade(&self.inner),
             offered: self.offers(crate::PROBE_CAPABILITY),
+            offers_links: self.offers(crate::LINKS_CAPABILITY),
             link: self.id,
         }
     }
@@ -637,65 +642,7 @@ impl Link {
         &self,
         timeout: std::time::Duration,
     ) -> Result<crate::LinkTable, ErrorValue> {
-        if !self.offers(crate::LINKS_CAPABILITY) {
-            return Err(crate::features::not_offered(
-                crate::LINKS_CAPABILITY,
-                "the request for its link table",
-            ));
-        }
-        let mut opened = self.inner.open(FrameKind::ListLinks, &Message::ListLinks)?;
-        let deadline = tokio::time::Instant::now() + timeout;
-        let mut table = None;
-        let mut refusal = None;
-        loop {
-            match tokio::time::timeout_at(deadline, opened.receiver.recv()).await {
-                Ok(Some(Inbound::LinkTable(answer))) if table.is_none() => {
-                    table = Some(*answer);
-                }
-                Ok(Some(Inbound::Failure(error))) => refusal = Some(*error),
-                Ok(Some(Inbound::End)) => {
-                    self.inner.release(opened.id);
-                    break;
-                }
-                Ok(Some(_)) => {
-                    self.inner.cancel_stream(opened.id);
-                    return Err(ErrorValue::from(ProtocolError::MalformedPayload {
-                        kind: FrameKind::ListLinks,
-                        detail: "a link table request is answered with one table and an end"
-                            .to_owned(),
-                    }));
-                }
-                Ok(None) => {
-                    self.inner.release(opened.id);
-                    return Err(refusal.unwrap_or_else(|| {
-                        self.inner.status().err().unwrap_or_else(|| {
-                            unreachable("the link closed before the link table arrived")
-                        })
-                    }));
-                }
-                Err(_elapsed) => {
-                    self.inner.cancel_stream(opened.id);
-                    return Err(unreachable(format!(
-                        "the far side did not send its link table within {} ms",
-                        timeout.as_millis()
-                    ))
-                    .with_retryable(true)
-                    .with_metadata(
-                        "timeout_ms",
-                        Value::Int(i128::try_from(timeout.as_millis()).unwrap_or(i128::MAX)),
-                    ));
-                }
-            }
-        }
-        if let Some(refusal) = refusal {
-            return Err(refusal);
-        }
-        table.ok_or_else(|| {
-            ErrorValue::from(ProtocolError::MalformedPayload {
-                kind: FrameKind::ListLinks,
-                detail: "the far side ended the request without a link table".to_owned(),
-            })
-        })
+        links(&self.inner, self.offers(crate::LINKS_CAPABILITY), timeout).await
     }
 
     /// Whether the handshake negotiated the protocol feature `id` (ADR-1056, rule 2).
@@ -718,6 +665,18 @@ impl Link {
         });
         open.sort_by_key(|stream| stream.id);
         open
+    }
+
+    /// Resolves once the link has failed or the far side has hung up — what a holder of a link
+    /// waits on to know it must make it again. Sends nothing.
+    pub async fn closed(&self) {
+        loop {
+            let gone = self.inner.gone.notified();
+            if self.inner.status().is_err() {
+                return;
+            }
+            gone.await;
+        }
     }
 
     /// Whether the link is still up: no transport failure and no hang-up has been seen.
@@ -811,7 +770,74 @@ async fn probe(
     }
 }
 
-/// A probe handle for one link that does not keep the link open (ADR-1095).
+/// Asks the far side behind `inner` for its link table (see [`Link::links`]).
+async fn links(
+    inner: &Arc<LinkInner>,
+    offered: bool,
+    timeout: std::time::Duration,
+) -> Result<crate::LinkTable, ErrorValue> {
+    if !offered {
+        return Err(crate::features::not_offered(
+            crate::LINKS_CAPABILITY,
+            "the request for its link table",
+        ));
+    }
+    let mut opened = inner.open(FrameKind::ListLinks, &Message::ListLinks)?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut table = None;
+    let mut refusal = None;
+    loop {
+        match tokio::time::timeout_at(deadline, opened.receiver.recv()).await {
+            Ok(Some(Inbound::LinkTable(answer))) if table.is_none() => {
+                table = Some(*answer);
+            }
+            Ok(Some(Inbound::Failure(error))) => refusal = Some(*error),
+            Ok(Some(Inbound::End)) => {
+                inner.release(opened.id);
+                break;
+            }
+            Ok(Some(_)) => {
+                inner.cancel_stream(opened.id);
+                return Err(ErrorValue::from(ProtocolError::MalformedPayload {
+                    kind: FrameKind::ListLinks,
+                    detail: "a link table request is answered with one table and an end".to_owned(),
+                }));
+            }
+            Ok(None) => {
+                inner.release(opened.id);
+                return Err(refusal.unwrap_or_else(|| {
+                    inner.status().err().unwrap_or_else(|| {
+                        unreachable("the link closed before the link table arrived")
+                    })
+                }));
+            }
+            Err(_elapsed) => {
+                inner.cancel_stream(opened.id);
+                return Err(unreachable(format!(
+                    "the far side did not send its link table within {} ms",
+                    timeout.as_millis()
+                ))
+                .with_retryable(true)
+                .with_metadata(
+                    "timeout_ms",
+                    Value::Int(i128::try_from(timeout.as_millis()).unwrap_or(i128::MAX)),
+                ));
+            }
+        }
+    }
+    if let Some(refusal) = refusal {
+        return Err(refusal);
+    }
+    table.ok_or_else(|| {
+        ErrorValue::from(ProtocolError::MalformedPayload {
+            kind: FrameKind::ListLinks,
+            detail: "the far side ended the request without a link table".to_owned(),
+        })
+    })
+}
+
+/// A handle for one link that does not keep the link open: it probes the link (ADR-1095) and
+/// asks it for the far side's link table (ADR-1097).
 ///
 /// Two handles are equal when they probe the same link: a link made again after it went down is
 /// another link, and nothing measured on the first one is a measurement of the second.
@@ -819,6 +845,7 @@ async fn probe(
 pub struct Prober {
     inner: std::sync::Weak<LinkInner>,
     offered: bool,
+    offers_links: bool,
     link: u64,
 }
 
@@ -845,6 +872,27 @@ impl Prober {
         self.inner
             .upgrade()
             .is_some_and(|inner| inner.status().is_ok())
+    }
+
+    /// Asks the far side for its link table, as [`Link::links`] does (ADR-1097).
+    ///
+    /// # Errors
+    ///
+    /// As [`Link::links`]; a link that has been dropped is `remote.unreachable`.
+    pub async fn links(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<crate::LinkTable, ErrorValue> {
+        let Some(inner) = self.inner.upgrade() else {
+            return Err(unreachable("the link is closed"));
+        };
+        links(&inner, self.offers_links, timeout).await
+    }
+
+    /// Whether the far side offered its link table at all.
+    #[must_use]
+    pub const fn offers_links(&self) -> bool {
+        self.offers_links
     }
 
     /// Whether the far side offered the probe at all.
