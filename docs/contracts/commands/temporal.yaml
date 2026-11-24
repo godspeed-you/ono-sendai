@@ -170,7 +170,7 @@ commands:
     output: ono.causal-explanation/1
     provider_capability: null
     selectors:
-      - {name: subject, type: string, repeatable: true, doc: "One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place."}
+      - {name: subject, type: string, repeatable: true, doc: "One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place. A target and a selector are resolved to the place they name — `process 1` is `process/1` — exactly as `enter` resolves them, and a selector nothing answers to is refused with `spatial.not_found` rather than explained as something else (ADR-1066)."}
     options:
       - {name: depth, type: int, doc: "How many causal hops the explanation follows. Defaults to `temporal.timeline.default_depth` (v0.5 §16.7, §33)."}
       - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
@@ -182,6 +182,7 @@ commands:
       as causes; a correlation stays a correlation however plausible it reads (§15.6, §16.6).
     examples:
       - why service nginx
+      - why process 1
       - why event @e42
       - why field state
 

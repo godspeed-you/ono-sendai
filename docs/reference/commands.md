@@ -7241,7 +7241,7 @@ Explain a state, an event or a field from registered causal rules and their evid
 
 | name | type | meaning |
 |---|---|---|
-| `subject` | `string` | One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place. *(repeatable)* |
+| `subject` | `string` | One of §16.2's three forms: a target and a selector (`service nginx`), `event @e42`, or `field state` about the current place. A target and a selector are resolved to the place they name — `process 1` is `process/1` — exactly as `enter` resolves them, and a selector nothing answers to is refused with `spatial.not_found` rather than explained as something else (ADR-1066). *(repeatable)* |
 
 **Options**
 
@@ -7256,6 +7256,7 @@ Explain a state, an event or a field from registered causal rules and their evid
 
 ```text
 why service nginx
+why process 1
 why event @e42
 why field state
 ```

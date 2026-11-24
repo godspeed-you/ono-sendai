@@ -93,7 +93,9 @@ fn should_explain_without_a_model_when_none_is_configured() {
         catalogue.output()
     );
 
-    let answer = explanation(&recording_shell(&home, "why service nginx | to json"));
+    // `process/1` is on every Linux host, so the target resolves wherever the test runs; a
+    // target that did not would be refused before any explanation was attempted (ADR-1066).
+    let answer = explanation(&recording_shell(&home, "why process 1 | to json"));
     assert!(
         !field(&answer, "state_or_change").is_null(),
         "v0.5 §16.1: `why` \"is not an LLM prompt and MUST NOT require an AI model\" — with no \
@@ -112,11 +114,16 @@ fn should_explain_without_a_model_when_none_is_configured() {
 #[test]
 fn should_explain_a_state_when_the_first_form_names_a_target_and_a_selector() {
     let home = ono_testkit::scratch();
+    let child = support::SleepChild::spawn();
 
-    let answer = explanation(&recording_shell(&home, "why service nginx | to json"));
+    let answer = explanation(&recording_shell(
+        &home,
+        &format!("why process {} | to json", child.pid()),
+    ));
 
+    // The fixture is a `sleep`, and the explanation names the place the selector resolved to.
     assert!(
-        text(&answer, "state_or_change").contains("nginx"),
+        text(&answer, "state_or_change").contains("process/sleep"),
         "v0.5 §16.2, §16.3: `why <target> <selector>` explains the subject the selector named, \
          got {answer:?}"
     );
@@ -182,4 +189,59 @@ fn should_name_all_three_forms_when_why_is_asked_to_explain_nothing() {
              missing from {output:?}"
         );
     }
+}
+
+#[test]
+fn should_explain_the_named_target_when_two_targets_are_asked_about() {
+    // Issue #148: `why process 1` and `why process 9` answered about one and the same subject —
+    // the place the session stood in. §16.3 makes the explanation about the target the selector
+    // names, so two targets are two subjects.
+    let home = ono_testkit::scratch();
+    let child = support::SleepChild::spawn();
+
+    let init = explanation(&recording_shell(&home, "why process 1 | to json"));
+    let sleeper = explanation(&recording_shell(
+        &home,
+        &format!("why process {} | to json", child.pid()),
+    ));
+
+    let subject = |answer: &Value| field(answer, "subject");
+    assert!(
+        !subject(&init).is_null() && !subject(&sleeper).is_null(),
+        "v0.5 §16.4: an explanation names its subject. Got {init:?} and {sleeper:?}"
+    );
+    assert_ne!(
+        subject(&init),
+        subject(&sleeper),
+        "v0.5 §16.3: `why process 1` and `why process {}` are about two different processes. Got \
+         {init:?} and {sleeper:?}",
+        child.pid()
+    );
+    let root = explanation(&recording_shell(&home, "why field state | to json"));
+    assert_ne!(
+        subject(&init),
+        subject(&root),
+        "issue #148: the target is not the place the session stands in. Got {init:?}"
+    );
+}
+
+#[test]
+fn should_refuse_a_target_that_does_not_resolve_rather_than_explain_the_current_place() {
+    // ADR-1066: a selector nothing answers to is refused by v0.4 §40's resolution refusal, and
+    // nothing is explained — explaining the current place instead would answer a question that
+    // was not asked.
+    let home = ono_testkit::scratch();
+
+    let run = recording_shell(&home, "why process 4294967294 | to json");
+
+    assert!(
+        !run.status().is_success() && run.output().contains("spatial.not_found"),
+        "issue #148: a target that does not resolve is refused as such. Got {:?}",
+        run.output()
+    );
+    assert!(
+        !run.output().contains("ono.causal-explanation"),
+        "nothing is explained for a target that does not exist. Got {:?}",
+        run.output()
+    );
 }

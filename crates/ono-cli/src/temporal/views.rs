@@ -305,9 +305,20 @@ impl CommandImpl for Why {
                      <name>`",
                 ));
             }
-            let mut state = temporal_session().await;
+            // A target and a field are places, resolved before the temporal state is taken: the
+            // resolution may ask a provider, and holding one state while waiting for the other
+            // is the nesting ADR-1066 removes from this command.
+            let spatial = spatial_request(ctx.providers(), &subject).await?;
+            let state = temporal_session().await;
             let anchor = state.context().instant().unwrap_or(now);
-            let request = why_request(&mut state, &subject).await?;
+            let request = match spatial {
+                Some(request) => request,
+                None => {
+                    let reference = subject.get(1).map(String::as_str).unwrap_or_default();
+                    let event = super::coordinate::retained_event(&state, reference, now)?;
+                    WhyRequest::event(&event.event_id)
+                }
+            };
 
             let ledger = state.ledger_handle();
             let window = TimeRange::until(anchor);
@@ -345,31 +356,43 @@ impl CommandImpl for Why {
     }
 }
 
-/// §16.2's three forms, read from the words after `why`.
-async fn why_request(
-    state: &mut TemporalState,
+/// §16.2's first and third forms, read from the words after `why`; `None` for `why event`.
+///
+/// The first form's words are a v0.4 selector — `why process 1` asks about `process/1` — and it
+/// is resolved by the same resolution `enter` uses, at the session's coordinate (§14.1). The
+/// request names the identity that resolved, so the explanation is about the target that was
+/// named (§16.3, issue #148); a selector nothing answers to is that resolution's own refusal.
+async fn spatial_request(
+    providers: &ono_provider_api::ProviderRegistry,
     subject: &[String],
-) -> Result<WhyRequest, ErrorValue> {
+) -> Result<Option<WhyRequest>, ErrorValue> {
     match subject.split_first() {
-        Some((head, rest)) if head == "event" => {
-            let reference = rest.first().map(String::as_str).unwrap_or_default();
-            let event = super::coordinate::retained_event(state, reference, Timestamp::now())?;
-            Ok(WhyRequest::event(&event.event_id))
-        }
+        Some((head, _)) if head == "event" => Ok(None),
         Some((head, rest)) if head == "field" => {
             let field = rest.first().map(String::as_str).unwrap_or_default();
             let spatial = crate::spatial::spatial_session().await;
             let place = spatial.current_place().clone();
             let label = ono_spatial_query::resolve::concise_path(spatial.index(), &place);
-            Ok(WhyRequest::field(&place, &label, field))
+            Ok(Some(WhyRequest::field(&place, &label, field)))
         }
-        Some((_, _)) => {
-            // `why service nginx`: the words are a spatial selector, and resolving one is v0.4's.
-            let spelling = subject.join(" ");
-            let spatial = crate::spatial::spatial_session().await;
-            let place = spatial.current_place().clone();
-            let label = subject.last().cloned().unwrap_or(spelling);
-            Ok(WhyRequest::target(&place, &label))
+        Some((head, rest)) => {
+            let selector = if rest.is_empty() {
+                head.clone()
+            } else {
+                format!("{head}/{}", rest.join(" "))
+            };
+            let mut spatial = crate::spatial::spatial_session().await;
+            let here = spatial.current_place().clone();
+            let target = crate::spatial::commands::resolved_place(
+                providers,
+                &mut spatial,
+                &here,
+                &selector,
+                Timestamp::now(),
+            )
+            .await?;
+            let label = ono_spatial_query::resolve::concise_path(spatial.index(), &target);
+            Ok(Some(WhyRequest::target(&target, &label)))
         }
         None => Err(ErrorValue::new(
             ErrorCode::TypeMismatch,

@@ -8,7 +8,7 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 131 examples run; 241 are not run, each for the reason listed at the end of this file.
+//! 131 examples run; 242 are not run, each for the reason listed at the end of this file.
 //! 51 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
 //! Commands no example of which runs (144):
@@ -1672,13 +1672,13 @@ fn should_produce_what_ono_temporal_changes_declares_when_example_4_runs() {
     });
 }
 
-/// `why service nginx`
+/// `why process 1`
 #[rustfmt::skip]
 #[test]
-fn should_produce_what_ono_temporal_why_declares_when_example_1_runs() {
+fn should_produce_what_ono_temporal_why_declares_when_example_2_runs() {
     harness::assert_example_conforms(&harness::ExampleCase {
         command: "ono.temporal.why",
-        example: "why service nginx",
+        example: "why process 1",
         output: "ono.causal-explanation/1",
         may_be_empty: None,
     });
@@ -1687,7 +1687,7 @@ fn should_produce_what_ono_temporal_why_declares_when_example_1_runs() {
 /// `why field state`
 #[rustfmt::skip]
 #[test]
-fn should_produce_what_ono_temporal_why_declares_when_example_3_runs() {
+fn should_produce_what_ono_temporal_why_declares_when_example_4_runs() {
     harness::assert_example_conforms(&harness::ExampleCase {
         command: "ono.temporal.why",
         example: "why field state",
@@ -1981,6 +1981,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.temporal.present` `present git status` — exempt: runs `git status`, an external program whose effects and output no contract states, in a scratch directory that is not a repository.
 // - `ono.temporal.present` `present printf ok` — exempt: runs `printf`, an external program that writes to the terminal before the action result, so its output is not one inspectable document.
 // - `ono.temporal.changes` `changes --since 12:00 --until 12:30` — exempt: names a time of day, so whether it can run depends on the wall clock: before 12:30 local time the interval lies in the future and is refused as `temporal.invalid_time` (E1301), after it the interval is in the past. A test whose verdict depends on when it runs is not one (AGENTS.md §11).
+// - `ono.temporal.why` `why service nginx` — exempt: names the service `nginx`, and a fresh environment runs none; `why` resolves its target and refuses one that does not exist (ADR-1066). `why process 1` is the example that runs.
 // - `ono.temporal.why` `why event @e42` — refers to `@e42`, a result or event of a session the scratch shell does not have
 // - `ono.event.inspect` `inspect event @e42` — refers to `@e42`, a result or event of a session the scratch shell does not have
 // - `ono.recorder.start` `start recorder` — runs `ono.recorder.start`, whose verb `start` changes the system (verbs.yaml)
