@@ -1,0 +1,41 @@
+# Issue #201, ADR-1045. v0.4.1 §8.2 rule 5: the link identity and a host key named by
+# `--agent --host-key` must not diverge *silently*. `get peer-key` lists this shell's own identities
+# by fingerprint, each saying whether it is the link identity, and a listening agent presenting a
+# different key names the link identity in its startup summary. Neither prints key material.
+case: a host key that differs from the link identity is visible without opening either file
+timeout: 120
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+
+  echo "== nothing is made by looking =="
+  ono -c 'get peer-key | count | to json' | sed 's/^/before: /'
+  test -e "$HOME/ono/link_identity.pem" && echo "an identity was created" || true
+
+  LINK=$(ono --print-peer-key)
+  LEGACY=$(ono --agent --host-key "$HOME/ono/host_key.pem" --print-host-key)
+  echo "== the pair, by fingerprint =="
+  ono -c 'get peer-key | select role fingerprint same_as_link_identity | to json' > "$HOME/keys.json"
+  grep -q "\"role\":\"link_identity\",\"fingerprint\":\"$LINK\",\"same_as_link_identity\":true" "$HOME/keys.json" && echo "the link identity is listed"
+  grep -q "\"role\":\"legacy_host_key\",\"fingerprint\":\"$LEGACY\",\"same_as_link_identity\":false" "$HOME/keys.json" && echo "the legacy host key is listed as different"
+
+  echo "== an agent presenting the other key says so =="
+  ono --agent --host-key "$HOME/ono/host_key.pem" --listen 127.0.0.1:7744 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 100); do grep -q 'handshake timeout' "$HOME/agent.log" && break; sleep 0.2; done
+  kill "$AGENT" 2>/dev/null || true
+  wait "$AGENT" 2>/dev/null || true
+  grep -q "link identity $LINK .* differs from the host key this agent presents" "$HOME/agent.log" && echo "the agent names the diverging link identity"
+
+  echo "== and no output carries the key =="
+  cat "$HOME/keys.json" "$HOME/agent.log" | grep -c 'PRIVATE KEY' | sed 's/^/key blocks printed: /'
+exit: 0
+stdout-contains: before: [0]
+stdout-contains: the link identity is listed
+stdout-contains: the legacy host key is listed as different
+stdout-contains: the agent names the diverging link identity
+stdout-contains: key blocks printed: 0
+stdout-not-contains: an identity was created
+stdout-not-contains: panicked

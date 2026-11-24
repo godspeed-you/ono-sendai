@@ -486,28 +486,28 @@ pub const CATALOGUE: &[SettingSpec] = &[
     SettingSpec {
         key: "limits.remote_connections",
         ty: SettingType::Int,
-        description: "Concurrent authenticated connections one listening agent accepts (v0.4.1 §12.1, Appendix A). Declared and validated; enforcement is phase H3's.",
+        description: "Concurrent authenticated connections one listening agent accepts (v0.4.1 §12.1, Appendix A). The listening agent enforces it, read from `config.ono` and the environment like every setting (ADR-1042).",
         default: DefaultValue::Int(32),
         range: Some(Range { min: 1, max: 65536 }),
     },
     SettingSpec {
         key: "limits.remote_pending_handshakes",
         ty: SettingType::Int,
-        description: "Connections that may be mid-negotiation at once (v0.4.1 §12.2, Appendix A). Declared and validated; enforcement is phase H3's.",
+        description: "Connections that may be mid-negotiation at once (v0.4.1 §12.2, Appendix A). The listening agent enforces it, read from `config.ono` and the environment like every setting (ADR-1042).",
         default: DefaultValue::Int(16),
         range: Some(Range { min: 1, max: 65536 }),
     },
     SettingSpec {
         key: "limits.remote_connections_per_client",
         ty: SettingType::Int,
-        description: "Concurrent connections one authenticated fingerprint may hold (v0.4.1 §12.3, Appendix A). Declared and validated; enforcement is phase H3's.",
+        description: "Concurrent connections one authenticated fingerprint may hold (v0.4.1 §12.3, Appendix A). The listening agent enforces it, read from `config.ono` and the environment like every setting (ADR-1042).",
         default: DefaultValue::Int(4),
         range: Some(Range { min: 1, max: 65536 }),
     },
     SettingSpec {
         key: "limits.remote_handshake_timeout_ms",
         ty: SettingType::Int,
-        description: "How long TLS and protocol negotiation may take, in milliseconds (v0.4.1 §12.2, Appendix A). Declared and validated; enforcement is phase H3's.",
+        description: "How long TLS and protocol negotiation may take, in milliseconds (v0.4.1 §12.2, Appendix A). The listening agent enforces it, read from `config.ono` and the environment like every setting (ADR-1042).",
         default: DefaultValue::Int(10_000),
         range: Some(Range {
             min: 100,

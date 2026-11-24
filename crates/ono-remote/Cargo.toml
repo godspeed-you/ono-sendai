@@ -33,7 +33,6 @@ jiff.workspace = true
 # shell must not write twice, which is why `ono-protocol` left them outside the crate.
 rcgen.workspace = true
 rustls.workspace = true
-rustls-pemfile.workspace = true
 tokio-rustls.workspace = true
 # Signalling a child that will not take the hang-up. ADR-0005 chose `nix` for syscalls.
 nix = { workspace = true, features = ["signal"] }

@@ -492,7 +492,7 @@ commands:
     selectors:
       - {name: fingerprint, type: string, doc: "The client key to change."}
     options:
-      - {name: allow, type: string, doc: "Replace the action allowlist with these exact capability ids, comma-separated and quoted where there is more than one. Not a pattern and never `*`."}
+      - {name: allow, type: string, repeatable: true, doc: "Replace the action allowlist with these exact capability ids, one per `--allow`. Not a pattern and never `*`. A comma-separated list in one quoted value is still accepted (ADR-1043); `--allow \"\"` clears the allowlist."}
       - {name: observe, type: bool, doc: "Whether the client may run queries and subscriptions."}
       - {name: label, type: string, doc: "Rename the client."}
     privilege: none
@@ -500,6 +500,7 @@ commands:
     phase: H
     examples:
       - set client-key sha256:1f0c --allow service.manage
+      - set client-key sha256:1f0c --allow process.signal --allow service.manage
       - set client-key sha256:1f0c --observe false
 
   - id: ono.client-key.remove
@@ -519,3 +520,24 @@ commands:
     phase: H
     examples:
       - remove client-key sha256:1f0c
+
+  # This shell's own keys, by fingerprint (issue #201, ADR-1045): the link identity and the legacy
+  # host key the configuration directory holds, each saying whether it is the link identity, so a
+  # diverging pair (v0.4.1 §8.2 rule 5) is visible without opening either file. `get` only: making,
+  # replacing or deleting an identity is a deliberate file operation (§8.6).
+  - id: ono.peer-key.get
+    verb: get
+    target: peer-key
+    summary: List this shell's own identities by fingerprint, and whether each is the link identity.
+    stability: experimental
+    argument_mode: words
+    input: "null"
+    output: stream<ono.peer-key/1>
+    provider_capability: host.list
+    selectors: []
+    options: []
+    privilege: none
+    streaming: true
+    phase: H
+    examples:
+      - get peer-key

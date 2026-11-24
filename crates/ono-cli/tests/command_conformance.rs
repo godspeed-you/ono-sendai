@@ -8,8 +8,8 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 131 examples run; 241 are not run, each for the reason listed at the end of this file.
-//! 51 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
+//! 132 examples run; 242 are not run, each for the reason listed at the end of this file.
+//! 52 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
 //! Commands no example of which runs (144):
 //!
@@ -1276,6 +1276,18 @@ fn should_produce_what_ono_client_key_get_declares_when_example_1_runs() {
     });
 }
 
+/// `get peer-key`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_peer_key_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.peer-key.get",
+        example: "get peer-key",
+        output: "stream<ono.peer-key/1>",
+        may_be_empty: Some("a fresh configuration directory holds no identity until the first direct link or `--print-peer-key` makes one, and `get` never makes one (ADR-1045)."),
+    });
+}
+
 /// `get service`
 #[rustfmt::skip]
 #[test]
@@ -1916,6 +1928,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.host-key.remove` `remove host-key prod-db` — runs `ono.host-key.remove`, whose verb `remove` changes the system (verbs.yaml)
 // - `ono.client-key.add` `add client-key sha256:1f0c --label deploy` — runs `ono.client-key.add`, whose verb `add` changes the system (verbs.yaml)
 // - `ono.client-key.set` `set client-key sha256:1f0c --allow service.manage` — runs `ono.client-key.set`, whose verb `set` changes the system (verbs.yaml)
+// - `ono.client-key.set` `set client-key sha256:1f0c --allow process.signal --allow service.manage` — runs `ono.client-key.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.client-key.set` `set client-key sha256:1f0c --observe false` — runs `ono.client-key.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.client-key.remove` `remove client-key sha256:1f0c` — runs `ono.client-key.remove`, whose verb `remove` changes the system (verbs.yaml)
 // - `ono.service.start` `start service nginx` — runs `ono.service.start`, whose verb `start` changes the system (verbs.yaml)

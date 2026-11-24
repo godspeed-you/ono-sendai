@@ -140,6 +140,75 @@ fn identity_io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
     )
 }
 
+/// One of this shell's own identities, as `get peer-key` shows it (ADR-1045).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerKeyRow {
+    /// `link_identity` or `legacy_host_key`.
+    pub role: &'static str,
+    /// The file the identity is kept in.
+    pub path: PathBuf,
+    /// How the key is proved.
+    pub algorithm: String,
+    /// The full `sha256:` fingerprint — the public contract of v0.4.1 §7.2, and all of the key
+    /// that leaves the file.
+    pub fingerprint: String,
+    /// Whether this is the link identity's key; `None` when there is no link identity to compare.
+    pub same_as_link_identity: Option<bool>,
+}
+
+/// The identities in this session's configuration directory, and the files that could not be read
+/// as one (v0.4.1 §8.1, §8.2; ADR-1045).
+///
+/// Observes only: nothing is generated or migrated, and each file passes §8.3's owner-only check
+/// before it is read. A file that is not there is not a row; a file that is there and cannot be
+/// read as an identity is a failure, so an exposed or damaged key is never silently absent.
+#[must_use]
+pub fn peer_key_rows(sources: &crate::hosts::HostSources) -> (Vec<PeerKeyRow>, Vec<ErrorValue>) {
+    let Some(directory) = &sources.config_dir else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut found = Vec::new();
+    let mut failures = Vec::new();
+    for (role, file) in [
+        ("link_identity", LINK_IDENTITY_FILE),
+        ("legacy_host_key", HOST_KEY_FILE),
+    ] {
+        let path = directory.join(file);
+        if !path.exists() {
+            continue;
+        }
+        match PeerIdentity::open(&path) {
+            Ok(identity) => found.push((role, path, identity)),
+            Err(error) => failures.push(error),
+        }
+    }
+    let link = found
+        .iter()
+        .find(|(role, _, _)| *role == "link_identity")
+        .map(|(_, _, identity)| identity.fingerprint());
+    let rows = found
+        .into_iter()
+        .map(|(role, path, identity)| PeerKeyRow {
+            role,
+            path,
+            algorithm: identity.algorithm().to_owned(),
+            fingerprint: identity.fingerprint().to_string(),
+            same_as_link_identity: link.map(|link| link == identity.fingerprint()),
+        })
+        .collect();
+    (rows, failures)
+}
+
+/// The link identity in `directory`, when there is one, without creating or migrating anything —
+/// for the listening agent's summary to compare the key it presents against (ADR-1045).
+#[must_use]
+pub fn existing_link_identity(directory: &Path) -> Option<PeerIdentity> {
+    let path = directory.join(LINK_IDENTITY_FILE);
+    path.exists()
+        .then(|| PeerIdentity::open(&path).ok())
+        .flatten()
+}
+
 /// How a key was proved, when a command does not say.
 ///
 /// The authenticated transport of spec §21.5 is the only thing that pins a key on its own today
@@ -390,31 +459,36 @@ pub fn authorize_client(
     label: Option<&str>,
 ) -> Result<(), ErrorValue> {
     let fingerprint: Fingerprint = fingerprint.parse()?;
-    let store = open_authorized_clients(sources)?;
-    if store.client(fingerprint).is_some() {
-        return Err(ErrorValue::new(
-            ErrorCode::IoAlreadyExists,
-            format!("{fingerprint} is already an authorized client"),
-        )
-        .with_help(
-            "`set client-key <fingerprint> --allow …` changes what it may do; adding it again \
-             would silently reset a grant somebody made deliberately",
-        ));
-    }
-    let mut entry = AuthorizedClient::observing(fingerprint);
-    if let Some(label) = label {
-        entry = entry.with_label(label);
-    }
-    let mut entries = store.entries().to_vec();
-    entries.push(entry);
-    persist_authorized(sources, &entries)
+    let path = store_path_for_update(sources)?;
+    ono_protocol::update_store(&path, |entries| {
+        if entries
+            .iter()
+            .any(|entry| entry.fingerprint() == fingerprint)
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::IoAlreadyExists,
+                format!("{fingerprint} is already an authorized client"),
+            )
+            .with_help(
+                "`set client-key <fingerprint> --allow …` changes what it may do; adding it again \
+                 would silently reset a grant somebody made deliberately",
+            ));
+        }
+        let mut entry = AuthorizedClient::observing(fingerprint);
+        if let Some(label) = label {
+            entry = entry.with_label(label);
+        }
+        entries.push(entry);
+        Ok(((), true))
+    })
 }
 
 /// Replaces what an authorized client may do (§9.5, §9.7).
 ///
-/// `allow` is a comma-separated list of **exact** capability ids and never a pattern; each is
-/// parsed as an [`ActionGrant`], so `*`, `process.*` and a risk class are refused rather than
-/// stored. `observe` and `label` change only what they name; a field left `None` is left alone,
+/// `allow` is the value of each `--allow`, each one an **exact** capability id and never a pattern
+/// — or, the spelling 0.6 documented and still accepts, several of them comma-separated (ADR-1043).
+/// Every id is parsed as an [`ActionGrant`], so `*`, `process.*` and a risk class are refused
+/// rather than stored, and one refused id changes nothing. `observe` and `label` change only what they name; a field left `None` is left alone,
 /// so `--allow` preserves observe state as §9.7 requires.
 ///
 /// # Errors
@@ -424,45 +498,48 @@ pub fn authorize_client(
 pub fn set_client_key(
     sources: &crate::hosts::HostSources,
     fingerprint: &str,
-    allow: Option<&str>,
+    allow: Option<&[String]>,
     observe: Option<bool>,
     label: Option<&str>,
 ) -> Result<bool, ErrorValue> {
     let fingerprint: Fingerprint = fingerprint.parse()?;
-    let store = open_authorized_clients(sources)?;
-    let Some(existing) = store.client(fingerprint) else {
-        return Err(unauthorized_client(fingerprint));
-    };
-    let mut entry = existing.clone();
+    let mut granted = None;
     if let Some(allow) = allow {
-        let mut granted = Vec::new();
-        for id in allow.split(',').map(str::trim).filter(|id| !id.is_empty()) {
-            granted.push(id.parse::<ActionGrant>()?);
+        let mut ids = Vec::new();
+        for id in allow
+            .iter()
+            .flat_map(|given| given.split(','))
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
+            ids.push(id.parse::<ActionGrant>()?);
         }
-        entry = entry.with_actions(granted);
+        granted = Some(ids);
     }
-    if let Some(observe) = observe {
-        entry = entry.with_observe(observe);
-    }
-    if let Some(label) = label {
-        entry = entry.with_label(label);
-    }
-    if &entry == existing {
-        return Ok(false);
-    }
-    let entries: Vec<AuthorizedClient> = store
-        .entries()
-        .iter()
-        .map(|candidate| {
-            if candidate.fingerprint() == fingerprint {
-                entry.clone()
-            } else {
-                candidate.clone()
-            }
-        })
-        .collect();
-    persist_authorized(sources, &entries)?;
-    Ok(true)
+    let path = store_path_for_update(sources)?;
+    ono_protocol::update_store(&path, |entries| {
+        let Some(existing) = entries
+            .iter_mut()
+            .find(|entry| entry.fingerprint() == fingerprint)
+        else {
+            return Err(unauthorized_client(fingerprint));
+        };
+        let mut entry = existing.clone();
+        if let Some(granted) = granted {
+            entry = entry.with_actions(granted);
+        }
+        if let Some(observe) = observe {
+            entry = entry.with_observe(observe);
+        }
+        if let Some(label) = label {
+            entry = entry.with_label(label);
+        }
+        if entry == *existing {
+            return Ok((false, false));
+        }
+        *existing = entry;
+        Ok((true, true))
+    })
 }
 
 /// Revokes a client, so its next connection is refused (§9.7, §12.5).
@@ -476,17 +553,15 @@ pub fn revoke_client(
     fingerprint: &str,
 ) -> Result<(), ErrorValue> {
     let fingerprint: Fingerprint = fingerprint.parse()?;
-    let store = open_authorized_clients(sources)?;
-    if store.client(fingerprint).is_none() {
-        return Err(unauthorized_client(fingerprint));
-    }
-    let entries: Vec<AuthorizedClient> = store
-        .entries()
-        .iter()
-        .filter(|entry| entry.fingerprint() != fingerprint)
-        .cloned()
-        .collect();
-    persist_authorized(sources, &entries)
+    let path = store_path_for_update(sources)?;
+    ono_protocol::update_store(&path, |entries| {
+        let before = entries.len();
+        entries.retain(|entry| entry.fingerprint() != fingerprint);
+        if entries.len() == before {
+            return Err(unauthorized_client(fingerprint));
+        }
+        Ok(((), true))
+    })
 }
 
 fn unauthorized_client(fingerprint: Fingerprint) -> ErrorValue {
@@ -497,12 +572,11 @@ fn unauthorized_client(fingerprint: Fingerprint) -> ErrorValue {
     .with_help("`get client-key` lists the clients this machine authorizes")
 }
 
-fn persist_authorized(
-    sources: &crate::hosts::HostSources,
-    entries: &[AuthorizedClient],
-) -> Result<(), ErrorValue> {
-    let Some(path) = authorized_clients_path(sources) else {
-        return Err(ErrorValue::new(
+/// Where an update of the authorization store writes, or the refusal of a session that keeps no
+/// configuration directory.
+fn store_path_for_update(sources: &crate::hosts::HostSources) -> Result<PathBuf, ErrorValue> {
+    authorized_clients_path(sources).ok_or_else(|| {
+        ErrorValue::new(
             ErrorCode::IoNotFound,
             "this account has no configuration directory to keep an authorization store in",
         )
@@ -510,7 +584,6 @@ fn persist_authorized(
             "a listening agent decides who it serves from `~/.config/ono/authorized_clients` \
              (v0.4.1 section 9.2). Set `HOME`, `XDG_CONFIG_HOME` or `ONO_CONFIG_DIR` so there is \
              somewhere to keep one.",
-        ));
-    };
-    ono_protocol::write_store(&path, entries)
+        )
+    })
 }

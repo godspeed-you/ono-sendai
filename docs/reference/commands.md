@@ -5713,7 +5713,7 @@ Change what an authorized client key may do, by exact capability id.
 
 | name | type | meaning |
 |---|---|---|
-| `--allow` | `string` | Replace the action allowlist with these exact capability ids, comma-separated and quoted where there is more than one. Not a pattern and never `*`. |
+| `--allow` | `string` | Replace the action allowlist with these exact capability ids, one per `--allow`. Not a pattern and never `*`. A comma-separated list in one quoted value is still accepted (ADR-1043); `--allow ""` clears the allowlist. *(repeatable)* |
 | `--observe` | `bool` | Whether the client may run queries and subscriptions. |
 | `--label` | `string` | Rename the client. |
 
@@ -5721,6 +5721,7 @@ Change what an authorized client key may do, by exact capability id.
 
 ```text
 set client-key sha256:1f0c --allow service.manage
+set client-key sha256:1f0c --allow process.signal --allow service.manage
 set client-key sha256:1f0c --observe false
 ```
 
@@ -5750,6 +5751,28 @@ Revoke a client key, so its next connection is refused.
 
 ```text
 remove client-key sha256:1f0c
+```
+
+### `get peer-key`
+
+List this shell's own identities by fingerprint, and whether each is the link identity.
+
+| | |
+|---|---|
+| id | `ono.peer-key.get` |
+| stability | experimental |
+| phase | H |
+| input | `null` |
+| output | `stream<ono.peer-key/1>` |
+| provider capability | `host.list` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+
+**Examples**
+
+```text
+get peer-key
 ```
 
 ## service

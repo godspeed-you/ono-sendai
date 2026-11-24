@@ -49,10 +49,11 @@ impl Drop for Scratch {
 
 /// The private key inside `pem`, as the DER bytes rustls holds in memory.
 fn private_key_der(pem: &str) -> Vec<u8> {
-    let mut reader = std::io::BufReader::new(pem.as_bytes());
-    let key = rustls_pemfile::private_key(&mut reader)
-        .expect("the identity file parses")
-        .expect("the identity file has a private key");
+    use rustls::pki_types::PrivateKeyDer;
+    use rustls::pki_types::pem::PemObject as _;
+
+    let key =
+        PrivateKeyDer::from_pem_slice(pem.as_bytes()).expect("the identity file has a private key");
     key.secret_der().to_vec()
 }
 
@@ -252,4 +253,190 @@ fn should_use_an_identity_file_only_its_owner_can_reach() {
         again.fingerprint(),
         "the refusal of §8.3 is about exposure, and an owner-only file is not exposed"
     );
+}
+
+// --- reading the identity file (issue #172) ----------------------------------------------------
+//
+// The file is two PEM blocks a person can open, and how it is read is part of what the identity
+// *is*: which block counts as the certificate, which as the key, and what is refused. These cases
+// pin that reading down at the boundary — a file in, an identity or a structured refusal out — so
+// the PEM reader underneath can change without the identity a host presents changing with it.
+
+/// The `-----BEGIN <label>-----` … `-----END <label>-----` block of `pem`, newline included.
+fn block(pem: &str, label: &str) -> String {
+    let begin = format!("-----BEGIN {label}-----");
+    let end = format!("-----END {label}-----\n");
+    let start = pem.find(&begin).expect("the block is present");
+    let stop = pem[start..].find(&end).expect("the block is closed") + start + end.len();
+    pem[start..stop].to_owned()
+}
+
+/// A freshly generated identity file's two blocks: (certificate, private key).
+fn generated_blocks(scratch: &Scratch, name: &str) -> (String, String) {
+    let path = scratch.join(name);
+    PeerIdentity::open_or_create(&path).expect("an identity is generated");
+    let pem = std::fs::read_to_string(&path).expect("the identity file is readable");
+    (block(&pem, "CERTIFICATE"), block(&pem, "PRIVATE KEY"))
+}
+
+/// Writes `contents` as an owner-only identity file, so only its contents are under test.
+fn write_identity(scratch: &Scratch, name: &str, contents: &str) -> PathBuf {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    let path = scratch.join(name);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .expect("the identity file is created 0600");
+    file.write_all(contents.as_bytes())
+        .expect("the identity file is written");
+    path
+}
+
+#[test]
+fn should_read_the_same_identity_whichever_order_its_two_blocks_are_in() {
+    let scratch = Scratch::new("peer-identity-order");
+    let original = scratch.join("original.pem");
+    let identity = PeerIdentity::open_or_create(&original).expect("an identity is generated");
+    let pem = std::fs::read_to_string(&original).expect("the identity file is readable");
+    let swapped = format!(
+        "{}{}",
+        block(&pem, "PRIVATE KEY"),
+        block(&pem, "CERTIFICATE")
+    );
+    let path = write_identity(&scratch, "swapped.pem", &swapped);
+
+    let read = PeerIdentity::open_or_create(&path).expect("the swapped file is an identity");
+
+    assert_eq!(
+        read.fingerprint(),
+        identity.fingerprint(),
+        "the file is one CERTIFICATE block and one PRIVATE KEY block; their order is not part \
+         of the identity"
+    );
+}
+
+#[test]
+fn should_refuse_an_identity_file_without_a_certificate_as_a_syntax_error() {
+    let scratch = Scratch::new("peer-identity-no-certificate");
+    let (_, key) = generated_blocks(&scratch, "source.pem");
+    let path = write_identity(&scratch, "key-only.pem", &key);
+
+    let refusal = PeerIdentity::open_or_create(&path).expect_err("a key alone is no identity");
+
+    assert_eq!(refusal.code(), ono_core::ErrorCode::ParseSyntax);
+    assert!(
+        refusal.message().contains("no CERTIFICATE block"),
+        "the refusal names what is missing, got {}",
+        refusal.message()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).expect("the file is still there"),
+        key,
+        "a file that is not an identity is refused, never replaced by a generated one"
+    );
+}
+
+#[test]
+fn should_refuse_an_identity_file_whose_key_is_not_a_private_key_it_can_use() {
+    let scratch = Scratch::new("peer-identity-wrong-key-type");
+    let (certificate, key) = generated_blocks(&scratch, "source.pem");
+    // A block with a key in it that is not one of the three private-key forms a TLS stack takes
+    // (PKCS#8, PKCS#1, SEC1): an encrypted key, which needs a passphrase nobody will be asked for.
+    let encrypted = key.replace("PRIVATE KEY", "ENCRYPTED PRIVATE KEY");
+    let path = write_identity(
+        &scratch,
+        "encrypted.pem",
+        &format!("{certificate}{encrypted}"),
+    );
+
+    let refusal = PeerIdentity::open_or_create(&path).expect_err("an unusable key is no identity");
+
+    assert_eq!(refusal.code(), ono_core::ErrorCode::ParseSyntax);
+    assert!(
+        refusal.message().contains("no PRIVATE KEY block"),
+        "the refusal names what is missing, got {}",
+        refusal.message()
+    );
+}
+
+#[test]
+fn should_refuse_a_malformed_pem_block_as_a_syntax_error() {
+    let scratch = Scratch::new("peer-identity-malformed");
+    let (certificate, key) = generated_blocks(&scratch, "source.pem");
+
+    // A certificate that never ends, and one whose body is not base64.
+    let unterminated = certificate.replace("-----END CERTIFICATE-----\n", "");
+    let garbled = certificate.replacen('M', "!", 1);
+    for (name, contents) in [
+        ("unterminated.pem", format!("{unterminated}{key}")),
+        ("garbled.pem", format!("{garbled}{key}")),
+    ] {
+        let path = write_identity(&scratch, name, &contents);
+        let refusal =
+            PeerIdentity::open_or_create(&path).expect_err("a malformed block is no identity");
+        assert_eq!(
+            refusal.code(),
+            ono_core::ErrorCode::ParseSyntax,
+            "{name}: a malformed identity is a syntax error naming the file, got {refusal:?}"
+        );
+        assert!(
+            refusal.message().contains(&path.display().to_string()),
+            "{name}: the refusal names the file, got {}",
+            refusal.message()
+        );
+    }
+}
+
+#[test]
+fn should_refuse_an_identity_path_where_nothing_can_be_read_or_created() {
+    let scratch = Scratch::new("peer-identity-missing");
+    // A path under a regular file: nothing can be read there, and nothing can be created.
+    let blocker = write_identity(&scratch, "not-a-directory", "x");
+    let path = blocker.join("link_identity.pem");
+
+    let refusal = PeerIdentity::open_or_create(&path).expect_err("there is no identity here");
+
+    assert!(
+        matches!(
+            refusal.code(),
+            ono_core::ErrorCode::IoPermissionDenied | ono_core::ErrorCode::IoNotFound
+        ),
+        "a path that cannot hold an identity is an I/O refusal, got {refusal:?}"
+    );
+}
+
+#[tokio::test]
+async fn should_present_the_first_private_key_when_a_file_holds_several() {
+    let scratch = Scratch::new("peer-identity-several-keys");
+    let (certificate, own_key) = generated_blocks(&scratch, "own.pem");
+    let (_, other_key) = generated_blocks(&scratch, "other.pem");
+
+    // The certificate's own key first: the identity is usable, and is the certificate's.
+    let matching = write_identity(
+        &scratch,
+        "own-first.pem",
+        &format!("{certificate}{own_key}{other_key}"),
+    );
+    let identity = PeerIdentity::open_or_create(&matching).expect("the file is an identity");
+    ono_remote::TlsListener::bind("127.0.0.1:0", &identity)
+        .await
+        .expect("the first key is the certificate's own, so the identity can be presented");
+
+    // Another key first: that key is the one taken, and it does not belong to the certificate,
+    // so the identity is refused when it would be presented — never silently paired with the
+    // second key further down the file.
+    let mismatched = write_identity(
+        &scratch,
+        "other-first.pem",
+        &format!("{certificate}{other_key}{own_key}"),
+    );
+    let identity = PeerIdentity::open_or_create(&mismatched).expect("the file parses");
+    let refusal = ono_remote::TlsListener::bind("127.0.0.1:0", &identity)
+        .await
+        .expect_err("a key that does not match the certificate cannot present it");
+    assert_eq!(refusal.code(), ono_core::ErrorCode::IoPermissionDenied);
 }

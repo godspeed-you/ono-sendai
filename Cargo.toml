@@ -119,7 +119,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 rustls-pki-types = "1"
 rustls-webpki = { version = "0.103", default-features = false, features = ["ring", "std"] }
 x509-parser = "0.18"
-rustls-pemfile = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["preserve_order", "float_roundtrip"] }
 serde_yaml_ng = "0.10"
@@ -207,21 +206,15 @@ reviewed = "2026-09-08"
 
 [[workspace.metadata.supply-chain.cryptographic]]
 crate = "rustls-pki-types"
-role = "the certificate and time types rustls-webpki is asked in; no cryptography of its own"
-adr = "ADR-0609"
-reviewed = "2026-09-08"
+role = "the certificate and time types rustls-webpki is asked in, and the PEM reader of a host's own pinned identity files; no cryptography of its own"
+adr = "ADR-1040"
+reviewed = "2026-11-24"
 
 [[workspace.metadata.supply-chain.cryptographic]]
 crate = "x509-parser"
 role = "reading the two certificate fields webpki does not expose: the subject identity a keyless signature carries and the OpenID issuer that authenticated it"
 adr = "ADR-0609"
 reviewed = "2026-09-08"
-
-[[workspace.metadata.supply-chain.cryptographic]]
-crate = "rustls-pemfile"
-role = "reading the local certificate and key files that are a host's own pinned identity"
-adr = "ADR-0353"
-reviewed = "2026-08-29"
 
 [[workspace.metadata.supply-chain.cryptographic]]
 crate = "rcgen"

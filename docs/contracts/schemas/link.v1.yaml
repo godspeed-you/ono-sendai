@@ -69,12 +69,13 @@ fields:
   transport_trust:
     type: enum
     nullable: true
-    values: [pinned, newly_pinned, unauthenticated]
+    values: [pinned, unauthenticated]
     doc: >-
-      What the trust store concluded about that key (v0.4.1 §7.3): `pinned` for a key already
-      recorded for this host, `newly_pinned` for one recorded on first contact, and
-      `unauthenticated` for a transport that proved nothing and a policy that said so by name.
-      Null until a handshake settled it.
+      What the trust store concluded about that key (v0.4.1 §7.3): `pinned` for the key the
+      trust store already recorded for this host, and `unauthenticated` for a transport that
+      proved nothing and a policy that said so by name. There is no trust on first use: a `tcp`
+      link to a host nobody pinned is refused, never recorded (ADR-0354, ADR-1044). Null until a
+      handshake settled it.
   authenticated:
     type: bool
     nullable: true

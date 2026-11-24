@@ -35,7 +35,6 @@
 //! protecting a host.
 
 use std::fmt;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
@@ -237,11 +236,7 @@ impl TrustStore {
     /// line is not one this format defines.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ErrorValue> {
         let path = path.as_ref().to_path_buf();
-        let entries = match std::fs::read_to_string(&path) {
-            Ok(text) => parse(&text, &path)?,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(error) => return Err(io_error(&path, &error)),
-        };
+        let entries = read_entries(&path)?;
         Ok(Self {
             inner: Arc::new(Mutex::new(Inner {
                 entries,
@@ -277,14 +272,19 @@ impl TrustStore {
     /// them, and it carries no way to proceed, because ADR-0015 standing rule 4 forbids one.
     pub fn verify(&self, host: &str, key: &HostKey) -> Result<TrustDecision, ErrorValue> {
         let presented = key.fingerprint();
-        match self.fingerprint(host) {
-            Some(recorded) if recorded == presented => Ok(TrustDecision::Pinned),
+        // The common case of every link answers from what this handle already holds. Anything
+        // else is decided against the file as it is now (ADR-1041).
+        if self.fingerprint(host) == Some(presented) {
+            return Ok(TrustDecision::Pinned);
+        }
+        self.update(|entries| match recorded(entries, host) {
+            Some(recorded) if recorded == presented => Ok((TrustDecision::Pinned, false)),
             Some(recorded) => Err(host_key_changed(host, recorded, presented)),
             None => {
-                self.write_entry(host, key)?;
-                Ok(TrustDecision::NewlyPinned)
+                entries.push(entry(host, key.algorithm(), presented));
+                Ok((TrustDecision::NewlyPinned, true))
             }
-        }
+        })
     }
 
     /// Records `key` for `host`.
@@ -295,12 +295,7 @@ impl TrustStore {
     /// replacing one is [`repin`](Self::repin), so that re-trusting a host can never be something
     /// that merely happened.
     pub fn pin(&self, host: &str, key: &HostKey) -> Result<(), ErrorValue> {
-        let presented = key.fingerprint();
-        match self.fingerprint(host) {
-            Some(recorded) if recorded == presented => Ok(()),
-            Some(recorded) => Err(host_key_changed(host, recorded, presented)),
-            None => self.write_entry(host, key),
-        }
+        self.pin_fingerprint(host, key.algorithm(), key.fingerprint())
     }
 
     /// Replaces whatever is recorded for `host` with `key`.
@@ -313,8 +308,7 @@ impl TrustStore {
     ///
     /// Returns an I/O error when the store's file cannot be written.
     pub fn repin(&self, host: &str, key: &HostKey) -> Result<(), ErrorValue> {
-        self.with(|inner| inner.entries.retain(|entry| entry.host != host));
-        self.write_entry(host, key)
+        self.repin_fingerprint(host, key.algorithm(), key.fingerprint())
     }
 
     /// Records `fingerprint` for `host` under `algorithm`, refusing to replace a different key.
@@ -333,11 +327,14 @@ impl TrustStore {
         algorithm: &str,
         fingerprint: Fingerprint,
     ) -> Result<(), ErrorValue> {
-        match self.fingerprint(host) {
-            Some(recorded) if recorded == fingerprint => Ok(()),
+        self.update(|entries| match recorded(entries, host) {
+            Some(recorded) if recorded == fingerprint => Ok(((), false)),
             Some(recorded) => Err(host_key_changed(host, recorded, fingerprint)),
-            None => self.record(host, algorithm, fingerprint),
-        }
+            None => {
+                entries.push(entry(host, algorithm, fingerprint));
+                Ok(((), true))
+            }
+        })
     }
 
     /// Replaces whatever is recorded for `host` with `fingerprint` — the deliberate re-trust.
@@ -351,8 +348,13 @@ impl TrustStore {
         algorithm: &str,
         fingerprint: Fingerprint,
     ) -> Result<(), ErrorValue> {
-        self.with(|inner| inner.entries.retain(|entry| entry.host != host));
-        self.record(host, algorithm, fingerprint)
+        self.update(|entries| {
+            let before = entries.clone();
+            entries.retain(|entry| entry.host != host);
+            entries.push(entry(host, algorithm, fingerprint));
+            let changed = *entries != before;
+            Ok(((), changed))
+        })
     }
 
     /// Forgets `host`, so it is trusted again only by a deliberate act.
@@ -364,39 +366,44 @@ impl TrustStore {
     ///
     /// Returns an I/O error when the store's file cannot be written.
     pub fn forget(&self, host: &str) -> Result<(), ErrorValue> {
-        let (path, rendered) = self.with(|inner| {
-            inner.entries.retain(|entry| entry.host != host);
-            (inner.path.clone(), render(&inner.entries))
-        });
-        let Some(path) = path else {
-            return Ok(());
-        };
-        persist(&path, &rendered)
+        self.update(|entries| {
+            let before = entries.len();
+            entries.retain(|entry| entry.host != host);
+            Ok(((), entries.len() != before))
+        })
     }
 
-    fn write_entry(&self, host: &str, key: &HostKey) -> Result<(), ErrorValue> {
-        self.record(host, key.algorithm(), key.fingerprint())
-    }
-
-    fn record(
+    /// Changes the pins as `change` says, starting from the store as it is now (ADR-1041).
+    ///
+    /// For a store kept in a file, the file is locked, read afresh with the strict parser, changed
+    /// and — when `change` says it changed anything — replaced by §9.8's sequence, all under the
+    /// lock; this handle's entries become what the file now holds. A store that cannot be read
+    /// refuses the update and is left as it was: writing this handle's older copy over it would
+    /// silently un-pin every host it could not see, or bring back one somebody forgot.
+    fn update<T>(
         &self,
-        host: &str,
-        algorithm: &str,
-        fingerprint: Fingerprint,
-    ) -> Result<(), ErrorValue> {
-        let entry = TrustEntry {
-            host: host.to_owned(),
-            algorithm: algorithm.to_owned(),
-            fingerprint,
+        change: impl FnOnce(&mut Vec<TrustEntry>) -> Result<(T, bool), ErrorValue>,
+    ) -> Result<T, ErrorValue> {
+        // Held across the file update, so two threads sharing this handle are ordered too.
+        let mut inner = match self.inner.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
         };
-        let (path, rendered) = self.with(|inner| {
-            inner.entries.push(entry);
-            (inner.path.clone(), render(&inner.entries))
-        });
-        let Some(path) = path else {
-            return Ok(());
+        let Some(path) = inner.path.clone() else {
+            let mut entries = inner.entries.clone();
+            let (answer, _) = change(&mut entries)?;
+            inner.entries = entries;
+            return Ok(answer);
         };
-        persist(&path, &rendered)
+        let locked = crate::store_file::lock(&path).map_err(|(at, error)| io_error(&at, &error))?;
+        let mut entries = read_entries(&path)?;
+        let (answer, changed) = change(&mut entries)?;
+        if changed {
+            crate::store_file::replace(&locked, &path, render(&entries).as_bytes())
+                .map_err(|(at, error)| io_error(&at, &error))?;
+        }
+        inner.entries = entries;
+        Ok(answer)
     }
 
     fn with<T>(&self, body: impl FnOnce(&mut Inner) -> T) -> T {
@@ -429,23 +436,31 @@ fn render(entries: &[TrustEntry]) -> String {
     text
 }
 
-fn persist(path: &Path, contents: &str) -> Result<(), ErrorValue> {
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).map_err(|error| io_error(parent, &error))?;
+/// The pins recorded in `path`; none when the file does not exist yet.
+///
+/// Any other failure to read it is an error, never an empty store: an empty store would pin anew
+/// every host it could not see.
+fn read_entries(path: &Path) -> Result<Vec<TrustEntry>, ErrorValue> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => parse(&text, path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(io_error(path, &error)),
     }
-    // Written whole and replaced, so a store is never half a store: a truncated trust store would
-    // silently un-pin every host below the point the write stopped.
-    let temporary = path.with_extension("tmp");
-    let mut file =
-        std::fs::File::create(&temporary).map_err(|error| io_error(&temporary, &error))?;
-    file.write_all(contents.as_bytes())
-        .map_err(|error| io_error(&temporary, &error))?;
-    file.sync_all()
-        .map_err(|error| io_error(&temporary, &error))?;
-    drop(file);
-    std::fs::rename(&temporary, path).map_err(|error| io_error(path, &error))
+}
+
+fn recorded(entries: &[TrustEntry], host: &str) -> Option<Fingerprint> {
+    entries
+        .iter()
+        .find(|entry| entry.host == host)
+        .map(TrustEntry::fingerprint)
+}
+
+fn entry(host: &str, algorithm: &str, fingerprint: Fingerprint) -> TrustEntry {
+    TrustEntry {
+        host: host.to_owned(),
+        algorithm: algorithm.to_owned(),
+        fingerprint,
+    }
 }
 
 fn parse(text: &str, path: &Path) -> Result<Vec<TrustEntry>, ErrorValue> {

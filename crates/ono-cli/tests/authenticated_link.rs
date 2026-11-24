@@ -741,3 +741,30 @@ fn should_write_a_structured_audit_line_for_every_decision_the_agent_makes() {
         );
     }
 }
+
+/// Issue #200, ADR-1044: `transport_trust` offers only the decisions a link this shell makes can
+/// carry. A `tcp` link pins nothing on first contact (ADR-0354) and `ssh` and `local` prove no key
+/// to this process, so `newly_pinned` — trust on first use — is not a word the schema offers.
+#[test]
+fn should_offer_only_the_trust_decisions_a_link_can_carry() {
+    let described = ono_testkit::Shell::new()
+        .args(["-c", "type get link | to json"])
+        .run();
+    described.assert_success();
+    let declared = described
+        .stdout()
+        .split("{\"name\":\"transport_trust\",\"type\":\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| {
+            panic!(
+                "`type get link` declares transport_trust: {}",
+                described.stdout()
+            )
+        });
+
+    assert_eq!(
+        declared, "enum<pinned|unauthenticated>",
+        "ono.link/1 offers the two decisions a link can carry, and no trust-on-first-use"
+    );
+}

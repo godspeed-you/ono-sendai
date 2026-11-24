@@ -49,6 +49,7 @@ const ALL_TARGETS: &[&str] = &[
     "host",
     "host-key",
     "client-key",
+    "peer-key",
     "plugin",
     "capability",
     "permission",
@@ -69,7 +70,7 @@ const ALL_TARGETS: &[&str] = &["job"];
 /// this session holds, the jobs it started and the hosts it knows are not.
 /// The targets the shell answers about itself: session facts, not observations of a machine.
 #[cfg(feature = "remote")]
-pub const SESSION_TARGETS: &[&str] = &["job", "link", "host", "host-key", "client-key"];
+pub const SESSION_TARGETS: &[&str] = &["job", "link", "host", "host-key", "client-key", "peer-key"];
 
 /// The targets the shell answers about itself, in a build without links: its jobs (ADR-0910).
 #[cfg(not(feature = "remote"))]
@@ -235,6 +236,8 @@ impl SessionProvider {
             "host-key" => Ok((self.host_keys()?, Vec::new())),
             #[cfg(feature = "remote")]
             "client-key" => Ok((self.client_keys()?, Vec::new())),
+            #[cfg(feature = "remote")]
+            "peer-key" => self.peer_keys(),
             #[cfg(feature = "kuang")]
             "plugin" => {
                 let (records, mut failures) = self.lock().kuang.plugin_records()?;
@@ -622,6 +625,19 @@ impl SessionProvider {
             .collect()
     }
 
+    /// This shell's own identities in its configuration directory, by fingerprint (ADR-1045). A
+    /// file that cannot be read as one is a failure beside the others, never a missing row.
+    #[cfg(feature = "remote")]
+    fn peer_keys(&self) -> Result<(Vec<RecordValue>, Vec<ErrorValue>), ErrorValue> {
+        let schema = Self::schema("ono.peer-key")?;
+        let (rows, failures) = crate::trust::peer_key_rows(&self.sources);
+        let records = rows
+            .iter()
+            .map(|row| peer_key_record(row, &schema))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((records, failures))
+    }
+
     /// The host records: every source's entries, one record per name, in the order the
     /// sources are consulted — the shell's own file, the OpenSSH configuration, the links held.
     /// A source that cannot be read is reported on the stream's failure channel and the other
@@ -886,6 +902,26 @@ fn client_key_record(
 }
 
 #[cfg(feature = "remote")]
+fn peer_key_record(
+    row: &crate::trust::PeerKeyRow,
+    schema: &Arc<Schema>,
+) -> Result<RecordValue, ErrorValue> {
+    Ok(RecordValue::builder(
+        Arc::clone(schema),
+        Provenance::local(PROVIDER_ID, schema.id().clone()),
+    )
+    .set("role", Value::string(row.role))?
+    .set("path", Value::Path(row.path.as_path().into()))?
+    .set("algorithm", Value::string(&row.algorithm))?
+    .set("fingerprint", Value::string(&row.fingerprint))?
+    .set(
+        "same_as_link_identity",
+        row.same_as_link_identity.map_or(Value::Null, Value::Bool),
+    )?
+    .build())
+}
+
+#[cfg(feature = "remote")]
 fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, ErrorValue> {
     let strings = |items: &[String]| Value::list(items.iter().map(|item| Value::string(item)));
     Ok(RecordValue::builder(
@@ -1058,6 +1094,7 @@ impl Provider for SessionProvider {
             "ono.host",
             "ono.host-key",
             "ono.client-key",
+            "ono.peer-key",
         ];
         #[cfg(not(feature = "remote"))]
         let own = ["ono.job"];

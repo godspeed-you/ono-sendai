@@ -1094,7 +1094,7 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 | `protocol` | `int` | — | nullable | The link protocol version the handshake settled on (spec §21.2); null until it did. |
 | `providers` | `list<string>` | — | nullable | The ids of the providers the remote offers (spec §21.2), which keep their ids across the link (ADR-0036); null until the handshake settled them. |
 | `transport_fingerprint` | `string` | — | nullable | The `sha256:` fingerprint of the key the far side proved it holds, during this link's own handshake (v0.4.1 §7.3). Null where the transport authenticated nobody to this process — `ssh`, where OpenSSH did the authenticating in its own `known_hosts` and will not say which key it accepted (§4.3), and `local`, where the far side is this shell's own child. Null is the honest answer there and not a missing value. |
-| `transport_trust` | `enum` | — | nullable | What the trust store concluded about that key (v0.4.1 §7.3): `pinned` for a key already recorded for this host, `newly_pinned` for one recorded on first contact, and `unauthenticated` for a transport that proved nothing and a policy that said so by name. Null until a handshake settled it. |
+| `transport_trust` | `enum` | — | nullable | What the trust store concluded about that key (v0.4.1 §7.3): `pinned` for the key the trust store already recorded for this host, and `unauthenticated` for a transport that proved nothing and a policy that said so by name. There is no trust on first use: a `tcp` link to a host nobody pinned is refused, never recorded (ADR-0354, ADR-1044). Null until a handshake settled it. |
 | `authenticated` | `bool` | — | nullable | Whether *this process* verified the far side's key during this link's own handshake (v0.4.1 §19.1: "authenticated — cryptographic peer proof was verified"). True exactly where `transport_fingerprint` names a key. False over `ssh` and `local`, where something else did the authenticating and §4.3 requires the link to say so rather than borrow it. Not the same question as `transport_trust`, which says what was *decided* about that key. |
 | `authorized` | `bool` | — | nullable | Whether the far side's own policy admitted this connection (v0.4.1 §19.1: "authorized — authenticated principal is permitted by policy"). True for an established direct link, where the agent resolved its `authorized_clients` store for this client before it negotiated anything (§9.4, §10.1). Null where no policy this process can see decided — `ssh` and `local`, where the carrier decided — and null for a link that was never established. A client the agent refuses never becomes a row: the refusal is `remote.unauthorized` (E1202), which is where an unauthorized authenticated peer is seen. |
 | `runtime_user` | `string` | — | nullable | The user the far side reports it is running as. v0.4.1 §7.3: "the runtime identity is useful context but MUST NOT grant authority" — it is what the peer said about itself, and `transport_fingerprint` is what it proved. |
@@ -1430,6 +1430,22 @@ Default view: `name`, `version`, `installed`, `description`
 | `installed` | `bool` | — | nullable | Whether the package is installed. Null when the manager could not say — never a guess (spec §35.3). |
 | `description` | `string` | — | nullable | The manager's one-line description, where the query that produced the record carried one. |
 | `provider` | `string` | — | required | The package manager that answered, such as `dpkg`; part of the identity. |
+
+## PeerKey — `ono.peer-key/1`
+
+One identity this shell keeps in its configuration directory, by fingerprint.
+
+Identity: `path`
+
+Default view: `role`, `fingerprint`, `same_as_link_identity`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `role` | `enum` | — | required | `link_identity` is `link_identity.pem`, the identity every direct link and a listening agent without `--host-key` present (v0.4.1 §8.1). `legacy_host_key` is `host_key.pem`, kept by §8.2 rule 4 and the file `--agent --host-key` was historically pointed at. |
+| `path` | `path` | — | required | The file the identity is kept in. |
+| `algorithm` | `string` | — | required | How the key is proved; `tls-x509` is the end-entity certificate a peer sees (ADR-0353). |
+| `fingerprint` | `string` | — | required | The full SHA-256 fingerprint, `sha256:` and 64 hex digits — what a peer pins this machine by, and the same value `--print-peer-key` or `--agent --print-host-key` prints for the file. |
+| `same_as_link_identity` | `bool` | — | nullable | Whether this identity's fingerprint is the link identity's. False is the diverging pair §8.2 rule 5 forbids from being silent: a peer that pinned one refuses the other. Null when there is no link identity to compare with. |
 
 ## Permission — `ono.permission/1`
 

@@ -64,6 +64,7 @@ mod limits;
 mod link;
 mod message;
 mod service;
+mod store_file;
 mod trust;
 
 pub mod transport;
@@ -71,7 +72,7 @@ pub mod transport;
 pub use audit::{Audit, AuditEvent, AuditKind, AuditSink, NoAudit};
 pub use authorization::{
     ActionGrant, AuthorizationContext, AuthorizedClient, AuthorizedClients, PeerAuthorization,
-    refusal_guidance, unauthenticated_refusal, write_store,
+    refusal_guidance, unauthenticated_refusal, update_store, write_store,
 };
 pub use error::ProtocolError;
 pub use frame::{FRAME_HEADER_LEN, FRAME_VERSION, Frame, FrameKind, decode, encode};
