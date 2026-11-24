@@ -167,8 +167,12 @@ impl TemporalState {
     }
 
     /// Replaces the ledger, which is what `start recorder` and `stop recorder` do (§10.8).
-    pub fn set_ledger(&mut self, ledger: Ledger) {
-        self.set_shared_ledger(Arc::new(ledger));
+    ///
+    /// # Errors
+    ///
+    /// As [`TemporalState::set_shared_ledger`].
+    pub fn set_ledger(&mut self, ledger: Ledger) -> Result<(), ono_value::ErrorValue> {
+        self.set_shared_ledger(Arc::new(ledger))
     }
 
     /// Takes the recorder's own ledger as the session's (§10.8, §39.3).
@@ -176,18 +180,27 @@ impl TemporalState {
     /// The recorder owns the store and the bounded in-memory ledger behind it; the session reads
     /// and writes the same handle rather than a second one, so `get recorder` and `timeline`
     /// cannot disagree about how much history there is.
-    pub fn set_shared_ledger(&mut self, ledger: Arc<Ledger>) {
-        // Whatever the ledger being replaced already holds moves across. Configuration is lazy —
-        // the first temporal command applies `temporal.session.max_events` by swapping the
+    ///
+    /// The ledger is replaced whatever happens; the error is the carry-over's, so a caller can say
+    /// that the session's own history did not come across rather than let it go missing.
+    ///
+    /// # Errors
+    ///
+    /// The store refusal raised while the session's own history was read out of the ledger being
+    /// replaced or written into the new one.
+    pub fn set_shared_ledger(&mut self, ledger: Arc<Ledger>) -> Result<(), ono_value::ErrorValue> {
+        // What this session wrote into the ledger being replaced moves across. Configuration is
+        // lazy — the first temporal command applies `temporal.session.max_events` by swapping the
         // ledger — and v0.6 §22.1's plan events are written before any temporal command runs,
         // so a straight replacement dropped the history of a plan that had already been sealed.
         // §6.8 makes an event's identity its content digest, so re-appending what is already
         // there is a duplicate rather than a second event.
-        carry_over(self.ledger.as_ref(), ledger.as_ref());
+        let carried = carry_over(self.ledger.as_ref(), ledger.as_ref(), self.started_at);
         self.ledger = Arc::clone(&ledger);
         if let Ok(mut held) = published_ledger().write() {
             *held = ledger;
         }
+        carried
     }
 
     /// The event references this session has issued (§11.6).
@@ -305,8 +318,14 @@ fn apply_pending(state: &mut TemporalState) {
     state.configure(configuration.zone, configuration.show_source_tags);
     // §10.7: the in-memory ledger is bounded by `temporal.session.max_events`, and the bound is
     // the configured one rather than the built-in default — `get recorder` states it as a fact,
-    // so it has to be one.
-    state.set_ledger(super::recorder::session_ledger());
+    // so it has to be one. A running recorder's store is not swapped out for one: it is already
+    // the ledger the configuration asks for, and swapping carried the session's history out of
+    // the store and back on every configuration (issue #147).
+    if !state.ledger().is_persistent()
+        && let Err(refusal) = state.set_ledger(super::recorder::session_ledger())
+    {
+        super::recorder::note_start_refusal(refusal);
+    }
     // §10.2 makes persistent recording opt-in and off by default, and §33 makes
     // `temporal.recording.enabled` the switch. A session that finds it on starts the recorder,
     // which is what makes §56.6 true: events recorded by one `ono` are queryable from the next.
@@ -337,28 +356,43 @@ fn published_ledger() -> &'static RwLock<Arc<Ledger>> {
     LEDGER.get_or_init(|| RwLock::new(Arc::new(Ledger::default())))
 }
 
-/// Moves every event `from` holds into `into`, with the evidence behind it (§6.8, §22.1).
+/// Moves what this session wrote into `from` across to `into`, with the evidence behind it (§6.8,
+/// §22.1).
 ///
-/// A failure to read or to write is not reported: this runs while a session is being configured,
-/// and a ledger that could not be carried over is a history that is shorter than it might have
-/// been rather than a reason to refuse the configuration. §10.7's bound applies to the
-/// destination, so an over-full carry-over is trimmed by the ledger itself.
-fn carry_over(from: &Ledger, into: &Ledger) {
+/// Only the session's own stretch — events since `since`, the instant it started observing — and
+/// at most as many as the destination can hold, newest first. Reading the whole ledger being
+/// replaced made `stop recorder`, and a second configuration of a recording session, read the
+/// entire store into memory and write it back (issue #147); what a session's in-memory ledger
+/// stands for is the session (§10.7), so that is what is carried.
+fn carry_over(from: &Ledger, into: &Ledger, since: Timestamp) -> Result<(), ono_value::ErrorValue> {
     if std::ptr::eq(from, into) {
-        return;
+        return Ok(());
     }
-    let Ok(events) = from.events(&EventQuery::default()) else {
-        return;
+    let room = match into {
+        Ledger::Session(session) => Some(session.capacity()),
+        Ledger::Persistent(_) => match from {
+            Ledger::Session(session) => Some(session.capacity()),
+            Ledger::Persistent(_) => None,
+        },
     };
+    let mut events = from.events(&EventQuery {
+        scope: None,
+        subjects: Vec::new(),
+        kinds: Vec::new(),
+        range: ono_temporal_core::TimeRange::since(since),
+        limit: room,
+        order: ono_temporal_core::QueryOrder::Descending,
+    })?;
     if events.is_empty() {
-        return;
+        return Ok(());
     }
+    events.reverse();
     let ids: Vec<_> = events
         .iter()
         .flat_map(|event| event.evidence.iter().cloned())
         .collect();
-    let evidence = from.evidence(&ids).unwrap_or_default();
-    let _ = into.append(&events, &evidence);
+    let evidence = from.evidence(&ids)?;
+    into.append(&events, &evidence).map(|_| ())
 }
 
 /// Where in time this process is standing, without taking the lock (§4.1).

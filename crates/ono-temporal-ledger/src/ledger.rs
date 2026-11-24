@@ -94,6 +94,18 @@ impl Ledger {
         }
     }
 
+    /// `temporal.retention.max_age` as this ledger enforces it, `None` where nothing expires by age.
+    ///
+    /// The policy alone, without [`LedgerRead::retention`]'s figures: those count what the store
+    /// holds, and a caller that needs only the bound would pay for the count (issue #147).
+    #[must_use]
+    pub fn max_age(&self) -> Option<ono_value::Duration> {
+        match self {
+            Ledger::Session(ledger) => ledger.retention().max_age,
+            Ledger::Persistent(store) => store.retention_policy().max_age,
+        }
+    }
+
     /// The earliest instant history reaches, for §12.3's refusal to name.
     #[must_use]
     pub fn earliest_retained(&self) -> Option<Timestamp> {

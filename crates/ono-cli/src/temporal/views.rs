@@ -261,7 +261,7 @@ impl CommandImpl for Changes {
             //
             // Inside the window a thin record stays §13.4's business rather than a refusal: a
             // side without evidence is reported unknown and the command answers.
-            if let Some(max_age) = ledger.retention().max_age {
+            if let Some(max_age) = state.ledger().max_age() {
                 let horizon = now.as_nanosecond().saturating_sub(max_age.nanoseconds());
                 if request.since.as_nanosecond() < horizon {
                     return Err(super::coordinate::unreachable(&state, request.since, now));

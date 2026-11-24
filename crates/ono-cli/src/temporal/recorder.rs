@@ -185,11 +185,13 @@ pub(crate) fn start_recorder(
     now: Timestamp,
 ) -> Result<ono_recorder::StartOutcome, ErrorValue> {
     let outcome = recorder().start(&configured_settings(), now)?;
-    state.set_shared_ledger(recorder().ledger());
     note_started(outcome.status.since);
     if let Ok(mut held) = start_refusal().write() {
         *held = None;
     }
+    // The recorder is running whatever the carry-over answers; a failure there is the session's
+    // own history not coming across, and it is said rather than dropped.
+    state.set_shared_ledger(recorder().ledger())?;
     Ok(outcome)
 }
 
@@ -247,11 +249,15 @@ fn status_record(state: &TemporalState, now: Timestamp) -> Result<Value, ErrorVa
     {
         status.diagnostic = Some(Arc::from(refusal.render_terse().as_str()));
     }
-    let retention = state.ledger().retention();
-    status.events = retention.events;
-    status.size = retention.stored_size;
-    status.earliest = retention.earliest;
-    status.latest = retention.latest;
+    // The recorder's figures are already the session's when the session reads the recorder's
+    // own ledger, and counting a store twice is twice the cost of the largest thing in it.
+    if !std::ptr::eq(state.ledger(), recorder().ledger().as_ref()) {
+        let retention = state.ledger().retention();
+        status.events = retention.events;
+        status.size = retention.stored_size;
+        status.earliest = retention.earliest;
+        status.latest = retention.latest;
+    }
     status.since = status.since.or_else(started_at);
     // §33: the limits the status states are the session's resolved ones. A recorder nobody has
     // started is still holding a session ledger bounded by `temporal.session.max_events`, and
@@ -357,8 +363,9 @@ impl CommandImpl for StopRecorder {
             // instant and what was buffered is written before the store is let go, so the
             // interval that follows is a declared gap rather than lost events (§44.1).
             recorder().stop(now)?;
-            state.set_shared_ledger(recorder().ledger());
+            let carried = state.set_shared_ledger(recorder().ledger());
             note_started(None);
+            carried?;
             let record = status_record(&state, now)?;
             Ok(Outcome::Values(ValueStream::from_values([record])))
         })
@@ -419,7 +426,9 @@ impl CommandImpl for RemoveTemporalHistory {
                 // writing into a database nobody can find.
                 let mut state = temporal_session().await;
                 let _ = recorder().stop(Timestamp::now());
-                state.set_ledger(session_ledger());
+                // The history is about to be destroyed, so what did not come across is what was
+                // asked to go; the session's new ledger is what matters.
+                let _ = state.set_ledger(session_ledger());
                 note_started(None);
             }
             let removed = remove_store(&path);

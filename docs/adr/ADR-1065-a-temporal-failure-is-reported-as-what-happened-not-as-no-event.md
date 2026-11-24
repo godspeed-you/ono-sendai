@@ -90,8 +90,8 @@ Fixed here: the three above. Left, with the reason:
   command's result), but nothing then records the lost stretch as a gap, so a later timeline can
   read it as quiet. Making it visible is a recorder-health feature of its own; recorded as a
   finding.
-- `carry_over` in `temporal::session` drops a failed read of the ledger being replaced. It is
-  replaced in #147's increment (ADR-1068), which stops reading the store there at all.
+- `carry_over` in `temporal::session` drops a failed read of the ledger being replaced. #147's
+  increment (ADR-1068) bounds that read to the session's own stretch and reports its failure.
 
 ## Alternatives considered
 

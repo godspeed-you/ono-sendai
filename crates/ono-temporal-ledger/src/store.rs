@@ -194,7 +194,7 @@ impl LedgerStore {
             .map_err(|error| unavailable(&path, &error))?;
 
         let mut integrity = IntegrityReport::default();
-        check_file_integrity(&connection, &path, &mut integrity);
+        check_structure(&connection, &path, &mut integrity);
         if integrity.is_fatal() {
             return Err(error::store_corrupt(
                 &path.display().to_string(),
@@ -233,6 +233,30 @@ impl LedgerStore {
     /// The retention policy in force (§10.4).
     #[must_use]
     pub const fn policy(&self) -> RetentionPolicy {
+        self.retention
+    }
+
+    /// The latest instant the store holds an event at, `None` for an empty store (§44.1).
+    ///
+    /// The bound alone: [`LedgerRead::retention`] also counts the events, and a count reads the
+    /// whole table where the bound is one step down an index (issue #147).
+    ///
+    /// # Errors
+    ///
+    /// Returns a §34 store refusal.
+    pub fn latest(&self) -> Result<Option<Timestamp>, ErrorValue> {
+        let connection = self.locked();
+        let latest: Option<i64> = connection
+            .query_row("SELECT MAX(presentation_nanos) FROM events", [], |row| {
+                row.get(0)
+            })
+            .map_err(|error| self.unavailable(&error))?;
+        Ok(latest.and_then(|nanos| from_nanos(nanos).ok()))
+    }
+
+    /// The retention policy this store enforces (§10.4).
+    #[must_use]
+    pub const fn retention_policy(&self) -> RetentionPolicy {
         self.retention
     }
 
@@ -808,12 +832,124 @@ impl LedgerStore {
 }
 
 fn unavailable(path: &Path, error: &rusqlite::Error) -> ErrorValue {
+    // §31.7: damage found by the read that reached it is damage, and it names the store. Opening
+    // no longer reads every page (ADR-1068), so this is where a damaged page deeper in the file
+    // is met — and "cannot be read" would hide that it is corrupt.
+    if is_damage(error) {
+        let mut report = IntegrityReport::default();
+        report.findings.push(IntegrityFinding::new(
+            &path.display().to_string(),
+            &format!("SQLite reports `{error}`"),
+            true,
+        ));
+        return error::store_corrupt(&path.display().to_string(), &report.guidance());
+    }
     error::store_unavailable(&format!("`{}`: {error}", path.display()))
+}
+
+/// Whether SQLite answered that the file itself is damaged, rather than that it was busy or
+/// refused.
+fn is_damage(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+    )
 }
 
 // ---- opening -----------------------------------------------------------------------------------
 
-/// `PRAGMA integrity_check`, plus the header check SQLite passes but a truncated file fails.
+/// The structure every read of the store depends on, checked at a cost that does not grow with
+/// the store (§31.7, issue #147, ADR-1068).
+///
+/// `PRAGMA integrity_check` reads every page, and running it at every open made opening the
+/// store cost as much as the store is large — the cost every whole-process temporal command paid
+/// before it asked its question. What is checked here instead is what a damaged file breaks
+/// first: the root and the first and last leaf of every table and index read back. (The file's
+/// length is not compared with its header: in WAL mode the newest pages live in the log until a
+/// checkpoint, so a healthy file is routinely shorter than its page count.) Damage deeper in the file is met by the read that reaches it,
+/// and [`unavailable`] reports it as corruption naming the store. The whole-file check still runs
+/// where a migration is about to rewrite the store anyway.
+fn check_structure(connection: &Connection, path: &Path, report: &mut IntegrityReport) {
+    let segment = path.display().to_string();
+    for probe in probes(connection).unwrap_or_else(|error| vec![Probe::Failed(error)]) {
+        let outcome = match probe {
+            Probe::Failed(error) => Err(error),
+            Probe::Query(sql) => connection
+                .query_row(&sql, [], |_| Ok(()))
+                .optional()
+                .map(|_| ()),
+        };
+        if let Err(error) = outcome
+            && is_damage(&error)
+        {
+            report.findings.push(IntegrityFinding::new(
+                &segment,
+                &format!("SQLite reports `{error}`"),
+                true,
+            ));
+            return;
+        }
+    }
+}
+
+/// One read of the structure check.
+enum Probe {
+    /// A query reading one root-to-leaf path of one b-tree.
+    Query(String),
+    /// The schema itself could not be listed.
+    Failed(rusqlite::Error),
+}
+
+/// The reads that walk to the first and the last leaf of every table and index.
+///
+/// A probe that SQLite refuses for a reason other than damage — a partial index whose condition
+/// the probe does not repeat — proves nothing either way and is passed over by the caller.
+fn probes(connection: &Connection) -> rusqlite::Result<Vec<Probe>> {
+    let mut statement = connection.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+    )?;
+    let tables: Vec<String> = statement
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let mut probes = Vec::new();
+    for table in tables {
+        let quoted = quote(&table);
+        probes.push(Probe::Query(format!("SELECT 1 FROM {quoted} LIMIT 1")));
+        probes.push(Probe::Query(format!(
+            "SELECT 1 FROM {quoted} ORDER BY rowid DESC LIMIT 1"
+        )));
+        let mut listed = connection.prepare(&format!("PRAGMA index_list({quoted})"))?;
+        let indexes: Vec<String> = listed
+            .query_map([], |row| row.get(1))?
+            .collect::<rusqlite::Result<_>>()?;
+        for index in indexes {
+            let mut info = connection.prepare(&format!("PRAGMA index_info({})", quote(&index)))?;
+            let first: Option<String> = info
+                .query_map([], |row| row.get::<_, Option<String>>(2))?
+                .next()
+                .transpose()?
+                .flatten();
+            let Some(column) = first else {
+                continue;
+            };
+            for order in ["ASC", "DESC"] {
+                probes.push(Probe::Query(format!(
+                    "SELECT 1 FROM {quoted} INDEXED BY {} ORDER BY {} {order} LIMIT 1",
+                    quote(&index),
+                    quote(&column)
+                )));
+            }
+        }
+    }
+    Ok(probes)
+}
+
+/// An identifier as SQL quotes it.
+fn quote(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+/// The whole-file check, for a store a migration is about to rewrite (ADR-0633, ADR-1068).
 fn check_file_integrity(connection: &Connection, path: &Path, report: &mut IntegrityReport) {
     let answer: Result<String, _> =
         connection.query_row("PRAGMA integrity_check", [], |row| row.get(0));
@@ -843,11 +979,32 @@ fn migrate(connection: &mut Connection, path: &Path) -> Result<u32, ErrorValue> 
         .map_err(|error| unavailable(path, &error))?
         > 0;
     let current = if has_metadata {
-        read_metadata_u64(connection, VERSION_KEY).unwrap_or_default()
+        connection
+            .query_row(
+                "SELECT value FROM metadata WHERE key = ?1",
+                params![VERSION_KEY],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|error| unavailable(path, &error))?
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_default()
     } else {
         0
     };
     let current = u32::try_from(current).unwrap_or(u32::MAX);
+    // A store a migration is about to rewrite is read whole anyway, so that is where the
+    // whole-file check runs: a damaged store is refused before it is rewritten (ADR-0633, ADR-1068).
+    if current > 0 && current < STORE_VERSION {
+        let mut report = IntegrityReport::default();
+        check_file_integrity(connection, path, &mut report);
+        if report.is_fatal() {
+            return Err(error::store_corrupt(
+                &path.display().to_string(),
+                &report.guidance(),
+            ));
+        }
+    }
     if current > STORE_VERSION {
         return Err(error::store_unavailable(&format!(
             "`{}` was written by a newer Ono at store version {current}; this one reads up to \
@@ -896,9 +1053,8 @@ fn reclaim(connection: &Connection) -> rusqlite::Result<()> {
 
 /// Whether any event is left to remove.
 fn holds_events(connection: &Connection) -> rusqlite::Result<bool> {
-    let count: i64 =
-        connection.query_row("SELECT COUNT(*) FROM events LIMIT 1", [], |row| row.get(0))?;
-    Ok(count > 0)
+    // Whether one row exists, not how many: a count reads the whole table (issue #147).
+    connection.query_row("SELECT EXISTS (SELECT 1 FROM events)", [], |row| row.get(0))
 }
 
 fn read_metadata_u64(connection: &Connection, key: &str) -> Option<u64> {
