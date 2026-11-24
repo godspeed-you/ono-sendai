@@ -1,0 +1,51 @@
+# v0.4 §19.1's link map shows a latency (`prod/web01 connected 12ms`). The handshake's round trip
+# is measured once, when a link is made (ADR-0985); issue #308 asks for a latency measured while
+# the link is open. ADR-1095: the agent announces `ono.link.probe/1` and answers the probe without
+# touching a provider; the shell probes on demand when it draws the map, reuses a measurement for
+# five seconds, and says when it measured. A link that cannot be probed states why, with a null.
+#
+# The links are made over the `local` transport, so the far side is this container's own agent.
+case: the link map measures a live latency, says when, and never passes the handshake off as one
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+
+  ono -c 'link host one --transport local; look --json; look --json' 2>/dev/null | grep '^{' > /tmp/views.json
+  ono -c 'link host one --transport local; look' > /tmp/look.txt 2>/dev/null
+  ono -c 'link host one --transport local --agentless; look --json' 2>/dev/null | tail -1 > /tmp/agentless.json
+  ono -c 'link host one --transport local; detach link one; look --json' 2>/dev/null | tail -1 > /tmp/detached.json
+
+  echo "== a connected agent link is probed when the map is drawn =="
+  prove p1 "the latency is a measured duration with the time it was taken" \
+    "head -1 /tmp/views.json | grep -qE '\"latency\":\"[0-9]+ns\",\"latency_measured_at\":\"[^\"]+\",\"latency_status\":\"measured\"'"
+  prove p2 "the handshake's round trip is still there, as a separate field" \
+    "head -1 /tmp/views.json | grep -qE '\"round_trip\":\"[0-9]+ns\"'"
+  prove p3 "two views drawn back to back share one probe (no probe storm)" \
+    "[ \"\$(grep -oE '\"latency_measured_at\":\"[^\"]+\"' /tmp/views.json | sort -u | wc -l)\" = 1 ]"
+  prove p4 "look prints the measured figure, not the handshake's" \
+    "grep -qE '^ +one +connected +[0-9]+(ns|us|ms|s) *$' /tmp/look.txt"
+
+  echo "== a link that cannot be probed says so, with no number =="
+  prove n1 "an agentless link has no agent to answer a probe" \
+    "grep -qE '\"latency\":null,\"latency_measured_at\":null,\"latency_status\":\"not_offered\"' /tmp/agentless.json"
+  prove n2 "a detached link is not probed and carries no old figure forward" \
+    "grep -qE '\"latency\":null,\"latency_measured_at\":null,\"latency_status\":\"unavailable\"' /tmp/detached.json"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED p1
+stdout-contains: PROVED p2
+stdout-contains: PROVED p3
+stdout-contains: PROVED p4
+stdout-contains: PROVED n1
+stdout-contains: PROVED n2
+stdout-contains: done=ok
+stdout-not-contains: FAILED
