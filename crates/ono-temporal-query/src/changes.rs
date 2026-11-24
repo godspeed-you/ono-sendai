@@ -33,6 +33,16 @@ use ono_value::{
 /// an unbounded one would break both that and §43.1.
 pub const DEFAULT_LIMIT: usize = 500;
 
+/// How many events one comparison may read (issue #150, ADR-1067).
+///
+/// A change is a fold over every event its subject had in the window — the earliest `before` and
+/// the latest `after` of each field (§13.4) — so a comparison over part of a window is not a
+/// smaller answer but a wrong one. The bound is therefore on the read, and a window that holds
+/// more is refused rather than compared in part. Fifty thousand is an hour of the whole host at
+/// §49's fixture rate (11.6 events a second) with room to spare, and decoded it stays in tens of
+/// megabytes rather than in the size of the store.
+pub const MAX_WINDOW_EVENTS: usize = 50_000;
+
 /// What a caller asks `changes` for (§13.1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangesRequest {
@@ -44,8 +54,11 @@ pub struct ChangesRequest {
     pub since: Timestamp,
     /// `--until`. `None` means the active temporal coordinate (§13.1).
     pub until: Option<Timestamp>,
-    /// How many changes to return.
+    /// How many changes to return. One more is returned where there are more, so a caller can
+    /// say that the limit cut the answer rather than let it read as complete.
     pub limit: usize,
+    /// How many events the comparison may read before it refuses ([`MAX_WINDOW_EVENTS`]).
+    pub max_events: usize,
 }
 
 impl ChangesRequest {
@@ -58,6 +71,7 @@ impl ChangesRequest {
             since,
             until: None,
             limit: DEFAULT_LIMIT,
+            max_events: MAX_WINDOW_EVENTS,
         }
     }
 
@@ -145,9 +159,14 @@ impl TemporalChange {
 /// The changes `request` asks `ledger` for, with `coordinate` standing in for an omitted
 /// `--until` (§13.1).
 ///
+/// At most `request.limit + 1` changes come back: one over the limit says the limit cut the
+/// answer, which the caller reports rather than presenting the first `limit` as all of them.
+///
 /// # Errors
 ///
-/// Returns whatever §34 refusal the ledger raises.
+/// Returns whatever §34 refusal the ledger raises, and `resource.item_limit` where the window
+/// holds more than `request.max_events` events — the ledger is asked for one more than that and
+/// no further, so the bound is on the read and not only on the answer (issue #150).
 pub fn changes(
     ledger: &dyn LedgerRead,
     request: &ChangesRequest,
@@ -160,9 +179,12 @@ pub fn changes(
         subjects: request.subjects.clone(),
         kinds: Vec::new(),
         range: window,
-        limit: None,
+        limit: Some(request.max_events.saturating_add(1)),
         order: QueryOrder::Ascending,
     })?;
+    if events.len() > request.max_events {
+        return Err(window_too_large(request, until));
+    }
     presentation_order(&mut events);
 
     let intervals = ledger.coverage(&CoverageQuery {
@@ -191,8 +213,31 @@ pub fn changes(
             .then_with(|| a.subject.label().cmp(b.subject.label()))
             .then_with(|| a.change_id.cmp(&b.change_id))
     });
-    answer.truncate(request.limit);
+    answer.truncate(request.limit.saturating_add(1));
     Ok(answer)
+}
+
+/// §43.1's refusal for a window that holds more events than one comparison may read.
+fn window_too_large(request: &ChangesRequest, until: Timestamp) -> ErrorValue {
+    let bound = i128::try_from(request.max_events).unwrap_or(i128::MAX);
+    ErrorValue::new(
+        ono_core::ErrorCode::ResourceItemLimit,
+        format!(
+            "the window from {} to {until} holds more than {} events, and `changes` compares a \
+             window whole or not at all",
+            request.since, request.max_events
+        ),
+    )
+    .with_help(
+        "a change folds every event of its subject in the window, so a part of the window would \
+         be a wrong answer rather than a shorter one; narrow `--since`/`--until` or name a target \
+         (issue #150)",
+    )
+    .with_metadata("stage", Value::string("changes"))
+    .with_metadata("limit", Value::Int(bound))
+    .with_metadata("consumed", Value::Int(bound.saturating_add(1)))
+    .with_metadata("since", Value::Timestamp(request.since))
+    .with_metadata("until", Value::Timestamp(until))
 }
 
 /// One field transition worth naming in a return-to-now summary (§18.7).

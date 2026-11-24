@@ -267,7 +267,23 @@ impl CommandImpl for Changes {
                     return Err(super::coordinate::unreachable(&state, request.since, now));
                 }
             }
-            let changes = ono_temporal_query::changes::changes(ledger.as_ref(), &request, anchor)?;
+            let mut changes =
+                ono_temporal_query::changes::changes(ledger.as_ref(), &request, anchor)?;
+            // The engine answers one change past the limit where the limit cut the answer
+            // (ADR-1067). Every value printed is exact; that there were more is said, the way
+            // `timeline` says its list was truncated, rather than left to read as all of them.
+            if changes.len() > request.limit {
+                changes.truncate(request.limit);
+                crate::report::Reporter::new(ono_render::Presentation::choose(
+                    std::io::IsTerminal::is_terminal(&std::io::stderr()),
+                    &[],
+                ))
+                .note(&format!(
+                    "`changes` shows the first {} changes of the window, and more changed; narrow \
+                     `--since`/`--until` to see the rest",
+                    request.limit
+                ));
+            }
             let mut values = Vec::with_capacity(changes.len());
             for change in &changes {
                 values.push(Value::Record(Arc::new(change.to_record()?)));

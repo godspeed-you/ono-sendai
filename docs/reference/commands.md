@@ -7211,7 +7211,7 @@ What is different between two instants, classified and with per-field certainty.
 | `--until` | `string` | The later instant. Defaults to the active temporal coordinate, normally now. |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
-**Note.** §13.4: where one side lacks evidence the field is reported as unknown with the coverage that explains it, never as a zero or an empty string.
+**Note.** §13.4: where one side lacks evidence the field is reported as unknown with the coverage that explains it, never as a zero or an empty string. The comparison reads at most 50,000 events of its window and refuses a window that holds more with `resource.item_limit`, because a change folds every event of its subject and a part of the window would be a wrong answer rather than a shorter one; at most 500 changes are printed, and where more changed the diagnostic stream says so (ADR-1067).
 
 **Examples**
 
