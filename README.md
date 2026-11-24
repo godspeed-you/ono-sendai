@@ -543,10 +543,10 @@ built.
 ```text
 crates=48
 workspace_members=50
-tests=7936
+tests=7941
 tests_that_can_skip=124
 expected_ci_skips=16
-acceptance_cases=326
+acceptance_cases=327
 adrs=747
 command_contract_files=16
 commands=227

@@ -1123,6 +1123,7 @@ async fn should_shape_ono_link_1_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "clock_offset", ty: "duration", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "clock_uncertainty", ty: "duration", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "runtime_elevated", ty: "bool", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "streams", ty: "list<map>", required: false, nullable: true, unit: None },
         ],
     }).await;
 }

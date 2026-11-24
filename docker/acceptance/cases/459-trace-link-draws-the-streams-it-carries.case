@@ -1,0 +1,43 @@
+# Issue #219 (b), (c). `ono.link.trace` promises a link's "multiplexed streams", and ADR-0105 left
+# them undrawn: the protocol did not expose them as objects. ADR-1099: a link lists the streams it
+# carries — each by the id both ends route it by, what opened it and about what — `ono.link/1`
+# carries them, and `trace link` draws each as an `ono.link-stream/1` the link `carries`. And the
+# execution context is part of the `ono.execution-plan/1` value, not only of its rendering.
+case: trace link draws the streams a link carries, and explain's plan value names the remote context
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+  made='link host testbox --transport local; enter link testbox'
+  ono -c "$made; get process | each { trace link testbox } | take 1" > /tmp/trace.txt 2>/dev/null
+  ono -c "link host testbox --transport local; get link | select streams | to json" 2>/dev/null | tail -1 > /tmp/idle.json
+  ono -c "$made; explain \"stop process 1\" | select context | to json" 2>/dev/null | tail -1 > /tmp/remote.json
+  ono -c 'explain "get process" | select context | to json' 2>/dev/null | tail -1 > /tmp/local.json
+
+  echo "== the streams a link multiplexes are drawn as objects =="
+  prove s1 "a query stream open while the link is traced is drawn by id, kind and target" \
+    "grep -qE 'carries -> testbox #[0-9]+ query process' /tmp/trace.txt"
+  prove s2 "an idle agent link carries no stream, which is an empty list" \
+    "grep -qF '[{\"streams\":[]}]' /tmp/idle.json"
+
+  echo "== the plan value carries the execution context (§42.2) =="
+  prove c1 "inside a link the plan names the link, transport and mode" \
+    "grep -qE '\"context\":\{\"host\":\"testbox\",\"link\":\"testbox \(remote\)\",\"transport\":\"local\",\"mode\":\"agent\"' /tmp/remote.json"
+  prove c2 "on the local machine it is null" \
+    "grep -qF '[{\"context\":null}]' /tmp/local.json"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED s1
+stdout-contains: PROVED s2
+stdout-contains: PROVED c1
+stdout-contains: PROVED c2
+stdout-contains: done=ok
+stdout-not-contains: FAILED

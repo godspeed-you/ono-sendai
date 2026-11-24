@@ -911,6 +911,23 @@ impl Prober {
         })
     }
 
+    /// The streams open on the link right now, as [`Link::open_streams`] lists them; none once
+    /// the link is gone.
+    #[must_use]
+    pub fn open_streams(&self) -> Vec<OpenStream> {
+        let Some(inner) = self.inner.upgrade() else {
+            return Vec::new();
+        };
+        let mut open: Vec<OpenStream> = inner.with_streams(|streams| {
+            streams
+                .values()
+                .map(|registered| registered.opened.clone())
+                .collect()
+        });
+        open.sort_by_key(|stream| stream.id);
+        open
+    }
+
     /// Whether the far side offered its link table at all.
     #[must_use]
     pub const fn offers_links(&self) -> bool {

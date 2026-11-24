@@ -356,6 +356,10 @@ commands:
     streaming: false
     acquisition: {scope: global, cost: external}
     phase: H
+    note: >-
+      The multiplexed streams are drawn as `ono.link-stream/1` nodes the link `carries` — each
+      by the id both ends route it by, with what opened it, about which target and when — for
+      the streams open while the link is traced (#219 (b), ADR-1099).
     examples:
       - trace link prod-db
 

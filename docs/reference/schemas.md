@@ -1081,6 +1081,22 @@ Default view: `name`, `host`, `transport`, `state`
 | `latency_measured_at` | `timestamp` | — | nullable | When the latest probe of this link was made, answered or not. Null when this link — this connection, not an earlier one under the same name — was never probed. |
 | `latency_status` | `enum` | — | required | What the latest probe found: `measured` (answered; `latency` is its round trip), `timed_out` (asked, and not answered within two seconds), `not_offered` (the far side announces no probe — an older agent, or the agentless fallback, which has no agent to ask), `unavailable` (the link is not connected and followed, or the probe failed). |
 
+## LinkStream — `ono.link-stream/1`
+
+One stream a link carries right now — its id, what opened it, about which target, and when.
+
+Identity: `link`, `id`
+
+Default view: `link`, `id`, `kind`, `target`, `opened_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `link` | `string` | — | required | The link that carries it. |
+| `id` | `int` | — | required | The stream id both ends route its frames by; unique on the link while the stream is open. |
+| `kind` | `enum` | — | required | What opened it. |
+| `target` | `string` | — | nullable | The target it asked about; null for a probe or a link-table request, which ask about none. |
+| `opened_at` | `timestamp` | — | required | When this side opened it. |
+
 ## Link — `ono.link/1`
 
 One remote Ono link this session holds.
@@ -1109,6 +1125,7 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 | `clock_offset` | `duration` | — | nullable | How far the peer's wall clock was from this host's at the handshake, positive when the peer reads later (v0.5 §24.2). Null where either side did not say — an unmeasured offset is unknown rather than a measured zero (v0.2 §35.3). |
 | `clock_uncertainty` | `duration` | — | nullable | The bound the peer stated on its own reading (v0.5 §24.4). §24.3 forbids a false global total order, and this is the figure a renderer warns from when it exceeds `temporal.remote.clock_uncertainty_warn`. Null is unmeasured, not zero. |
 | `runtime_elevated` | `bool` | — | nullable | Whether the far side reports it is running with elevated privilege (spec §17.2). Self- reported, and §2.1 forbids it from satisfying the word authenticated. |
+| `streams` | `list<map>` | — | nullable | The streams the link carries right now, each one the link's own object (spec §21.4, #219 (b), ADR-1099): `id` (what both ends route its frames by), `kind` (`query`, `subscribe`, `act`, `adapt`, `probe` or `links`), `target` and `opened_at`. Read when the table is read. Null where no agent link carries any: a definition nothing established, or the agentless fallback, which multiplexes nothing. |
 
 ## LogRecord — `ono.log-record/1`
 

@@ -5495,6 +5495,8 @@ Show a link's transport, agent, negotiated providers and multiplexed streams.
 |---|---|---|
 | `name` | `string` | The link to trace. |
 
+**Note.** The multiplexed streams are drawn as `ono.link-stream/1` nodes the link `carries` — each by the id both ends route it by, with what opened it, about which target and when — for the streams open while the link is traced (#219 (b), ADR-1099).
+
 **Examples**
 
 ```text

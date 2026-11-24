@@ -1025,7 +1025,35 @@ fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, Erro
         "clock_uncertainty",
         link.clock_uncertainty.map_or(Value::Null, Value::Duration),
     )?
+    .set("streams", streams_of(link))?
     .build())
+}
+
+/// The streams the link carries right now, read when the table is read (#219 (b), ADR-1099):
+/// null where no agent link carries any — a definition, or the agentless fallback.
+fn streams_of(link: &LinkRow) -> Value {
+    #[cfg(feature = "remote")]
+    {
+        let Some(prober) = link.prober.as_ref().filter(|_| link.state == "connected") else {
+            return Value::Null;
+        };
+        Value::list(prober.open_streams().into_iter().map(|stream| {
+            let mut fields = ono_value::MapValue::new();
+            fields.insert("id".into(), Value::Int(i128::from(stream.id)));
+            fields.insert("kind".into(), Value::string(stream.kind));
+            fields.insert(
+                "target".into(),
+                stream.target.as_deref().map_or(Value::Null, Value::string),
+            );
+            fields.insert("opened_at".into(), Value::Timestamp(stream.opened_at));
+            Value::Map(Arc::new(fields))
+        }))
+    }
+    #[cfg(not(feature = "remote"))]
+    {
+        let _ = link;
+        Value::Null
+    }
 }
 
 #[cfg(feature = "remote")]
