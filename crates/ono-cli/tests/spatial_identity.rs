@@ -1147,16 +1147,32 @@ fn should_refuse_a_search_anchored_on_a_path_this_user_may_not_read() {
     // did not — the anchor was resolved against the index alone, so a denied scope answered
     // `spatial.not_found`, which says the place is not there rather than that it is not this
     // user's to see (§35.1, §35.2, §40).
+    //
+    // The denied path is the test's own directory. `/root` is the host's: where it is a mount of
+    // its own (a ZFS-on-root layout gives root's home a dataset) the same spelling also names the
+    // mount and its filesystem, and the search answers `spatial.ambiguous_selector` before it
+    // reaches the permission at all — a verdict about the host's mount table, not about the
+    // boundary this test is for (AGENTS.md §11).
     if !unprivileged() {
         return;
     }
-    let run = ono("find place --near /root secret");
+    let dir = scratch();
+    let denied = dir.path().join("denied");
+    std::fs::create_dir(&denied).expect("the test makes its own directory");
+    std::fs::set_permissions(&denied, std::os::unix::fs::PermissionsExt::from_mode(0o000))
+        .expect("and takes every permission from it");
+
+    let run = ono(&format!("find place --near {} secret", denied.display()));
+    let denied_again =
+        std::fs::set_permissions(&denied, std::os::unix::fs::PermissionsExt::from_mode(0o700));
+
     assert!(
         run.stderr().contains("spatial.permission_denied"),
         "§35.1/§40: a search anchored on a denied path is refused by name, got {:?} / {:?}",
         run.stdout(),
         run.stderr()
     );
+    denied_again.expect("the directory is readable again so the scratch can be cleaned up");
 }
 
 #[test]
