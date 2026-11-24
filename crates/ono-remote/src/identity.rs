@@ -95,6 +95,18 @@ impl PeerIdentity {
         }
     }
 
+    /// The identity recorded in `path`, which must already exist — for a caller that observes
+    /// identities and must never create one (`get peer-key`, ADR-1045).
+    ///
+    /// # Errors
+    ///
+    /// As [`open_or_create`](Self::open_or_create), and `io.not_found` when there is no file.
+    pub fn open(path: &Path) -> Result<Self, ErrorValue> {
+        refuse_exposed_permissions(path)?;
+        let pem = std::fs::read_to_string(path).map_err(|error| io_error(path, &error))?;
+        Self::from_file(&pem, path)
+    }
+
     /// An identity that lives only as long as this process, stored nowhere.
     ///
     /// # Errors

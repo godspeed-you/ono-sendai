@@ -8,8 +8,8 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 131 examples run; 242 are not run, each for the reason listed at the end of this file.
-//! 51 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
+//! 132 examples run; 242 are not run, each for the reason listed at the end of this file.
+//! 52 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
 //! Commands no example of which runs (144):
 //!
@@ -1273,6 +1273,18 @@ fn should_produce_what_ono_client_key_get_declares_when_example_1_runs() {
         example: "get client-key",
         output: "stream<ono.client-key/1>",
         may_be_empty: Some("a fresh configuration authorizes no client key."),
+    });
+}
+
+/// `get peer-key`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_peer_key_get_declares_when_example_1_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.peer-key.get",
+        example: "get peer-key",
+        output: "stream<ono.peer-key/1>",
+        may_be_empty: Some("a fresh configuration directory holds no identity until the first direct link or `--print-peer-key` makes one, and `get` never makes one (ADR-1045)."),
     });
 }
 

@@ -25,6 +25,7 @@ The nouns of spec §8 — the resources a verb acts on. `schema` names the objec
 | `host` | system | `—` | H | A known host from a configured source, reachable or not. |
 | `host-key` | system | `ono.host-key/1` | H | A host key this shell has pinned, and the fingerprint it was pinned by. |
 | `client-key` | system | `ono.client-key/1` | H | A client key this machine authorizes to reach its listening agent, and what it may do. |
+| `peer-key` | system | `ono.peer-key/1` | H | An identity this shell itself holds, by fingerprint, and whether it is the link identity. |
 | `user` | system | `ono.user/1` | C | A user account, identified by uid, with the numeric identity kept when NSS cannot resolve it. |
 | `group` | system | `ono.group/1` | C | A group account, identified by gid. |
 | `session` | system | `—` | C | A login or seat session. |

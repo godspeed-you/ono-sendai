@@ -5753,6 +5753,28 @@ Revoke a client key, so its next connection is refused.
 remove client-key sha256:1f0c
 ```
 
+### `get peer-key`
+
+List this shell's own identities by fingerprint, and whether each is the link identity.
+
+| | |
+|---|---|
+| id | `ono.peer-key.get` |
+| stability | experimental |
+| phase | H |
+| input | `null` |
+| output | `stream<ono.peer-key/1>` |
+| provider capability | `host.list` |
+| privilege | none |
+| arguments | parsed in words mode (ADR-0009) |
+| streaming | yes |
+
+**Examples**
+
+```text
+get peer-key
+```
+
 ## service
 
 ### `get service`

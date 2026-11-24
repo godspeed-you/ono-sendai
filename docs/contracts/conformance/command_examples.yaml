@@ -207,6 +207,9 @@ may_be_empty:
   - command: ono.client-key.get
     example: "get client-key"
     reason: "a fresh configuration authorizes no client key."
+  - command: ono.peer-key.get
+    example: "get peer-key"
+    reason: "a fresh configuration directory holds no identity until the first direct link or `--print-peer-key` makes one, and `get` never makes one (ADR-1045)."
   - command: ono.change-plan.get
     example: "get plan"
     reason: "a fresh state directory holds no plan."

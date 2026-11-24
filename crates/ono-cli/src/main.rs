@@ -125,7 +125,13 @@ fn main() -> ExitCode {
                 let Some(limits) = configured_limits(&options) else {
                     return ExitCode::from(ExitStatus::FAILURE);
                 };
-                return runtime.block_on(serve_authenticated(address, &identity, config, limits));
+                return runtime.block_on(serve_authenticated(
+                    address,
+                    &identity,
+                    agent_options.host_key.is_some(),
+                    config,
+                    limits,
+                ));
             }
             return runtime.block_on(ono_remote::agent_main(
                 tokio::io::stdin(),
@@ -304,6 +310,18 @@ fn authorization_store() -> Result<ono_protocol::AuthorizedClients, ono_value::E
     ono_cli::trust::open_authorized_clients(&sources)
 }
 
+/// The configuration directory of ADR-0010, as the environment describes it.
+#[cfg(feature = "remote")]
+fn config_directory() -> Option<std::path::PathBuf> {
+    let environment: Vec<(String, String)> = std::env::vars().collect();
+    ono_cli::hosts::HostSources::from_environment(
+        environment
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str())),
+    )
+    .config_dir
+}
+
 /// Where a listening agent reads the clients it may serve (v0.4.1 §9.2).
 #[cfg(feature = "remote")]
 fn authorization_store_path() -> Option<std::path::PathBuf> {
@@ -328,6 +346,7 @@ fn authorization_store_path() -> Option<std::path::PathBuf> {
 async fn serve_authenticated(
     address: &str,
     identity: &ono_remote::PeerIdentity,
+    explicit_identity: bool,
     config: ono_remote::AgentConfig,
     limits: ono_protocol::Limits,
 ) -> ExitCode {
@@ -361,7 +380,13 @@ async fn serve_authenticated(
 
     // The agent enforces the ceilings the configuration layers declare, so a figure an operator
     // set is the figure the summary prints and the listener applies (§12.4, §52.2, ADR-0501).
-    print_startup_summary(bound, identity, store.entries().len(), &limits);
+    print_startup_summary(
+        bound,
+        identity,
+        explicit_identity,
+        store.entries().len(),
+        &limits,
+    );
 
     let agent = ono_remote::ListeningAgent::new(listener, config)
         .with_limits(limits)
@@ -383,12 +408,29 @@ async fn serve_authenticated(
 fn print_startup_summary(
     bound: std::net::SocketAddr,
     identity: &ono_remote::PeerIdentity,
+    explicit_identity: bool,
     authorized: usize,
     limits: &ono_protocol::Limits,
 ) {
     let name = ono_core::SHORT_NAME;
     ono_core::diagnostic!("{name}: listening on {bound}");
     ono_core::diagnostic!("{name}: host key {}", identity.fingerprint());
+    // §8.2 rule 5: `--host-key` may name a key other than the one every direct link from this
+    // machine presents. That is allowed (ADR-0435) and must not be silent (ADR-1045). Only an
+    // existing link identity is compared; none is created for the purpose.
+    if explicit_identity
+        && let Some(link) = config_directory()
+            .and_then(|directory| ono_cli::trust::existing_link_identity(&directory))
+        && link.fingerprint() != identity.fingerprint()
+    {
+        ono_core::diagnostic!(
+            "{name}: link identity {} ({}) differs from the host key this agent presents; a \
+             peer that pinned one is refused by the other",
+            link.fingerprint(),
+            link.path()
+                .map_or_else(String::new, |path| path.display().to_string())
+        );
+    }
     ono_core::diagnostic!(
         "{name}: authorization store {}",
         authorization_store_path().map_or_else(

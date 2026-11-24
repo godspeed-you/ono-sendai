@@ -1431,6 +1431,22 @@ Default view: `name`, `version`, `installed`, `description`
 | `description` | `string` | — | nullable | The manager's one-line description, where the query that produced the record carried one. |
 | `provider` | `string` | — | required | The package manager that answered, such as `dpkg`; part of the identity. |
 
+## PeerKey — `ono.peer-key/1`
+
+One identity this shell keeps in its configuration directory, by fingerprint.
+
+Identity: `path`
+
+Default view: `role`, `fingerprint`, `same_as_link_identity`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `role` | `enum` | — | required | `link_identity` is `link_identity.pem`, the identity every direct link and a listening agent without `--host-key` present (v0.4.1 §8.1). `legacy_host_key` is `host_key.pem`, kept by §8.2 rule 4 and the file `--agent --host-key` was historically pointed at. |
+| `path` | `path` | — | required | The file the identity is kept in. |
+| `algorithm` | `string` | — | required | How the key is proved; `tls-x509` is the end-entity certificate a peer sees (ADR-0353). |
+| `fingerprint` | `string` | — | required | The full SHA-256 fingerprint, `sha256:` and 64 hex digits — what a peer pins this machine by, and the same value `--print-peer-key` or `--agent --print-host-key` prints for the file. |
+| `same_as_link_identity` | `bool` | — | nullable | Whether this identity's fingerprint is the link identity's. False is the diverging pair §8.2 rule 5 forbids from being silent: a peer that pinned one refuses the other. Null when there is no link identity to compare with. |
+
 ## Permission — `ono.permission/1`
 
 What one KUANG/11 package is permitted to do, in human terms, and the capabilities underneath.

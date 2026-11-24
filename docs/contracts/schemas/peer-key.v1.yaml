@@ -1,0 +1,45 @@
+# PeerKey. v0.4.1 §7.2 makes the fingerprint the public contract of a peer identity, §8.1 keeps
+# this shell's own identity in `link_identity.pem`, and §8.2 keeps a machine's earlier
+# `host_key.pem` beside it and forbids the two from diverging *silently* (rule 5). `--agent
+# --host-key` can present one while every direct link presents the other, so this record shows
+# both by fingerprint, each saying whether it is the link identity (issue #201, ADR-1045).
+#
+# The third of the key records: `ono.host-key/1` is a key this shell pinned for another host,
+# `ono.client-key/1` a key this machine authorizes, and this one a key this shell itself holds.
+# Only the fingerprint leaves the file; the private key never appears in any field.
+id: ono.peer-key/1
+name: PeerKey
+summary: One identity this shell keeps in its configuration directory, by fingerprint.
+identity: [path]
+fields:
+  role:
+    type: enum
+    required: true
+    values: [link_identity, legacy_host_key]
+    doc: >-
+      `link_identity` is `link_identity.pem`, the identity every direct link and a listening
+      agent without `--host-key` present (v0.4.1 §8.1). `legacy_host_key` is `host_key.pem`, kept
+      by §8.2 rule 4 and the file `--agent --host-key` was historically pointed at.
+  path:
+    type: path
+    required: true
+    doc: The file the identity is kept in.
+  algorithm:
+    type: string
+    required: true
+    doc: How the key is proved; `tls-x509` is the end-entity certificate a peer sees (ADR-0353).
+  fingerprint:
+    type: string
+    required: true
+    doc: >-
+      The full SHA-256 fingerprint, `sha256:` and 64 hex digits — what a peer pins this machine
+      by, and the same value `--print-peer-key` or `--agent --print-host-key` prints for the file.
+  same_as_link_identity:
+    type: bool
+    nullable: true
+    doc: >-
+      Whether this identity's fingerprint is the link identity's. False is the diverging pair
+      §8.2 rule 5 forbids from being silent: a peer that pinned one refuses the other. Null when
+      there is no link identity to compare with.
+default_view:
+  columns: [role, fingerprint, same_as_link_identity]

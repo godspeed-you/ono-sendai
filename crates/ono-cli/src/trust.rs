@@ -140,6 +140,75 @@ fn identity_io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
     )
 }
 
+/// One of this shell's own identities, as `get peer-key` shows it (ADR-1045).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PeerKeyRow {
+    /// `link_identity` or `legacy_host_key`.
+    pub role: &'static str,
+    /// The file the identity is kept in.
+    pub path: PathBuf,
+    /// How the key is proved.
+    pub algorithm: String,
+    /// The full `sha256:` fingerprint — the public contract of v0.4.1 §7.2, and all of the key
+    /// that leaves the file.
+    pub fingerprint: String,
+    /// Whether this is the link identity's key; `None` when there is no link identity to compare.
+    pub same_as_link_identity: Option<bool>,
+}
+
+/// The identities in this session's configuration directory, and the files that could not be read
+/// as one (v0.4.1 §8.1, §8.2; ADR-1045).
+///
+/// Observes only: nothing is generated or migrated, and each file passes §8.3's owner-only check
+/// before it is read. A file that is not there is not a row; a file that is there and cannot be
+/// read as an identity is a failure, so an exposed or damaged key is never silently absent.
+#[must_use]
+pub fn peer_key_rows(sources: &crate::hosts::HostSources) -> (Vec<PeerKeyRow>, Vec<ErrorValue>) {
+    let Some(directory) = &sources.config_dir else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut found = Vec::new();
+    let mut failures = Vec::new();
+    for (role, file) in [
+        ("link_identity", LINK_IDENTITY_FILE),
+        ("legacy_host_key", HOST_KEY_FILE),
+    ] {
+        let path = directory.join(file);
+        if !path.exists() {
+            continue;
+        }
+        match PeerIdentity::open(&path) {
+            Ok(identity) => found.push((role, path, identity)),
+            Err(error) => failures.push(error),
+        }
+    }
+    let link = found
+        .iter()
+        .find(|(role, _, _)| *role == "link_identity")
+        .map(|(_, _, identity)| identity.fingerprint());
+    let rows = found
+        .into_iter()
+        .map(|(role, path, identity)| PeerKeyRow {
+            role,
+            path,
+            algorithm: identity.algorithm().to_owned(),
+            fingerprint: identity.fingerprint().to_string(),
+            same_as_link_identity: link.map(|link| link == identity.fingerprint()),
+        })
+        .collect();
+    (rows, failures)
+}
+
+/// The link identity in `directory`, when there is one, without creating or migrating anything —
+/// for the listening agent's summary to compare the key it presents against (ADR-1045).
+#[must_use]
+pub fn existing_link_identity(directory: &Path) -> Option<PeerIdentity> {
+    let path = directory.join(LINK_IDENTITY_FILE);
+    path.exists()
+        .then(|| PeerIdentity::open(&path).ok())
+        .flatten()
+}
+
 /// How a key was proved, when a command does not say.
 ///
 /// The authenticated transport of spec §21.5 is the only thing that pins a key on its own today

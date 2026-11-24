@@ -148,6 +148,12 @@ targets:
     summary: A client key this machine authorizes to reach its listening agent, and what it may do.
     schema: ono.client-key/1
     phase: H
+  - id: ono.target.peer-key
+    name: peer-key
+    category: system
+    summary: An identity this shell itself holds, by fingerprint, and whether it is the link identity.
+    schema: ono.peer-key/1
+    phase: H
   - id: ono.target.user
     name: user
     category: system
