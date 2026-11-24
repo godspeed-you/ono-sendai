@@ -24,14 +24,6 @@ unmaintained = "workspace"
 # vulnerable path is unreachable and a date by which it goes away. An open-ended waiver is how a
 # known vulnerability becomes a permanent one.
 ignore = [
-    # Archived, not vulnerable. `rustls-pemfile` was retired in August 2025 in favour of the same
-    # code inside `rustls-pki-types`, and `ono-remote` uses it for one thing: reading the local
-    # certificate and key files of the host's own identity (ADR-0353), which are files the user
-    # already owns. No exploitable path is claimed by the advisory and none is reachable from the
-    # network. The date is the deadline, not a preference: the migration to
-    # `rustls_pki_types::pem::PemObject` belongs to the owner of `crates/ono-remote`, and this
-    # waiver expires whether or not it has happened (spec §45.1, ADR-0449).
-    { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile is archived rather than vulnerable; ono-remote reads only local identity files with it, and the migration to rustls-pki-types is tracked for crates/ono-remote (ADR-0449), expires 2027-03-01" },
 ]
 
 # --- licences (spec §45.2) ----------------------------------------------------------------------

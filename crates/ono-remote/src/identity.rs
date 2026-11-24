@@ -35,6 +35,7 @@ use std::time::SystemTime;
 use ono_core::ErrorCode;
 use ono_protocol::{Fingerprint, HostKey};
 use ono_value::ErrorValue;
+use rustls::pki_types::pem::{self, PemObject as _};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 /// The algorithm name the trust store records for a key proved through TLS.
@@ -180,16 +181,25 @@ fn parse_pem(
              then refuse until it is re-pinned",
         )
     };
-    let mut reader = io::BufReader::new(pem.as_bytes());
-    let certificate = rustls_pemfile::certs(&mut reader)
-        .next()
-        .transpose()
-        .map_err(|error| malformed(&format!("the certificate is unreadable: {error}")))?
-        .ok_or_else(|| malformed("no CERTIFICATE block"))?;
-    let mut reader = io::BufReader::new(pem.as_bytes());
-    let key = rustls_pemfile::private_key(&mut reader)
-        .map_err(|error| malformed(&format!("the private key is unreadable: {error}")))?
-        .ok_or_else(|| malformed("no PRIVATE KEY block"))?;
+    // `PemObject` reads the same sections `rustls-pemfile` did, which is the code it was retired
+    // into (ADR-1040): the first CERTIFICATE section, and the first private key of the three
+    // forms a TLS stack takes — PKCS#8, PKCS#1, SEC1 — wherever in the file each one is. Every
+    // other section is skipped, and a section that does not decode refuses the file.
+    let unreadable = |what: &str, error: pem::Error| match error {
+        pem::Error::NoItemsFound => malformed(&format!("no {what} block")),
+        error => malformed(&format!(
+            "the {} is unreadable: {error}",
+            if what == "CERTIFICATE" {
+                "certificate"
+            } else {
+                "private key"
+            }
+        )),
+    };
+    let certificate = CertificateDer::from_pem_slice(pem.as_bytes())
+        .map_err(|error| unreadable("CERTIFICATE", error))?;
+    let key = PrivateKeyDer::from_pem_slice(pem.as_bytes())
+        .map_err(|error| unreadable("PRIVATE KEY", error))?;
     Ok((certificate, key))
 }
 
