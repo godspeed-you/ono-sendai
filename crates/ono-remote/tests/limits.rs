@@ -253,6 +253,23 @@ impl Drop for Agent {
 
 /// An agent on a loopback port the system chooses, serving the fixture registry under `limits`.
 async fn listening(limits: ono_protocol::Limits, authorized: &[&PeerIdentity]) -> Agent {
+    let store = Arc::new(std::sync::Mutex::new(store_of(authorized)));
+    let reading = Arc::clone(&store);
+    listening_to(limits, store, move || {
+        Ok(reading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone())
+    })
+    .await
+}
+
+/// An agent that reads its authorization store from `source`, however that store came to be.
+async fn listening_to(
+    limits: ono_protocol::Limits,
+    store: Arc<std::sync::Mutex<AuthorizedClients>>,
+    source: impl Fn() -> Result<AuthorizedClients, ono_value::ErrorValue> + Send + Sync + 'static,
+) -> Agent {
     let identity = PeerIdentity::generate().expect("a host identity is generated");
     let host = identity.peer_key();
     let listener = TlsListener::bind("127.0.0.1:0", &identity)
@@ -262,8 +279,6 @@ async fn listening(limits: ono_protocol::Limits, authorized: &[&PeerIdentity]) -
         .local_addr()
         .expect("the system reports the port it chose")
         .to_string();
-    let store = Arc::new(std::sync::Mutex::new(store_of(authorized)));
-    let reading = Arc::clone(&store);
     let audit = Arc::new(Recording::default());
     let registry = fixture_registry(Arc::new(FixtureObserved::default()));
     let agent = ListeningAgent::new(
@@ -272,12 +287,7 @@ async fn listening(limits: ono_protocol::Limits, authorized: &[&PeerIdentity]) -
     )
     .with_limits(limits)
     .with_audit(Arc::clone(&audit) as ono_protocol::Audit)
-    .with_authorization_source(move || {
-        Ok(reading
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone())
-    });
+    .with_authorization_source(source);
     let connections = agent.connections();
     let task = tokio::spawn(agent.run());
     Agent {
@@ -795,5 +805,52 @@ async fn should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revo
         }),
         "a client that was never granted anything has nothing revoked, got {:?}",
         agent.audit.lines()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_not_tell_a_refused_peer_where_the_agent_keeps_its_store() {
+    // §9.2, §59.5: a store that will not parse authorizes nobody, and the agent refuses every
+    // connection until it is repaired. The *operator* is told which file and which line; the
+    // peer is told that the agent cannot read its policy — §59.1 allows it "minimal rejection
+    // protocol data", and a directory on the agent's host is not that (ADR-1056).
+    let directory =
+        std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("limits-unreadable-store");
+    std::fs::create_dir_all(&directory).expect("a scratch directory");
+    let path = directory.join("authorized_clients");
+    std::fs::write(&path, "this is not an authorization entry\n").expect("the store is written");
+    let reading = path.clone();
+    let agent = listening_to(
+        ono_protocol::Limits::default(),
+        Arc::new(std::sync::Mutex::new(AuthorizedClients::empty())),
+        move || AuthorizedClients::open(&reading),
+    )
+    .await;
+    let client = PeerIdentity::generate().expect("a client identity is generated");
+
+    let refused = within(link(&agent, &client))
+        .await
+        .expect_err("§9.2: a malformed store authorizes nobody");
+
+    assert_eq!(refused.code(), ErrorCode::RemoteAuthorizationStoreInvalid);
+    let told = format!("{refused:?}");
+    for withheld in [
+        path.display().to_string(),
+        directory.display().to_string(),
+        "limits-unreadable-store".to_owned(),
+    ] {
+        assert!(
+            !told.contains(&withheld),
+            "§59.1: the refused peer learned `{withheld}` about the agent's filesystem: {told}"
+        );
+    }
+    assert_eq!(
+        refused.metadata().get("denied_because"),
+        Some(&ono_value::Value::string("authorization_store_malformed")),
+        "refusals.yaml: which boundary decided still crosses the wire, got {refused:?}"
+    );
+    assert!(
+        refused.message().contains("authorization"),
+        "§54.1: the sentence still names the boundary, got {refused:?}"
     );
 }

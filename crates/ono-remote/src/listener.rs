@@ -338,6 +338,25 @@ fn handshake_timed_out(timeout: std::time::Duration) -> ErrorValue {
     )
 }
 
+/// The refusal a peer receives when the agent cannot read its own authorization store.
+///
+/// The operator's diagnostic names the file and the line, because they are the one who can fix
+/// it. The peer is authenticated and authorized for nothing, and §59.1 allows it "minimal
+/// rejection protocol data": the code, a sentence that names the boundary, and the reason word
+/// the refusal census lets cross the wire — never a path on this host (ADR-1056).
+fn as_told_to_the_peer(error: &ErrorValue) -> ErrorValue {
+    let mut told = ErrorValue::new(
+        error.code(),
+        "this agent cannot read its authorization store, so it authorizes no client until its \
+         operator repairs it",
+    )
+    .with_retryable(false);
+    if let Some(reason) = error.metadata().get("denied_because") {
+        told = told.with_metadata("denied_because", reason.clone());
+    }
+    told
+}
+
 /// Where a listening agent gets the authorization store for each connection.
 ///
 /// Read once per accepted connection and fixed for that connection's life (§10.3), and read again
@@ -625,7 +644,7 @@ async fn serve_one(
                 .with_error_code(error.code()),
             );
             ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
-            let _ = ono_protocol::refuse(transport, &error, limits).await;
+            let _ = ono_protocol::refuse(transport, &as_told_to_the_peer(&error), limits).await;
             return;
         }
     };
