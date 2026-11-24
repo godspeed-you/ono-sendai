@@ -17,13 +17,16 @@
 
 #[path = "change_support/mod.rs"]
 mod change_support;
+#[path = "support/service_manager.rs"]
+mod service_manager;
 
 use std::path::Path;
 use std::time::Duration;
 
-use change_support::{ono_at, plan, requires_a_service, rows, text};
+use change_support::{ono_at, ono_with, plan, rows, text};
 use ono_testkit::{Run, Shell, SkipReason, skipped};
 use serde_yaml_ng::Value;
+use service_manager::FixtureServiceManager;
 
 /// A home on the disk the build uses, removed when the test ends.
 ///
@@ -204,15 +207,24 @@ fn approval(run: &Run) -> Vec<String> {
 
 #[test]
 fn should_show_the_gate_apply_will_raise_with_the_rules_own_reason() {
-    let home = home();
-    if requires_a_service(home.path()).is_none() {
+    // Fifty units is §53's `change.bulk.high_risk_targets`. They are a service manager this test
+    // owns rather than the host's, whose transient units can vanish between the listing and the
+    // plan (issue #300, ADR-1080).
+    let Some(manager) = FixtureServiceManager::try_start(50) else {
         skipped(
-            SkipReason::FixtureNotApplicable,
-            "this host serves no systemd unit, so there is no bulk restart to plan",
+            SkipReason::ExternalToolUnavailable,
+            "this needs `dbus-daemon`, so the fixture can serve a service manager holding the \
+             fifty units a bulk restart plans against",
         );
         return;
-    }
-    let run = ono_at(home.path(), "get service | take 50 | plan restart service");
+    };
+    let home = home();
+    let run = ono_with(
+        home.path(),
+        "DBUS_SYSTEM_BUS_ADDRESS",
+        &manager.address(),
+        "get service | plan restart service",
+    );
     run.assert_success();
     let asked = approval(&run).join("\n");
     assert!(
