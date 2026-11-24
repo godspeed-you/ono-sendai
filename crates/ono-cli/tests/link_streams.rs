@@ -28,13 +28,17 @@ fn last_json(run: &ono_testkit::Run) -> Value {
 
 #[test]
 fn should_draw_a_stream_that_is_open_while_the_link_is_traced() {
-    // `get process` across the link holds a query stream open while `each` traces the link for
-    // its first record: the trace draws that stream, by id, with what opened it and about what.
+    // A watch across the link holds a subscription stream open for as long as it runs, so the
+    // trace of its first event sees it — however few files or processes the machine has.
+    let home = scratch();
+    let watched = home.path().join("watched");
+    std::fs::create_dir_all(&watched).expect("a directory to watch");
     let run = support::ono_at_home(
-        &scratch(),
+        &home,
         &format!(
-            "{LINK}; enter link testbox; get process | each {{ trace link testbox }} | take 1 | \
-             to json"
+            "{LINK}; enter link testbox; watch file {} | each {{ trace link testbox }} | take 1 \
+             | to json",
+            watched.display()
         ),
     );
     run.assert_success();
@@ -54,7 +58,7 @@ fn should_draw_a_stream_that_is_open_while_the_link_is_traced() {
         .unwrap_or_else(|| panic!("a stream node, got {nodes:#?}"));
     let shown = stream.to_string();
     assert!(
-        shown.contains("\"kind\":\"query\"") && shown.contains("\"target\":\"process\""),
+        shown.contains("\"kind\":\"subscribe\"") && shown.contains("\"target\":\"dir\""),
         "the stream says what opened it and about what, got {stream}"
     );
 }

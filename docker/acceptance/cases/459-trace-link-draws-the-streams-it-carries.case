@@ -17,14 +17,17 @@ run: |
     fi
   }
   made='link host testbox --transport local; enter link testbox'
-  ono -c "$made; get process | each { trace link testbox } | take 1" > /tmp/trace.txt 2>/dev/null
+  watched=$(mktemp -d)
+  # A watch across the link holds a subscription stream open for as long as it runs; the first
+  # event is traced while it is open, however few processes or files the machine has.
+  ono -c "$made; watch file $watched | each { trace link testbox } | take 1" > /tmp/trace.txt 2>/dev/null
   ono -c "link host testbox --transport local; get link | select streams | to json" 2>/dev/null | tail -1 > /tmp/idle.json
   ono -c "$made; explain \"stop process 1\" | select context | to json" 2>/dev/null | tail -1 > /tmp/remote.json
   ono -c 'explain "get process" | select context | to json' 2>/dev/null | tail -1 > /tmp/local.json
 
   echo "== the streams a link multiplexes are drawn as objects =="
-  prove s1 "a query stream open while the link is traced is drawn by id, kind and target" \
-    "grep -qE 'carries -> testbox #[0-9]+ query process' /tmp/trace.txt"
+  prove s1 "a subscription open while the link is traced is drawn by id, kind and target" \
+    "grep -qE 'carries -> testbox #[0-9]+ subscribe [a-z]+' /tmp/trace.txt"
   prove s2 "an idle agent link carries no stream, which is an empty list" \
     "grep -qF '[{\"streams\":[]}]' /tmp/idle.json"
 
