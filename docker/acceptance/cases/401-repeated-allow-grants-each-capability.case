@@ -1,0 +1,30 @@
+# Issue #194, ADR-1043. v0.4.1 §9.7 writes `set client-key <fingerprint> --allow <capability>...`:
+# one capability id per `--allow`. Before v0.6.6 only the comma-separated spelling granted more than
+# one; it keeps working through the 0.6 line, and the two spellings mix.
+case: every repeated --allow is granted, and the comma-separated spelling still works
+timeout: 60
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  CLIENT=$(ono --print-peer-key)
+  ono -c "add client-key $CLIENT | select status" > /dev/null
+
+  echo "== one id per --allow =="
+  ono -c "set client-key $CLIENT --allow process.signal --allow service.manage | select changed | to json"
+  ono -c 'get client-key | select actions | to json' | sed 's/^/repeated: /'
+
+  echo "== the 0.6 spelling, mixed with the repeated one =="
+  ono -c "set client-key $CLIENT --allow \"process.signal,service.manage\" --allow host.trust | select changed | to json"
+  ono -c 'get client-key | select actions | to json' | sed 's/^/mixed: /'
+
+  echo "== one pattern among several ids refuses all of them =="
+  ono -c "try { set client-key $CLIENT --allow service.manage --allow 'process.*' } catch e { \$e | select code | to json }"
+  ono -c 'get client-key | select actions | to json' | sed 's/^/unchanged: /'
+exit: 0
+stdout-contains: repeated: [{"actions":["process.signal","service.manage"]}]
+stdout-contains: mixed: [{"actions":["host.trust","process.signal","service.manage"]}]
+stdout-contains: "code":"Ono-Sendai-E1204"
+stdout-contains: unchanged: [{"actions":["host.trust","process.signal","service.manage"]}]
+stdout-not-contains: panicked

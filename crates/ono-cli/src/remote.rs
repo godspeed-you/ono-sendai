@@ -391,10 +391,16 @@ fn act(
             let observe = bound
                 .option("observe")
                 .and_then(|value| value.as_bool().ok());
+            // `--allow` is repeatable (ADR-1043): one occurrence binds a word, several a list.
+            let allow: Option<Vec<String>> = bound.option("allow").map(|value| match value {
+                Value::List(items) => items.iter().map(ToString::to_string).collect(),
+                Value::Null => Vec::new(),
+                value => vec![value.to_string()],
+            });
             let changed = crate::trust::set_client_key(
                 &session.host_sources(),
                 name,
-                option("allow").as_deref(),
+                allow.as_deref(),
                 observe,
                 option("label").as_deref(),
             )

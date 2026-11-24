@@ -416,9 +416,10 @@ pub fn authorize_client(
 
 /// Replaces what an authorized client may do (§9.5, §9.7).
 ///
-/// `allow` is a comma-separated list of **exact** capability ids and never a pattern; each is
-/// parsed as an [`ActionGrant`], so `*`, `process.*` and a risk class are refused rather than
-/// stored. `observe` and `label` change only what they name; a field left `None` is left alone,
+/// `allow` is the value of each `--allow`, each one an **exact** capability id and never a pattern
+/// — or, the spelling 0.6 documented and still accepts, several of them comma-separated (ADR-1043).
+/// Every id is parsed as an [`ActionGrant`], so `*`, `process.*` and a risk class are refused
+/// rather than stored, and one refused id changes nothing. `observe` and `label` change only what they name; a field left `None` is left alone,
 /// so `--allow` preserves observe state as §9.7 requires.
 ///
 /// # Errors
@@ -428,7 +429,7 @@ pub fn authorize_client(
 pub fn set_client_key(
     sources: &crate::hosts::HostSources,
     fingerprint: &str,
-    allow: Option<&str>,
+    allow: Option<&[String]>,
     observe: Option<bool>,
     label: Option<&str>,
 ) -> Result<bool, ErrorValue> {
@@ -436,7 +437,12 @@ pub fn set_client_key(
     let mut granted = None;
     if let Some(allow) = allow {
         let mut ids = Vec::new();
-        for id in allow.split(',').map(str::trim).filter(|id| !id.is_empty()) {
+        for id in allow
+            .iter()
+            .flat_map(|given| given.split(','))
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+        {
             ids.push(id.parse::<ActionGrant>()?);
         }
         granted = Some(ids);

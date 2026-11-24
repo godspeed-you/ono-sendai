@@ -196,6 +196,83 @@ fn should_change_exactly_the_grants_named_when_set_client_key_runs() {
     );
 }
 
+// --- `--allow` once per capability (issue #194, ADR-1043) -------------------------------------
+
+#[test]
+fn should_grant_every_capability_named_by_a_repeated_allow() {
+    let home = scratch();
+    let client = fingerprint('e');
+    ono_at_home(&home, &format!("add client-key {client}")).assert_success();
+
+    // §9.7 writes `--allow <capability>...`: one id per occurrence.
+    let allowed = ono_at_home(
+        &home,
+        &format!(
+            "set client-key {client} --allow process.signal --allow service.manage | select changed | to json"
+        ),
+    );
+    allowed.assert_success();
+    assert_eq!(last_line(&allowed), "[{\"changed\":true}]");
+
+    let after = ono_at_home(&home, "get client-key | select actions | to json");
+    assert_eq!(
+        last_line(&after),
+        "[{\"actions\":[\"process.signal\",\"service.manage\"]}]",
+        "`--allow a --allow b` grants both, got {:?} / {:?}",
+        after.stdout(),
+        allowed.stderr()
+    );
+}
+
+#[test]
+fn should_keep_granting_a_comma_separated_allow_for_compatibility() {
+    let home = scratch();
+    let client = fingerprint('f');
+    ono_at_home(&home, &format!("add client-key {client}")).assert_success();
+
+    ono_at_home(
+        &home,
+        &format!(
+            "set client-key {client} --allow \"process.signal,service.manage\" --allow host.trust"
+        ),
+    )
+    .assert_success();
+
+    let after = ono_at_home(&home, "get client-key | select actions | to json");
+    assert_eq!(
+        last_line(&after),
+        "[{\"actions\":[\"host.trust\",\"process.signal\",\"service.manage\"]}]",
+        "the 0.6 spelling keeps its meaning, and the two spellings mix, got {:?}",
+        after.stdout()
+    );
+}
+
+#[test]
+fn should_refuse_a_pattern_in_any_one_of_several_allows_and_change_nothing() {
+    let home = scratch();
+    let client = fingerprint('0');
+    ono_at_home(&home, &format!("add client-key {client}")).assert_success();
+
+    let refused = ono_at_home(
+        &home,
+        &format!(
+            "try {{ set client-key {client} --allow service.manage --allow process.* }} catch e {{ $e | select code | to json }}"
+        ),
+    );
+    refused.assert_success();
+    assert!(
+        last_line(&refused).contains("Ono-Sendai-E1204"),
+        "§9.5: one pattern among several ids refuses the command, got {:?}",
+        refused.stdout()
+    );
+    let after = ono_at_home(&home, "get client-key | select actions | to json");
+    assert_eq!(
+        last_line(&after),
+        "[{\"actions\":[]}]",
+        "and nothing was granted, not even the valid id beside it"
+    );
+}
+
 #[test]
 fn should_remove_a_client_key_so_the_store_no_longer_lists_it() {
     let home = scratch();

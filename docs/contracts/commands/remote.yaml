@@ -492,7 +492,7 @@ commands:
     selectors:
       - {name: fingerprint, type: string, doc: "The client key to change."}
     options:
-      - {name: allow, type: string, doc: "Replace the action allowlist with these exact capability ids, comma-separated and quoted where there is more than one. Not a pattern and never `*`."}
+      - {name: allow, type: string, repeatable: true, doc: "Replace the action allowlist with these exact capability ids, one per `--allow`. Not a pattern and never `*`. A comma-separated list in one quoted value is still accepted (ADR-1043); `--allow \"\"` clears the allowlist."}
       - {name: observe, type: bool, doc: "Whether the client may run queries and subscriptions."}
       - {name: label, type: string, doc: "Rename the client."}
     privilege: none
@@ -500,6 +500,7 @@ commands:
     phase: H
     examples:
       - set client-key sha256:1f0c --allow service.manage
+      - set client-key sha256:1f0c --allow process.signal --allow service.manage
       - set client-key sha256:1f0c --observe false
 
   - id: ono.client-key.remove
