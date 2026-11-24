@@ -512,3 +512,32 @@ fn should_read_the_unit_list_once_per_plan_however_many_targets_it_freezes() {
     );
     assert_eq!(many.jobs, 0, "v0.6 §2.1: planning a restart queued no job");
 }
+
+#[test]
+fn should_plan_and_apply_a_block_written_in_the_positional_copy_spelling() {
+    // ADR-1083: the spelling of ADR-0813's plan block, as this shell has it — `copy file <from>
+    // <to>`, no connective — runs, from `plan` through `apply`, in a scratch directory.
+    let home = change_support::build_disk_home("positional-copy");
+    let source = home.path().join("nginx.conf");
+    let destination = home.path().join("nginx.conf.live");
+    std::fs::write(&source, "worker_processes 8;\n").expect("the source is written");
+    std::fs::write(&destination, "worker_processes 1;\n").expect("the destination is written");
+
+    let reference = plan(
+        home.path(),
+        &format!(
+            "{{ copy file {} {} --overwrite; verify file {} exists }}",
+            source.display(),
+            destination.display(),
+            destination.display()
+        ),
+    );
+    let applied = ono_at(home.path(), &format!("apply {reference}"));
+
+    applied.assert_success();
+    assert_eq!(
+        std::fs::read_to_string(&destination).expect("the destination is readable"),
+        "worker_processes 8;\n",
+        "v0.6 §5.6: the applied block copied the source onto the destination"
+    );
+}
