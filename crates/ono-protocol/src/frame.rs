@@ -78,6 +78,10 @@ pub enum FrameKind {
     /// Ask the agent to adapt an external invocation for a demand, or to say what it would do
     /// (spec v0.3 §1.54).
     StartAdapt,
+    /// Ask the agent to answer at once, touching nothing, so the link's round trip can be
+    /// measured while it is open (`ono.link.probe/1`, v0.4 §19.1, ADR-1095). The agent answers
+    /// with the stream's `end`.
+    Probe,
 }
 
 impl FrameKind {
@@ -97,6 +101,7 @@ impl FrameKind {
         FrameKind::Outcome,
         FrameKind::End,
         FrameKind::StartAdapt,
+        FrameKind::Probe,
     ];
 
     /// The byte that stands for this kind on the wire.
@@ -117,6 +122,7 @@ impl FrameKind {
             FrameKind::Outcome => 12,
             FrameKind::End => 13,
             FrameKind::StartAdapt => 14,
+            FrameKind::Probe => 15,
         }
     }
 
@@ -144,6 +150,7 @@ impl FrameKind {
             FrameKind::Outcome => "outcome",
             FrameKind::End => "end",
             FrameKind::StartAdapt => "start-adapt",
+            FrameKind::Probe => "probe",
         }
     }
 

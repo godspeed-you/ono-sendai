@@ -241,6 +241,43 @@ enum Inbound {
 #[derive(Debug)]
 struct Registered {
     sender: mpsc::Sender<Inbound>,
+    opened: OpenStream,
+}
+
+/// One stream open on a link right now, as the link itself knows it (ADR-0105, ADR-1112).
+///
+/// The streams a link multiplexes are objects with an identity: the id both ends route by, what
+/// opened it, what it asked about and when. `trace link` draws them, so a reader can see what a
+/// link is carrying instead of a count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenStream {
+    /// The id both ends route the stream's frames by.
+    pub id: u32,
+    /// What opened it: `query`, `subscribe`, `act`, `adapt` or `probe`.
+    pub kind: &'static str,
+    /// The target it asked about, where it asked about one.
+    pub target: Option<String>,
+    /// When this side opened it.
+    pub opened_at: jiff::Timestamp,
+}
+
+impl OpenStream {
+    fn of(id: u32, message: &Message) -> Self {
+        let (kind, target) = match message {
+            Message::StartQuery(query) => ("query", Some(query.target_name().to_owned())),
+            Message::StartSubscribe(query) => ("subscribe", Some(query.target_name().to_owned())),
+            Message::Act(request) => ("act", Some(request.target_name().to_owned())),
+            Message::StartAdapt(request) => ("adapt", request.argv().first().cloned()),
+            Message::Probe => ("probe", None),
+            other => (other.kind().as_str(), None),
+        };
+        Self {
+            id,
+            kind,
+            target,
+            opened_at: jiff::Timestamp::now(),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -320,7 +357,13 @@ impl LinkInner {
                 }));
             }
             let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-            streams.insert(id, Registered { sender });
+            streams.insert(
+                id,
+                Registered {
+                    sender,
+                    opened: OpenStream::of(id, message),
+                },
+            );
             Ok(id)
         })?;
         let payload = encode_message(message, &self.limits).map_err(ErrorValue::from)?;
@@ -349,6 +392,8 @@ struct Opened {
 #[derive(Debug)]
 pub struct Link {
     inner: Arc<LinkInner>,
+    /// Unique among the links this process made (see [`Prober::link`]).
+    id: u64,
     negotiated: Negotiated,
     /// How long the handshake's one exchange took: the offer out, the answer back.
     round_trip: std::time::Duration,
@@ -452,8 +497,10 @@ impl Link {
             Arc::clone(&config.schemas),
             limits,
         );
+        static LINKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
         Ok(Self {
             inner,
+            id: LINKS.fetch_add(1, Ordering::Relaxed),
             negotiated,
             round_trip,
         })
@@ -538,6 +585,65 @@ impl Link {
         Err(refusal.unwrap_or_else(|| unreachable("the remote ended the action without answering")))
     }
 
+    /// Measures one round trip on the open link (`ono.link.probe/1`, v0.4 §19.1, ADR-1095).
+    ///
+    /// The agent answers a probe at once and touches no provider, so the figure is the link and
+    /// the far side's loop, not whatever a query happened to cost. It is sent only when the
+    /// handshake negotiated the probe; otherwise the refusal is local and nothing crosses the
+    /// wire (ADR-1056's one rule). A probe that is not answered within `timeout` is released —
+    /// its stream is forgotten and cancelled — so an unanswered probe leaves nothing behind.
+    ///
+    /// # Errors
+    ///
+    /// - `remote.protocol_mismatch` when the far side did not offer the probe;
+    /// - `remote.unreachable` when the link is gone, or no answer came within `timeout`
+    ///   (retryable, with `timeout_ms`).
+    pub async fn probe(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<std::time::Duration, ErrorValue> {
+        probe(&self.inner, self.offers(crate::PROBE_CAPABILITY), timeout).await
+    }
+
+    /// A handle that probes this link from elsewhere — the link map, a watch — without holding
+    /// the link open: once the link is gone, its probes report that (ADR-1095).
+    #[must_use]
+    pub fn prober(&self) -> Prober {
+        Prober {
+            inner: Arc::downgrade(&self.inner),
+            offered: self.offers(crate::PROBE_CAPABILITY),
+            link: self.id,
+        }
+    }
+
+    /// Whether the handshake negotiated the protocol feature `id` (ADR-1056, rule 2).
+    #[must_use]
+    pub fn offers(&self, id: &str) -> bool {
+        self.negotiated
+            .capabilities()
+            .iter()
+            .any(|offered| offered == id)
+    }
+
+    /// The streams open on this link right now, in id order (ADR-0105, ADR-1112).
+    #[must_use]
+    pub fn open_streams(&self) -> Vec<OpenStream> {
+        let mut open: Vec<OpenStream> = self.inner.with_streams(|streams| {
+            streams
+                .values()
+                .map(|registered| registered.opened.clone())
+                .collect()
+        });
+        open.sort_by_key(|stream| stream.id);
+        open
+    }
+
+    /// Whether the link is still up: no transport failure and no hang-up has been seen.
+    #[must_use]
+    pub fn is_alive(&self) -> bool {
+        self.inner.status().is_ok()
+    }
+
     /// Says goodbye now, without waiting for the link to be dropped.
     ///
     /// Queued frames are flushed and the transport is shut down, so a peer reading a pipe sees
@@ -569,6 +675,107 @@ impl Drop for Link {
         self.hangup();
     }
 }
+
+/// Probes the link behind `inner` (see [`Link::probe`]).
+async fn probe(
+    inner: &Arc<LinkInner>,
+    offered: bool,
+    timeout: std::time::Duration,
+) -> Result<std::time::Duration, ErrorValue> {
+    if !offered {
+        return Err(crate::features::not_offered(
+            crate::PROBE_CAPABILITY,
+            "the probe",
+        ));
+    }
+    let started = std::time::Instant::now();
+    let mut opened = inner.open(FrameKind::Probe, &Message::Probe)?;
+    let answer = tokio::time::timeout(timeout, opened.receiver.recv()).await;
+    match answer {
+        Ok(Some(Inbound::End)) => {
+            inner.release(opened.id);
+            Ok(started.elapsed())
+        }
+        Ok(Some(Inbound::Failure(error))) => {
+            inner.release(opened.id);
+            Err(*error)
+        }
+        Ok(Some(_)) => {
+            inner.cancel_stream(opened.id);
+            Err(ErrorValue::from(ProtocolError::MalformedPayload {
+                kind: FrameKind::Probe,
+                detail: "a probe is answered with an end and nothing else".to_owned(),
+            }))
+        }
+        Ok(None) => {
+            inner.release(opened.id);
+            Err(inner
+                .status()
+                .err()
+                .unwrap_or_else(|| unreachable("the link closed before the probe was answered")))
+        }
+        Err(_elapsed) => {
+            inner.cancel_stream(opened.id);
+            Err(unreachable(format!(
+                "the far side did not answer a probe within {} ms",
+                timeout.as_millis()
+            ))
+            .with_retryable(true)
+            .with_metadata(
+                "timeout_ms",
+                Value::Int(i128::try_from(timeout.as_millis()).unwrap_or(i128::MAX)),
+            ))
+        }
+    }
+}
+
+/// A probe handle for one link that does not keep the link open (ADR-1095).
+///
+/// Two handles are equal when they probe the same link: a link made again after it went down is
+/// another link, and nothing measured on the first one is a measurement of the second.
+#[derive(Debug, Clone)]
+pub struct Prober {
+    inner: std::sync::Weak<LinkInner>,
+    offered: bool,
+    link: u64,
+}
+
+impl Prober {
+    /// Measures one round trip, as [`Link::probe`] does.
+    ///
+    /// # Errors
+    ///
+    /// As [`Link::probe`]; a link that has been dropped is `remote.unreachable`.
+    pub async fn probe(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<std::time::Duration, ErrorValue> {
+        let Some(inner) = self.inner.upgrade() else {
+            return Err(unreachable("the link is closed"));
+        };
+        probe(&inner, self.offered, timeout).await
+    }
+
+    /// Whether the far side offered the probe at all.
+    #[must_use]
+    pub const fn is_offered(&self) -> bool {
+        self.offered
+    }
+
+    /// Which link this handle probes: unique among the links this process made.
+    #[must_use]
+    pub const fn link(&self) -> u64 {
+        self.link
+    }
+}
+
+impl PartialEq for Prober {
+    fn eq(&self, other: &Self) -> bool {
+        self.link == other.link
+    }
+}
+
+impl Eq for Prober {}
 
 /// One multiplexed stream of results, and the credit that bounds its producer.
 ///

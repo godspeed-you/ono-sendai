@@ -167,7 +167,10 @@ impl AgentConfig {
             .with_schemas(Arc::new(schemas))
             .with_limits(self.limits.clone())
             .with_authorization(self.authorization.clone())
-            .with_audit(Arc::clone(&self.audit));
+            .with_audit(Arc::clone(&self.audit))
+            // The requests this protocol grew after version 1, announced so a client knows it
+            // may send them (ADR-1056's one rule, ADR-1095).
+            .with_capabilities(ono_protocol::FEATURES.iter().copied());
         if let Some(address) = &self.source_address {
             config = config.with_source_address(address);
         }

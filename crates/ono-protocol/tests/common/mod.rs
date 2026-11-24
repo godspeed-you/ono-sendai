@@ -13,6 +13,8 @@
               each test binary uses a different subset of the helpers"
 )]
 
+pub mod tap;
+
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

@@ -124,3 +124,36 @@ async fn should_end_the_agent_loop_cleanly_when_the_caller_disconnects() {
         "a caller hanging up is a successful end of session for the agent, not a failure"
     );
 }
+
+#[tokio::test]
+async fn should_answer_a_probe_without_asking_any_provider() {
+    // v0.4 §19.1, ADR-1095: the agent announces the probe and answers it from its own loop, so a
+    // latency can be measured while the link is open without costing the far side a provider
+    // call.
+    let connected = connect().await;
+    assert!(
+        connected
+            .link
+            .negotiated()
+            .capabilities()
+            .iter()
+            .any(|id| id == ono_protocol::PROBE_CAPABILITY),
+        "the agent announces `{}`",
+        ono_protocol::PROBE_CAPABILITY
+    );
+    for _ in 0..3 {
+        within(
+            connected
+                .link
+                .protocol()
+                .probe(std::time::Duration::from_secs(5)),
+        )
+        .await
+        .expect("the agent answers a probe");
+    }
+    assert_eq!(
+        connected.observed.ticks_sent(),
+        0,
+        "no provider produced anything for a probe"
+    );
+}

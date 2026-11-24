@@ -264,10 +264,13 @@ impl ServerConfig {
             // survives only when a provider that survived the filter still declares it. An id no
             // surviving provider names is dropped: fail conservative, as Appendix C's last row
             // asks.
+            // A protocol feature (ADR-1095) names a request this agent understands, not a
+            // permission over the machine, and every authorized connection may make it: what it
+            // may *read* through one is decided when the request arrives (§10.2).
             PeerAuthorization::Policy(_) => self
                 .capabilities
                 .iter()
-                .filter(|id| offered.contains(id.as_str()))
+                .filter(|id| crate::is_feature(id) || offered.contains(id.as_str()))
                 .cloned()
                 .collect(),
         };
@@ -752,6 +755,15 @@ where
     };
     record(event(AuditKind::ConnectionAccepted, "allowed").with_protocol_version(accept.version()));
     let window = accept.credit_window();
+    // The protocol features this link negotiated: a request for one the agent did not announce
+    // is a frame the peer had no business sending (ADR-1056, rule 2).
+    let features: Vec<String> = accept
+        .capabilities()
+        .iter()
+        .filter(|id| crate::is_feature(id))
+        .cloned()
+        .collect();
+    let negotiated = |feature: &str| features.iter().any(|offered| offered == feature);
     let frames = spawn_writer(writer, limits.clone());
     let payload = encode_message(&Message::Accept(accept), &limits).map_err(ErrorValue::from)?;
     frames
@@ -896,6 +908,13 @@ where
                         }
                     }
                 });
+            }
+            Message::Probe if negotiated(crate::PROBE_CAPABILITY) => {
+                // Answered here, in the loop, at once: no task, no provider, no credit — the
+                // round trip it measures is the link and this loop, nothing else (ADR-1095).
+                if let Ok(payload) = encode_message(&Message::End, &limits) {
+                    let _ = frames.send(Frame::new(FrameKind::End, id, payload));
+                }
             }
             Message::Cancel => {
                 if let Some(stream) = with_streams(&streams, |open| open.remove(&id)) {

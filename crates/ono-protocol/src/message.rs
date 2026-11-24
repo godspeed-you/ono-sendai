@@ -355,6 +355,8 @@ pub enum Message {
     /// Adapt an external invocation on the agent's side and stream the records, or say what
     /// would happen (spec v0.3 §1.54, ADR-0066).
     StartAdapt(AdaptRequest),
+    /// Answer at once with the stream's `end`, touching nothing (`ono.link.probe/1`).
+    Probe,
 }
 
 /// An external invocation the agent is asked to adapt for a demand.
@@ -423,6 +425,7 @@ impl Message {
             Message::Outcome(_) => FrameKind::Outcome,
             Message::End => FrameKind::End,
             Message::StartAdapt(_) => FrameKind::StartAdapt,
+            Message::Probe => FrameKind::Probe,
         }
     }
 }
@@ -454,7 +457,7 @@ pub fn encode_message(message: &Message, limits: &Limits) -> Result<Vec<u8>, Pro
         Message::StartQuery(query) | Message::StartSubscribe(query) => query_to_json(query),
         Message::Act(request) => act_to_json(request),
         Message::StartAdapt(request) => to_serde(kind, request)?,
-        Message::Cancel | Message::End => Json::Null,
+        Message::Cancel | Message::End | Message::Probe => Json::Null,
         Message::Credit(credit) => Json::from(*credit),
         Message::Value(value) => to_json(value),
         Message::Event(event) => event_to_json(event),
@@ -504,6 +507,7 @@ pub fn decode_message(
         FrameKind::StartAdapt => from_serde(kind, json).map(Message::StartAdapt),
         FrameKind::Cancel => Ok(Message::Cancel),
         FrameKind::End => Ok(Message::End),
+        FrameKind::Probe => Ok(Message::Probe),
         FrameKind::Credit => json
             .as_u64()
             .and_then(|credit| u32::try_from(credit).ok())
