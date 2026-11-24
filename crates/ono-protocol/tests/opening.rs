@@ -16,40 +16,17 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use bytes::BytesMut;
 use ono_core::ErrorCode;
-use ono_protocol::{
-    AuditEvent, AuditSink, Frame, FrameKind, Limits, Message, UnauthenticatedTransport,
-};
+use ono_protocol::{Frame, FrameKind, Limits, Message, UnauthenticatedTransport};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 mod common;
-use common::{DemoService, Observed, client_key, schemas, server_config, within};
+use common::{DemoService, Observed, Recording, client_key, schemas, server_config, within};
 
 /// The audit sink the test reads.
-#[derive(Debug, Default)]
-struct Recording(Mutex<Vec<String>>);
-
-impl AuditSink for Recording {
-    fn record(&self, event: &AuditEvent) {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(event.render());
-    }
-}
-
-impl Recording {
-    fn lines(&self) -> Vec<String> {
-        self.0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()
-    }
-}
-
 /// What the agent answered, and what it recorded, when the peer opened with exactly `opening`.
 async fn opened_with(opening: Vec<u8>) -> (Option<Message>, Vec<String>) {
     let (near, mut far) = tokio::io::duplex(64 * 1024);

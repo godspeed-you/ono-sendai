@@ -630,6 +630,16 @@ async fn expand(
     }
     // The relations a provider serves that §32.1 kept this view from spending its budget on.
     let mut declined: BTreeSet<&'static str> = contributed_declined;
+    // ADR-1098: whether a connection reaches a host this session links to is read across those
+    // links — the far sides' socket and address tables — which a view must not spend unasked
+    // (§32.1). With no link held there is no linked host to reach, which is an answer.
+    if object_type.is_a(SpatialType::Connection) {
+        if crate::spatial::links::all().is_empty() {
+            answered.insert("hosts");
+        } else {
+            declined.insert("hosts");
+        }
+    }
     let providers = Arc::new(providers.clone());
     // §12 lists `user` among the exits of a process place, so the people behind the processes
     // are part of the neighborhood rather than an option of `trace` (v0.2 §22.3).

@@ -32,6 +32,9 @@ use ono_process::{Command, Executor, PtySession, WindowSize};
 use ono_testkit::{Scratch, Shell};
 use serde_yaml_ng::Value;
 
+#[cfg(feature = "remote")]
+pub mod peers;
+
 /// The string field `field` of a record, or a panic naming the record that lacked it.
 pub fn text(row: &Value, field: &str) -> String {
     row[field]
@@ -1141,4 +1144,14 @@ pub fn ono_with_packages_at_home(home: &Scratch, script: &str) -> ono_testkit::R
         )
         .cwd(home.path())
         .run()
+}
+
+/// Every JSON object the script wrote on a line of its own — what `look --json` and `to jsonl`
+/// write — in order; other lines are skipped.
+pub fn json_lines(run: &ono_testkit::Run) -> Vec<serde_json::Value> {
+    run.stdout()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line.trim()).ok())
+        .filter(serde_json::Value::is_object)
+        .collect()
 }

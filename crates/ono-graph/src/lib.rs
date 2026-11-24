@@ -82,10 +82,10 @@ pub use graph::{
 };
 pub use kernel::{
     ContainerImage, ContainerMounts, ContainerPlacement, ContainerProcesses, FileHolders,
-    HostLinks, InterfaceRoutes, InterfaceSockets, LinkProviders, MountDevices, MountFilesystems,
-    MountPeers, MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers, RemoteHosts,
-    Resolver, RouteInterfaces, ServiceDependencies, ServiceProcesses, SocketOwners, UserGroups,
-    UserProcesses, kernel_relationships, rooted_relationships,
+    HostLinks, InterfaceRoutes, InterfaceSockets, LinkProviders, LinkStreams, MountDevices,
+    MountFilesystems, MountPeers, MountUsers, OpenFiles, ProcessSockets, ProcessTree, ProcessUsers,
+    RemoteHosts, Resolver, RouteInterfaces, ServiceDependencies, ServiceProcesses, SocketOwners,
+    UserGroups, UserProcesses, kernel_relationships, rooted_relationships,
 };
 pub use ono_provider_api::label_of;
 pub use provider::{Relationship, RelationshipProvider, Relationships};

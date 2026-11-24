@@ -128,6 +128,15 @@ impl CommandImpl for Look {
                 } else {
                     None
                 };
+                // §19.1: the link map at a root shows a latency, measured now rather than at the
+                // handshake — on demand, bounded and reused (ADR-1095). Deeper in, no link map
+                // is drawn and nothing is probed.
+                let here = session.current_place().clone();
+                if ono_spatial_query::resolve::space_of(&here)
+                    .is_some_and(|space| space.kind == ono_spatial_core::SpaceKind::Root)
+                {
+                    crate::spatial::links::measure().await;
+                }
                 place_view(
                     &PlaceWorld::Present(&session),
                     &neighborhood,

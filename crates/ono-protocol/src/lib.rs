@@ -58,10 +58,12 @@ mod audit;
 mod authorization;
 mod connection;
 mod error;
+mod features;
 mod frame;
 mod handshake;
 mod limits;
 mod link;
+mod links;
 mod message;
 mod refusal;
 mod service;
@@ -76,6 +78,7 @@ pub use authorization::{
     refusal_guidance, unauthenticated_refusal, update_store, write_store,
 };
 pub use error::ProtocolError;
+pub use features::{FEATURES, LINKS_CAPABILITY, PROBE_CAPABILITY, is_feature};
 pub use frame::{FRAME_HEADER_LEN, FRAME_VERSION, Frame, FrameKind, decode, encode};
 pub use handshake::{
     Accept, CapabilityDescriptor, Hello, Identity, Negotiated, PROTOCOL_VERSION, PeerClock,
@@ -85,7 +88,8 @@ pub use limits::{
     DEFAULT_CREDIT, HANDSHAKE_TIMEOUT, Limits, MAX_CONNECTIONS, MAX_CONNECTIONS_PER_CLIENT,
     MAX_CREDIT, MAX_FRAME_PAYLOAD, MAX_PENDING_HANDSHAKES, MAX_STREAMS, MAX_VALUE_DEPTH,
 };
-pub use link::{ClientConfig, Link, RemoteMessage, RemoteStream};
+pub use link::{ClientConfig, Link, OpenStream, Prober, RemoteMessage, RemoteStream};
+pub use links::{LinkEntry, LinkTable, MAX_LINK_FIELD_BYTES, MAX_LINK_TABLE_ENTRIES};
 pub use message::{ActRequest, AdaptRequest, Message, RemoteQuery, decode_message, encode_message};
 pub use service::{
     RemoteService, ServerAuthorization, ServerConfig, StreamResponder, handshake_timeout_refusal,

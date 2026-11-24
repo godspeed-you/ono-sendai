@@ -1,0 +1,68 @@
+# v0.4 §14.5/§19.4 (#309): a connection whose far end is a host this session links to is
+# recognised as reaching that host, on graded evidence (ADR-1098): `strong` where the far side's
+# own socket table holds the mirror of the connection, `inferred` on an address alone, and
+# `ambiguous` — no edge, nothing picked — where the evidence points at several links. The far
+# tables are read like any read, on request: `map links --connections`.
+#
+# Two agents on 127.0.0.2 and 127.0.0.3, each with its own home and key. In one container every
+# agent shares the kernel's socket table, so one link proves a correlation and two prove that
+# ambiguity is said rather than resolved.
+case: map links --connections correlates a connection with a linked host on two-sided evidence, and says when it cannot tell
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+  a=$(mktemp -d); b=$(mktemp -d); c=$(mktemp -d)
+  at() { local home="$1"; shift; HOME="$home" XDG_CONFIG_HOME="$home" ono -c "$*"; }
+  key() { HOME="$1" XDG_CONFIG_HOME="$1" ono --print-peer-key; }
+  start() {
+    local home="$1" host="$2"
+    HOME="$home" XDG_CONFIG_HOME="$home" ono --agent --listen "$host:0" 2> "$home/log" &
+    echo $! > "$home/pid"
+    for _ in $(seq 1 200); do grep -q 'listening on' "$home/log" && grep -q 'host key' "$home/log" && break; sleep 0.05; done
+    sed -n 's/.*listening on \([^ ]*\).*/\1/p' "$home/log" | head -1 > "$home/address"
+    sed -n 's/.*host key \([^ ]*\).*/\1/p' "$home/log" | head -1 > "$home/key"
+  }
+  start "$b" 127.0.0.2
+  start "$c" 127.0.0.3
+  for peer in "$b" "$c"; do at "$peer" "add client-key $(key "$a") --label a" >/dev/null 2>&1; done
+  at "$a" "add host-key 127.0.0.2 --fingerprint $(cat "$b/key"); add host-key 127.0.0.3 --fingerprint $(cat "$c/key")" >/dev/null 2>&1
+  B=$(cat "$b/address"); C=$(cat "$c/address")
+
+  at "$a" "link host $B --transport tcp; map links --connections --json" 2>/dev/null | grep '^{' > /tmp/one.json
+  at "$a" "link host $B --transport tcp; link host $C --transport tcp; map links --connections" > /tmp/two.txt 2>/dev/null
+  at "$a" "link host $B --transport tcp; map links --json" 2>/dev/null | grep '^{' > /tmp/plain.json
+  kill "$(cat "$b/pid")" "$(cat "$c/pid")" 2>/dev/null
+
+  echo "== the shell's own link connection reaches B, on both sides' evidence =="
+  prove c1 "an edge from the connection to B, strong" \
+    "grep -qE '\"relation\":\"connection.reaches_host\",\"kind\":\"relationship\",\"confidence\":\"strong\"' /tmp/one.json"
+  prove c2 "with its basis and the far socket it mirrors" \
+    "grep -qE '\"basis\":\"two_sided\",\"link\":\"$B\",\"local\":\"127.0.0.1:[0-9]+\",\"remote\":\"$B\",\"far_socket\":\"$B → 127.0.0.1:[0-9]+\"' /tmp/one.json"
+  prove c3 "the map says what it read from B" \
+    "grep -qE '\"subject\":\"link\",\"link\":\"$B\",\"status\":\"read\"' /tmp/one.json"
+
+  echo "== two links that hold the same evidence: ambiguous, nothing picked =="
+  prove a1 "the text map lists the connection as ambiguous between B and C" \
+    "grep -E 'ambiguous' /tmp/two.txt | grep -q \"$B\" && grep -E 'ambiguous' /tmp/two.txt | grep -q \"$C\""
+
+  echo "== asked for, never by default =="
+  prove p1 "a plain map links reads no far table" \
+    "grep -q '\"correlations\":null' /tmp/plain.json && ! grep -q 'connection.reaches_host' /tmp/plain.json"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED c1
+stdout-contains: PROVED c2
+stdout-contains: PROVED c3
+stdout-contains: PROVED a1
+stdout-contains: PROVED p1
+stdout-contains: done=ok
+stdout-not-contains: FAILED

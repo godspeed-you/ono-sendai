@@ -788,6 +788,18 @@ pub const RELATIONS: &[RelationSpec] = &[
         confidence: ConfidenceClaim::Fixed(Confidence::Exact),
         cost_class: CostClass::Remote,
     },
+    RelationSpec {
+        id: "connection.reaches_host",
+        source: SpatialType::Connection,
+        target: SpatialType::Host,
+        direction: Direction::Outbound,
+        canonical_label: "host",
+        inverse_label: "connection",
+        canonical_group: "hosts",
+        inverse_group: "connections",
+        confidence: ConfidenceClaim::ProviderDeclared,
+        cost_class: CostClass::Remote,
+    },
 ];
 
 /// Every declared relation.

@@ -135,5 +135,14 @@ fields:
     doc: >-
       Whether the far side reports it is running with elevated privilege (spec §17.2). Self-
       reported, and §2.1 forbids it from satisfying the word authenticated.
+  streams:
+    type: list<map>
+    nullable: true
+    doc: >-
+      The streams the link carries right now, each one the link's own object (spec §21.4, #219
+      (b), ADR-1099): `id` (what both ends route its frames by), `kind` (`query`, `subscribe`,
+      `act`, `adapt`, `probe` or `links`), `target` and `opened_at`. Read when the table is read.
+      Null where no agent link carries any: a definition nothing established, or the agentless
+      fallback, which multiplexes nothing.
 default_view:
   columns: [name, host, transport, mode, state, targets]

@@ -46,5 +46,28 @@ fields:
     doc: >-
       How the held link reaches the host (ono.link/1 `transport`); null when no link is held,
       because how a host would be reached is not known until it is.
+  reachability:
+    type: enum
+    required: true
+    values: [reachable, unreachable, unauthorized, unknown]
+    doc: >-
+      Whether the host answers, as the latest probe of the link this session holds to it found
+      (`ono.link.probe/1`, ADR-1096). Measured when the table is read — `watch host` reads it at
+      every poll — and reused for at most five seconds. `reachable`: a probe was answered.
+      `unreachable`: a probe went unanswered within two seconds, or the link failed.
+      `unauthorized`: the far side answered and refused — transport reachability is not
+      authorization, and the two are never merged. `unknown`: there is no evidence — no link is
+      held (a listing never dials a host; `test host` does), the link is not established or not
+      followed, or the far side offers no probe.
+  reachability_reason:
+    type: string
+    required: true
+    doc: The evidence behind `reachability`, or why there is none, in one sentence.
+  reachability_since:
+    type: timestamp
+    nullable: true
+    doc: >-
+      Since when probes of the held link have found what the latest one found: the moment of the
+      last transition. Null when no probe was made.
 default_view:
-  columns: [name, address, source, link, transport]
+  columns: [name, address, source, link, transport, reachability]

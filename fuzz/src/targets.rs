@@ -219,7 +219,24 @@ fn remote_protocol(data: &[u8]) {
     }
     let schemas = builtin_schemas();
     for kind in FrameKind::ALL {
-        let _ = decode_message(*kind, data, schemas, &limits);
+        let decoded = decode_message(*kind, data, schemas, &limits);
+        // ADR-1097: a peer's link table is believed only inside its bounds. A table the decoder
+        // accepted that is larger, or carries a longer field, is a hostile peer's table reaching
+        // the map.
+        if let Ok(ono_protocol::Message::LinkTable(table)) = decoded {
+            assert!(
+                table.links.len() <= ono_protocol::MAX_LINK_TABLE_ENTRIES,
+                "a link table over the bound was accepted"
+            );
+            for entry in &table.links {
+                assert!(
+                    [&entry.name, &entry.host, &entry.transport, &entry.state]
+                        .iter()
+                        .all(|text| text.len() <= ono_protocol::MAX_LINK_FIELD_BYTES),
+                    "a link table field over the bound was accepted"
+                );
+            }
+        }
     }
 }
 

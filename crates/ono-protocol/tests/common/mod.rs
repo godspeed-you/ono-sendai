@@ -13,6 +13,8 @@
               each test binary uses a different subset of the helpers"
 )]
 
+pub mod tap;
+
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -215,9 +217,18 @@ pub struct DemoService {
     /// What an action on `(target, operation)` needs to be allowed to do, as the serving side
     /// declares it — the fixture's stand-in for the CLI's command registry.
     capabilities: Vec<(String, String, String)>,
+    /// The link table the service answers `ono.link.links/1` with, where it keeps one.
+    links: Option<ono_protocol::LinkTable>,
 }
 
 impl DemoService {
+    /// The same service, answering link-table requests with `table` exactly as given — the
+    /// hostile suites hand it a table no honest agent would build.
+    pub fn with_links(mut self, table: ono_protocol::LinkTable) -> Self {
+        self.links = Some(table);
+        self
+    }
+
     /// A service reporting what it did into `observed`.
     pub fn new(observed: Arc<Observed>) -> Self {
         Self {
@@ -234,6 +245,7 @@ impl DemoService {
                     "service.manage".to_owned(),
                 ),
             ],
+            links: None,
         }
     }
 }
@@ -315,6 +327,15 @@ impl RemoteService for DemoService {
             .send_event(ObjectEvent::removed(&remote_record(4419, "nginx")).with_sequence(2))
             .await;
         Ok(())
+    }
+
+    async fn links(
+        &self,
+        _peer: &PeerAuthorization,
+    ) -> Result<ono_protocol::LinkTable, ErrorValue> {
+        self.links.clone().ok_or_else(|| {
+            ErrorValue::new(ErrorCode::ProviderUnsupported, "the fixture keeps no links")
+        })
     }
 
     async fn act(
@@ -411,4 +432,27 @@ pub async fn try_connect(
         observed,
         server: handle,
     })
+}
+
+/// An audit sink a suite reads back: every event the agent recorded, rendered (§14.1).
+#[derive(Debug, Default)]
+pub struct Recording(std::sync::Mutex<Vec<String>>);
+
+impl ono_protocol::AuditSink for Recording {
+    fn record(&self, event: &ono_protocol::AuditEvent) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(event.render());
+    }
+}
+
+impl Recording {
+    /// Every event recorded so far, in order.
+    pub fn lines(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
 }

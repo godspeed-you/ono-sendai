@@ -135,6 +135,11 @@ composition_root:
     # about them, and the inert modules it mounts in their place. No domain logic: it decides which
     # names this binary carries, and every answer it gives is a refusal.
     - absent
+    # The links a listening agent holds of its own (`ono --agent --link`, ADR-1097): which
+    # declared links to keep made, and the table an observing peer is told. The transport, the
+    # trust decision and the request are `ono-remote`'s and `ono-protocol`'s; this is the agent
+    # process's composition of them, as `remote.rs` is the shell's.
+    - agent_links.rs
     - builtin.rs
     - change
     - complete.rs

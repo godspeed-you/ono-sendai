@@ -136,3 +136,82 @@ impl RelationshipProvider for LinkProviders {
         found
     }
 }
+
+/// The streams a link carries right now (spec §21.4, §22.4; #219 (b), ADR-1099).
+///
+/// Exact: the link's own stream table, read off the link record when it was listed. A stream is
+/// a node of `ono.link-stream/1`, identified by the link and the id both ends route it by; a
+/// link that carries nothing has no streams, which is absence rather than a failed read.
+#[derive(Debug, Default)]
+pub struct LinkStreams;
+
+impl LinkStreams {
+    /// A provider reading the open streams off the link record itself.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait::async_trait]
+impl RelationshipProvider for LinkStreams {
+    fn id(&self) -> &str {
+        "ono.link-streams"
+    }
+
+    fn subjects(&self) -> &[&str] {
+        &[LINK]
+    }
+
+    fn relations(&self) -> &[&str] {
+        &["carries"]
+    }
+
+    fn capabilities(&self) -> Vec<Capability> {
+        vec![Capability::new("link.list", Risk::Read)]
+    }
+
+    async fn relationships(&self, subject: &Node) -> Relationships {
+        let Some(Value::List(streams)) = subject.field("streams") else {
+            return Relationships::new();
+        };
+        let link = subject.field("name").cloned().unwrap_or(Value::Null);
+        let link_name = link.as_str().unwrap_or_default().to_owned();
+        let mut found = Relationships::new();
+        for stream in streams.iter() {
+            let Value::Map(fields) = stream else {
+                continue;
+            };
+            let (Some(id), Some(kind)) = (fields.get("id"), fields.get("kind")) else {
+                continue;
+            };
+            let mut identity = MapValue::new();
+            identity.insert("link".into(), link.clone());
+            identity.insert("id".into(), id.clone());
+            let mut summary = identity.clone();
+            summary.insert("kind".into(), kind.clone());
+            summary.insert(
+                "target".into(),
+                fields.get("target").cloned().unwrap_or(Value::Null),
+            );
+            summary.insert(
+                "opened_at".into(),
+                fields.get("opened_at").cloned().unwrap_or(Value::Null),
+            );
+            let label = format!(
+                "{link_name} #{} {}{}",
+                ono_value::canonical_text(id).unwrap_or_default(),
+                kind.as_str().unwrap_or_default(),
+                fields
+                    .get("target")
+                    .and_then(|target| target.as_str().ok())
+                    .map(|target| format!(" {target}"))
+                    .unwrap_or_default()
+            );
+            let node = Node::new(SchemaId::new("ono.link-stream", 1), identity, label)
+                .with_summary(summary);
+            found.push(Relationship::exact(subject, node, "carries", self.id()));
+        }
+        found
+    }
+}

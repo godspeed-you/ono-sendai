@@ -114,6 +114,47 @@ fn main() -> ExitCode {
                 write_answer(identity.fingerprint());
                 return ExitCode::from(ExitStatus::SUCCESS);
             }
+            // ADR-1097: every agent keeps a link table — empty for one that serves a single
+            // caller over stdio, the links it was told to hold for a listening one.
+            let mut declared = Vec::new();
+            for link in &agent_options.links {
+                match ono_cli::agent_links::Declared::parse(link) {
+                    Ok(link) => declared.push(link),
+                    Err(usage) => {
+                        ono_core::diagnostic!("{}: {usage}", ono_core::SHORT_NAME);
+                        return ExitCode::from(ExitStatus::USAGE);
+                    }
+                }
+            }
+            if declared.len() > ono_cli::agent_links::MAX_HELD_LINKS {
+                ono_core::diagnostic!(
+                    "{}: an agent holds at most {} links, and was told to hold {}",
+                    ono_core::SHORT_NAME,
+                    ono_cli::agent_links::MAX_HELD_LINKS,
+                    declared.len()
+                );
+                return ExitCode::from(ExitStatus::USAGE);
+            }
+            let held = if declared.is_empty() {
+                ono_cli::agent_links::HeldLinks::none()
+            } else {
+                let outbound = match agent_identity(&agent_options) {
+                    Ok(identity) => std::sync::Arc::new(identity),
+                    Err(error) => {
+                        ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
+                        return ExitCode::from(ExitStatus::FAILURE);
+                    }
+                };
+                let environment: Vec<(String, String)> = std::env::vars().collect();
+                let sources = ono_cli::hosts::HostSources::from_environment(
+                    environment
+                        .iter()
+                        .map(|(name, value)| (name.as_str(), value.as_str())),
+                );
+                let _entered = runtime.enter();
+                ono_cli::agent_links::HeldLinks::hold(declared, &outbound, &sources)
+            };
+            let config = config.with_link_table(std::sync::Arc::new(held));
             if let Some(address) = &agent_options.listen {
                 // v0.4.1 §9.5, §56.4: provider capabilities stay the canonical authorization
                 // unit, so the agent learns which capability an action needs from the same

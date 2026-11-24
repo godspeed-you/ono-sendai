@@ -264,10 +264,15 @@ impl ServerConfig {
             // survives only when a provider that survived the filter still declares it. An id no
             // surviving provider names is dropped: fail conservative, as Appendix C's last row
             // asks.
+            // A protocol feature (ADR-1095) names a request this agent understands, not a
+            // permission over the machine, and it is announced to every authorized connection:
+            // what it may *read* through one is decided when the request arrives (§10.2), so a
+            // connection that may not observe learns "not permitted", never "not offered" —
+            // which would be a false statement about the agent (ADR-1097).
             PeerAuthorization::Policy(_) => self
                 .capabilities
                 .iter()
-                .filter(|id| offered.contains(id.as_str()))
+                .filter(|id| crate::is_feature(id) || offered.contains(id.as_str()))
                 .cloned()
                 .collect(),
         };
@@ -368,6 +373,19 @@ pub trait RemoteService: Send + Sync + 'static {
         ))
     }
 
+    /// Answers with this agent's own link table (`ono.link.links/1`, v0.4 §19.3, ADR-1097).
+    ///
+    /// The serving loop has already checked that the connection may observe; an implementation
+    /// answers what it holds, as it observed it. The default refuses: an agent that keeps no
+    /// link table says so, and does not announce the request.
+    async fn links(&self, peer: &PeerAuthorization) -> Result<crate::LinkTable, ErrorValue> {
+        let _ = peer;
+        Err(ErrorValue::new(
+            ErrorCode::ProviderUnsupported,
+            "this agent keeps no link table",
+        ))
+    }
+
     /// Adapts an external invocation on this side and streams the records it decodes, or —
     /// when the request says so — describes what would happen (spec v0.3 §1.54).
     ///
@@ -441,6 +459,10 @@ impl StreamResponder {
     /// As [`send`](Self::send).
     pub async fn fail(&self, error: ErrorValue) -> Result<(), SinkClosed> {
         self.emit(Message::Failure(error)).await
+    }
+
+    async fn send_link_table(&self, table: crate::LinkTable) -> Result<(), SinkClosed> {
+        self.emit(Message::LinkTable(table)).await
     }
 
     async fn send_outcome(&self, outcome: ActionOutcome) -> Result<(), SinkClosed> {
@@ -752,6 +774,15 @@ where
     };
     record(event(AuditKind::ConnectionAccepted, "allowed").with_protocol_version(accept.version()));
     let window = accept.credit_window();
+    // The protocol features this link negotiated: a request for one the agent did not announce
+    // is a frame the peer had no business sending (ADR-1056, rule 2).
+    let features: Vec<String> = accept
+        .capabilities()
+        .iter()
+        .filter(|id| crate::is_feature(id))
+        .cloned()
+        .collect();
+    let negotiated = |feature: &str| features.iter().any(|offered| offered == feature);
     let frames = spawn_writer(writer, limits.clone());
     let payload = encode_message(&Message::Accept(accept), &limits).map_err(ErrorValue::from)?;
     frames
@@ -760,6 +791,14 @@ where
 
     let service = Arc::new(service);
     let streams: Streams = Arc::new(Mutex::new(HashMap::new()));
+    // However this loop ends — the caller hung up, the transport failed, or the session was
+    // dropped from outside (a revocation, a shutdown) — its streams end with it: every producer is
+    // cancelled, and the wire is hung up before any of them can write a closing `end` that the
+    // caller would read as a complete answer (#219 (b), ADR-1099).
+    let _ended = Ended {
+        streams: Arc::clone(&streams),
+        frames: frames.clone(),
+    };
 
     loop {
         let Some(frame) = reader.next().await? else {
@@ -897,6 +936,42 @@ where
                     }
                 });
             }
+            Message::Probe if negotiated(crate::PROBE_CAPABILITY) => {
+                // Answered here, in the loop, at once: no task, no provider, no credit — the
+                // round trip it measures is the link and this loop, nothing else (ADR-1095).
+                if let Ok(payload) = encode_message(&Message::End, &limits) {
+                    let _ = frames.send(Frame::new(FrameKind::End, id, payload));
+                }
+            }
+            Message::ListLinks if negotiated(crate::LINKS_CAPABILITY) => {
+                // The far side's link table is its information: served under exactly the check
+                // `get link` is served under (§10.2), refused and recorded where it is not
+                // (§14.1). `link.list` is the capability `get link` declares.
+                let refusal = authorization.require_observe("get link").err();
+                if let Some(refusal) = &refusal {
+                    record(
+                        event(AuditKind::AuthorizationDenied, "denied")
+                            .with_requested_capability("link.list")
+                            .with_error_code(refusal.code()),
+                    );
+                }
+                let authorization = authorization.clone();
+                start(&streams, &frames, &limits, id, window, |responder| {
+                    let service = Arc::clone(&service);
+                    async move {
+                        if let Some(refusal) = refusal {
+                            return Some(refusal);
+                        }
+                        match service.links(&authorization).await {
+                            Ok(table) => {
+                                let _ = responder.send_link_table(table).await;
+                                None
+                            }
+                            Err(error) => Some(error),
+                        }
+                    }
+                });
+            }
             Message::Cancel => {
                 if let Some(stream) = with_streams(&streams, |open| open.remove(&id)) {
                     stream.cancel.cancel();
@@ -918,6 +993,27 @@ where
                     detail: "an agent is asked, it is not told".to_owned(),
                 }));
             }
+        }
+    }
+}
+
+/// Ends a session's streams when its serving loop ends, however it ends.
+struct Ended {
+    streams: Streams,
+    frames: FrameSink,
+}
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        // The hang-up is queued first, so whatever a cancelled producer queues after it — the
+        // `end` its stream would close with — is never written.
+        self.frames.hangup();
+        let open: Vec<ServerStream> = with_streams(&self.streams, |open| {
+            open.drain().map(|(_, stream)| stream).collect()
+        });
+        for stream in open {
+            stream.cancel.cancel();
+            stream.credit.close();
         }
     }
 }

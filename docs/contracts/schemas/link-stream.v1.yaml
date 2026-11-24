@@ -1,0 +1,33 @@
+# LinkStream. One stream a link multiplexes (spec §21.4: "typed RPC / multiplexed streams"),
+# as `trace link` draws it (spec §22.4, §33.4; issue #219 (b), ADR-1099). ADR-0105 left the
+# streams undrawn because the protocol did not expose them as objects and a count would be a
+# number without an identity; each stream has one — the id both ends route its frames by — and
+# says what opened it, about what, and when.
+id: ono.link-stream/1
+name: LinkStream
+summary: One stream a link carries right now — its id, what opened it, about which target, and when.
+identity: [link, id]
+fields:
+  link:
+    type: string
+    required: true
+    doc: The link that carries it.
+  id:
+    type: int
+    required: true
+    doc: The stream id both ends route its frames by; unique on the link while the stream is open.
+  kind:
+    type: enum
+    required: true
+    values: [query, subscribe, act, adapt, probe, links]
+    doc: What opened it.
+  target:
+    type: string
+    nullable: true
+    doc: The target it asked about; null for a probe or a link-table request, which ask about none.
+  opened_at:
+    type: timestamp
+    required: true
+    doc: When this side opened it.
+default_view:
+  columns: [link, id, kind, target, opened_at]

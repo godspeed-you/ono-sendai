@@ -799,7 +799,7 @@ A known host from a configured source, reachable or not.
 
 Identity: `name`
 
-Default view: `name`, `address`, `source`, `link`, `transport`
+Default view: `name`, `address`, `source`, `link`, `transport`, `reachability`
 
 | field | type | unit | presence | meaning |
 |---|---|---|---|---|
@@ -810,6 +810,9 @@ Default view: `name`, `address`, `source`, `link`, `transport`
 | `source` | `string` | — | required | Which source lists the host: `ono` for the shell's own host file, `ssh-config` for the OpenSSH client configuration, `link` for a host known only because this session holds a link to it. A host several sources list is one record, from the first of them in that order, and `get host --source` asks one source alone. |
 | `link` | `string` | — | nullable | The name of the link this session holds to the host; null when it holds none. |
 | `transport` | `enum` | — | nullable | How the held link reaches the host (ono.link/1 `transport`); null when no link is held, because how a host would be reached is not known until it is. |
+| `reachability` | `enum` | — | required | Whether the host answers, as the latest probe of the link this session holds to it found (`ono.link.probe/1`, ADR-1096). Measured when the table is read — `watch host` reads it at every poll — and reused for at most five seconds. `reachable`: a probe was answered. `unreachable`: a probe went unanswered within two seconds, or the link failed. `unauthorized`: the far side answered and refused — transport reachability is not authorization, and the two are never merged. `unknown`: there is no evidence — no link is held (a listing never dials a host; `test host` does), the link is not established or not followed, or the far side offers no probe. |
+| `reachability_reason` | `string` | — | required | The evidence behind `reachability`, or why there is none, in one sentence. |
+| `reachability_since` | `timestamp` | — | nullable | Since when probes of the held link have found what the latest one found: the moment of the last transition. Null when no probe was made. |
 
 ## HttpExchange — `ono.http-exchange/1`
 
@@ -1074,6 +1077,25 @@ Default view: `name`, `host`, `transport`, `state`
 | `round_trip` | `duration` | — | nullable | How long the handshake's exchange took — the offer out, the answer back — measured once, when the link was made (§19.1's `12ms`, ADR-0985). It bounds the link's latency from above at that moment: it includes the far side beginning to answer. Null for a link that is not connected and for one made without a handshake. |
 | `last_seen` | `timestamp` | — | nullable | When this session last held the link connected and followed it (§19.1's "last seen"). Null for a link that never was. For a connected link it is the moment the view was made. |
 | `same_host_as` | `list<string>` | — | required | The other links whose far side runs the same boot of the same kernel, as each one's own `kernel` target answered when the link was made: they reach one machine. The places behind them stay two scopes; this is context, never identity (ADR-0985). |
+| `latency` | `duration` | — | nullable | The round trip of the latest probe of this link (`ono.link.probe/1`, ADR-1095): measured while the link is open, when a view that shows it is drawn, and reused for at most five seconds. Distinct from `round_trip`, which is the handshake's and is never relabelled as current. Null when the link is not connected and followed, when the far side does not offer the probe, and when the probe failed or went unanswered — a previous answer is never carried forward. |
+| `latency_measured_at` | `timestamp` | — | nullable | When the latest probe of this link was made, answered or not. Null when this link — this connection, not an earlier one under the same name — was never probed. |
+| `latency_status` | `enum` | — | required | What the latest probe found: `measured` (answered; `latency` is its round trip), `timed_out` (asked, and not answered within two seconds), `not_offered` (the far side announces no probe — an older agent, or the agentless fallback, which has no agent to ask), `unavailable` (the link is not connected and followed, or the probe failed). |
+
+## LinkStream — `ono.link-stream/1`
+
+One stream a link carries right now — its id, what opened it, about which target, and when.
+
+Identity: `link`, `id`
+
+Default view: `link`, `id`, `kind`, `target`, `opened_at`
+
+| field | type | unit | presence | meaning |
+|---|---|---|---|---|
+| `link` | `string` | — | required | The link that carries it. |
+| `id` | `int` | — | required | The stream id both ends route its frames by; unique on the link while the stream is open. |
+| `kind` | `enum` | — | required | What opened it. |
+| `target` | `string` | — | nullable | The target it asked about; null for a probe or a link-table request, which ask about none. |
+| `opened_at` | `timestamp` | — | required | When this side opened it. |
 
 ## Link — `ono.link/1`
 
@@ -1103,6 +1125,7 @@ Default view: `name`, `host`, `transport`, `mode`, `state`, `targets`
 | `clock_offset` | `duration` | — | nullable | How far the peer's wall clock was from this host's at the handshake, positive when the peer reads later (v0.5 §24.2). Null where either side did not say — an unmeasured offset is unknown rather than a measured zero (v0.2 §35.3). |
 | `clock_uncertainty` | `duration` | — | nullable | The bound the peer stated on its own reading (v0.5 §24.4). §24.3 forbids a false global total order, and this is the figure a renderer warns from when it exceeds `temporal.remote.clock_uncertainty_warn`. Null is unmeasured, not zero. |
 | `runtime_elevated` | `bool` | — | nullable | Whether the far side reports it is running with elevated privilege (spec §17.2). Self- reported, and §2.1 forbids it from satisfying the word authenticated. |
+| `streams` | `list<map>` | — | nullable | The streams the link carries right now, each one the link's own object (spec §21.4, #219 (b), ADR-1099): `id` (what both ends route its frames by), `kind` (`query`, `subscribe`, `act`, `adapt`, `probe` or `links`), `target` and `opened_at`. Read when the table is read. Null where no agent link carries any: a definition nothing established, or the agentless fallback, which multiplexes nothing. |
 
 ## LogRecord — `ono.log-record/1`
 
@@ -2205,6 +2228,8 @@ Default view: `center`, `zoom_level`, `completeness`, `generated_at`
 | `freshness` | `enum` | — | required | §25.3's five words: how the data behind this projection is kept current. A live view MUST expose it, and a still one answers for the observation it was built from. |
 | `change_source` | `enum` | — | nullable | What the changes below were observed through (§25.4), or null where nothing was watching. |
 | `changes` | `list<ono.spatial-change/1>` | — | required | What moved since the previous value of a live stream (§25.1). Empty for the opening snapshot and for a `map` asked once — §24.3 forbids inventing a change where no event source or comparison snapshot exists, and §25.2 forbids reporting one where nothing moved. |
+| `federation` | `list<map>` | — | nullable | What each link answered when `map links --depth 2` asked its far side for the links it holds (`ono.link.links/1`, v0.4 §19.3, ADR-1097): one entry per link this session holds, with `link`, `status`, `count`, `code` and `reason`. `status` is `listed`, `partial` (the far side holds more than it may send and said so), `not_permitted` (the far side refused — never "no links"), `not_offered` (an older agent, or no agent), `unavailable` (the link is down, or the request failed or timed out) or `not_asked` (the link is not connected and followed, or beyond the bound on peers one map asks). Null for every map that asked nobody. |
+| `correlations` | `list<map>` | — | nullable | What `map links --connections` found (v0.4 §14.5, §19.4, ADR-1098). An entry with `subject: link` says what one link let this session read — `status` `read`, `not_permitted`, `unavailable` or `not_asked`, with `reason`. An entry with `subject: connection` names a connection of this host (`connection`, `tcp <local> → <remote>`) that was `correlated` — one link, drawn as a `connection.reaches_host` edge — or `ambiguous` — several links on the same evidence, none picked and no edge drawn — with its `basis` (`two_sided` or `address`) and `links`. Null for every map that did not ask. |
 
 ## SpatialNeighbor — `ono.spatial-neighbor/1`
 

@@ -144,6 +144,9 @@ pub struct LinkRow {
     pub boot_id: Option<String>,
     /// How long the handshake's exchange took (v0.4 §19.1). Not a field of `ono.link/1`.
     pub round_trip: Option<std::time::Duration>,
+    /// What probes the link while it is open (ADR-1095). Not a field of `ono.link/1`.
+    #[cfg(feature = "remote")]
+    pub prober: Option<ono_protocol::Prober>,
 }
 
 /// What the session has published for the provider to answer from.
@@ -683,6 +686,18 @@ impl SessionProvider {
         Ok((records, failures))
     }
 
+    /// The held links a host listing probes: connected, followed, and served by an agent.
+    #[cfg(feature = "remote")]
+    fn probe_targets(&self) -> Vec<(String, ono_protocol::Prober)> {
+        self.lock()
+            .links
+            .iter()
+            .filter(|link| link.state == "connected")
+            .filter(|link| !crate::spatial::links::is_detached(&link.name))
+            .filter_map(|link| Some((link.name.clone(), link.prober.clone()?)))
+            .collect()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, SessionTables> {
         self.tables
             .lock()
@@ -1010,7 +1025,35 @@ fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, Erro
         "clock_uncertainty",
         link.clock_uncertainty.map_or(Value::Null, Value::Duration),
     )?
+    .set("streams", streams_of(link))?
     .build())
+}
+
+/// The streams the link carries right now, read when the table is read (#219 (b), ADR-1099):
+/// null where no agent link carries any — a definition, or the agentless fallback.
+fn streams_of(link: &LinkRow) -> Value {
+    #[cfg(feature = "remote")]
+    {
+        let Some(prober) = link.prober.as_ref().filter(|_| link.state == "connected") else {
+            return Value::Null;
+        };
+        Value::list(prober.open_streams().into_iter().map(|stream| {
+            let mut fields = ono_value::MapValue::new();
+            fields.insert("id".into(), Value::Int(i128::from(stream.id)));
+            fields.insert("kind".into(), Value::string(stream.kind));
+            fields.insert(
+                "target".into(),
+                stream.target.as_deref().map_or(Value::Null, Value::string),
+            );
+            fields.insert("opened_at".into(), Value::Timestamp(stream.opened_at));
+            Value::Map(Arc::new(fields))
+        }))
+    }
+    #[cfg(not(feature = "remote"))]
+    {
+        let _ = link;
+        Value::Null
+    }
 }
 
 #[cfg(feature = "remote")]
@@ -1021,6 +1064,7 @@ fn host_record(
     schema: &Arc<Schema>,
 ) -> Result<RecordValue, ErrorValue> {
     let text = |value: Option<&String>| value.map_or(Value::Null, |text| Value::string(text));
+    let reachability = reachability(held);
     Ok(RecordValue::builder(
         Arc::clone(schema),
         Provenance::local(PROVIDER_ID, schema.id().clone()),
@@ -1038,7 +1082,124 @@ fn host_record(
         "transport",
         held.map_or(Value::Null, |link| Value::string(&link.transport)),
     )?
+    .set("reachability", Value::string(reachability.state))?
+    .set("reachability_reason", Value::string(&reachability.reason))?
+    .set(
+        "reachability_since",
+        reachability.since.map_or(Value::Null, Value::Timestamp),
+    )?
     .build())
+}
+
+/// What a host's reachability is, as far as this session can tell without dialling it
+/// (ADR-1096).
+struct Reachability {
+    /// `reachable`, `unreachable`, `unauthorized` or `unknown`.
+    state: &'static str,
+    /// Why — the evidence, or why there is none.
+    reason: String,
+    /// Since when probes have found it, where a probe found anything.
+    since: Option<jiff::Timestamp>,
+}
+
+/// Reads a host's reachability from the latest probe of the link held to it (ADR-1096).
+///
+/// Transport reachability is not authorization, and neither is a missing answer: a probe that
+/// was answered is `reachable`; one that was not answered in time, or a link that failed, is
+/// `unreachable`; a probe the far side refused as not authorized is `unauthorized`; everything
+/// else — no link held, a link not established or not followed, a far side that offers no probe
+/// — is `unknown`, with the reason. Nothing here dials a host.
+#[cfg(feature = "remote")]
+fn reachability(held: Option<&LinkRow>) -> Reachability {
+    use crate::spatial::links::LatencyStatus;
+    let unknown = |reason: String| Reachability {
+        state: "unknown",
+        reason,
+        since: None,
+    };
+    let Some(link) = held else {
+        return unknown(
+            "this session holds no link to it, and a listing does not dial one; `test host` does"
+                .to_owned(),
+        );
+    };
+    if link.state != "connected" {
+        return unknown(format!(
+            "the link `{}` is defined, not established",
+            link.name
+        ));
+    }
+    if crate::spatial::links::is_detached(&link.name) {
+        return unknown(format!(
+            "this session no longer follows the link `{}`",
+            link.name
+        ));
+    }
+    let Some(prober) = &link.prober else {
+        return unknown(format!(
+            "the link `{}` has no agent to probe (agentless, spec §21.3)",
+            link.name
+        ));
+    };
+    if !prober.is_offered() {
+        return unknown(format!(
+            "the agent behind `{}` does not offer `{}`",
+            link.name,
+            ono_protocol::PROBE_CAPABILITY
+        ));
+    }
+    let Some(measured) = crate::spatial::links::measurement_of(&link.name, prober.link()) else {
+        return unknown(format!("the link `{}` has not been probed", link.name));
+    };
+    let since = Some(measured.since);
+    let failure = measured.failure;
+    match measured.status {
+        LatencyStatus::Measured => Reachability {
+            state: "reachable",
+            reason: format!("a probe of the link `{}` was answered", link.name),
+            since,
+        },
+        LatencyStatus::TimedOut => Reachability {
+            state: "unreachable",
+            reason: format!(
+                "a probe of the link `{}` was not answered within {} ms",
+                link.name,
+                crate::spatial::links::PROBE_TIMEOUT.as_millis()
+            ),
+            since,
+        },
+        LatencyStatus::NotOffered => unknown(format!(
+            "the agent behind `{}` does not offer `{}`",
+            link.name,
+            ono_protocol::PROBE_CAPABILITY
+        )),
+        LatencyStatus::Unavailable => match failure {
+            Some(
+                code @ (ErrorCode::RemoteUnauthorized
+                | ErrorCode::RemoteUnauthenticated
+                | ErrorCode::RemoteCapabilityDenied),
+            ) => Reachability {
+                state: "unauthorized",
+                reason: format!(
+                    "the far side of `{}` answered, and refused the probe: {}",
+                    link.name,
+                    code.name()
+                ),
+                since,
+            },
+            Some(ErrorCode::RemoteUnreachable) => Reachability {
+                state: "unreachable",
+                reason: format!("the link `{}` failed: the far side is gone", link.name),
+                since,
+            },
+            Some(code) => Reachability {
+                state: "unknown",
+                reason: format!("a probe of `{}` failed: {}", link.name, code.name()),
+                since,
+            },
+            None => unknown(format!("the link `{}` could not be probed", link.name)),
+        },
+    }
 }
 
 /// The name a `host` action names, from the selector the user wrote or the object's identity.
@@ -1184,7 +1345,45 @@ impl Provider for SessionProvider {
                         let source = query
                             .option_value("source")
                             .and_then(|value| value.as_str().ok().map(str::to_owned));
-                        self.hosts(source.as_deref())?
+                        // A host's reachability is measured through the link this session holds
+                        // to it, now, when the table is read — and `watch host` reads it at every
+                        // poll (ADR-1096). Nothing is dialled: a host without a held link is
+                        // `unknown`, and `test host` is what dials one.
+                        let due = self.probe_targets();
+                        let provider = Self {
+                            tables: Arc::clone(&self.tables),
+                            sources: self.sources.clone(),
+                            targets: self.targets,
+                        };
+                        let query = query.clone();
+                        return Ok(ValueStream::spawn(
+                            ono_pipeline::PipelineConfig::new(),
+                            ono_pipeline::Boundedness::Bounded,
+                            move |sink| async move {
+                                crate::spatial::links::measure_links(due).await;
+                                let (records, failures) = match provider.hosts(source.as_deref()) {
+                                    Ok(found) => found,
+                                    Err(error) => {
+                                        let _ = sink.fail(error).await;
+                                        return;
+                                    }
+                                };
+                                for record in records
+                                    .into_iter()
+                                    .filter(|record| query.matches(record))
+                                    .take(limit)
+                                {
+                                    if sink.send(record.into_value()).await.is_err() {
+                                        return;
+                                    }
+                                }
+                                for failure in failures {
+                                    if sink.fail(failure).await.is_err() {
+                                        return;
+                                    }
+                                }
+                            },
+                        ));
                     }
                     other => {
                         return Err(ErrorValue::new(

@@ -124,3 +124,96 @@ async fn should_end_the_agent_loop_cleanly_when_the_caller_disconnects() {
         "a caller hanging up is a successful end of session for the agent, not a failure"
     );
 }
+
+#[tokio::test]
+async fn should_answer_a_probe_without_asking_any_provider() {
+    // v0.4 §19.1, ADR-1095: the agent announces the probe and answers it from its own loop, so a
+    // latency can be measured while the link is open without costing the far side a provider
+    // call.
+    let connected = connect().await;
+    assert!(
+        connected
+            .link
+            .negotiated()
+            .capabilities()
+            .iter()
+            .any(|id| id == ono_protocol::PROBE_CAPABILITY),
+        "the agent announces `{}`",
+        ono_protocol::PROBE_CAPABILITY
+    );
+    for _ in 0..3 {
+        within(
+            connected
+                .link
+                .protocol()
+                .probe(std::time::Duration::from_secs(5)),
+        )
+        .await
+        .expect("the agent answers a probe");
+    }
+    assert_eq!(
+        connected.observed.ticks_sent(),
+        0,
+        "no provider produced anything for a probe"
+    );
+}
+
+/// A link table an agent holds, fixed for the suite.
+#[derive(Debug)]
+struct Held(ono_protocol::LinkTable);
+
+#[async_trait::async_trait]
+impl ono_remote::LinkTableSource for Held {
+    async fn table(&self) -> ono_protocol::LinkTable {
+        self.0.clone()
+    }
+}
+
+#[tokio::test]
+async fn should_serve_the_agents_link_table_only_where_it_keeps_one() {
+    // ADR-1097: an agent that holds links announces `ono.link.links/1` and answers with them; one
+    // that holds none announces nothing, so no peer is told "no links" by an agent that keeps no
+    // table.
+    let plain = connect().await;
+    assert!(
+        !plain.link.protocol().offers(ono_protocol::LINKS_CAPABILITY),
+        "an agent given no link table does not offer one"
+    );
+
+    let (near, far) = tokio::io::duplex(16 * 1024);
+    let observed = std::sync::Arc::new(common::fixture::FixtureObserved::default());
+    let entry = ono_protocol::LinkEntry {
+        name: "db01".to_owned(),
+        host: "db01:7022".to_owned(),
+        transport: "tcp".to_owned(),
+        state: "connected".to_owned(),
+        fingerprint: None,
+        boot_id: None,
+        round_trip_ns: None,
+        latency_ns: None,
+        measured_at: None,
+        since: None,
+    };
+    let config = ono_remote::AgentConfig::new(common::fixture::fixture_registry(
+        std::sync::Arc::clone(&observed),
+    ))
+    .with_link_table(std::sync::Arc::new(Held(ono_protocol::LinkTable::of(
+        vec![entry.clone()],
+    ))));
+    let agent = tokio::spawn(ono_remote::serve_registry(
+        ono_protocol::UnauthenticatedTransport::new(far),
+        config,
+    ));
+    let link = within(ono_remote::RemoteLink::connect(
+        ono_protocol::UnauthenticatedTransport::new(near),
+        common::client_config(),
+    ))
+    .await
+    .expect("the handshake succeeds");
+    let table = within(link.protocol().links(std::time::Duration::from_secs(5)))
+        .await
+        .expect("an agent that holds links serves them");
+    assert_eq!(table.links, vec![entry]);
+    drop(link);
+    let _ = within(agent).await;
+}

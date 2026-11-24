@@ -78,6 +78,14 @@ pub enum FrameKind {
     /// Ask the agent to adapt an external invocation for a demand, or to say what it would do
     /// (spec v0.3 §1.54).
     StartAdapt,
+    /// Ask the agent to answer at once, touching nothing, so the link's round trip can be
+    /// measured while it is open (`ono.link.probe/1`, v0.4 §19.1, ADR-1095). The agent answers
+    /// with the stream's `end`.
+    Probe,
+    /// Ask the agent for its own link table (`ono.link.links/1`, v0.4 §19.3, ADR-1097).
+    ListLinks,
+    /// The agent's link table, the one answer to `ListLinks`.
+    LinkTable,
 }
 
 impl FrameKind {
@@ -97,6 +105,9 @@ impl FrameKind {
         FrameKind::Outcome,
         FrameKind::End,
         FrameKind::StartAdapt,
+        FrameKind::Probe,
+        FrameKind::ListLinks,
+        FrameKind::LinkTable,
     ];
 
     /// The byte that stands for this kind on the wire.
@@ -117,6 +128,9 @@ impl FrameKind {
             FrameKind::Outcome => 12,
             FrameKind::End => 13,
             FrameKind::StartAdapt => 14,
+            FrameKind::Probe => 15,
+            FrameKind::ListLinks => 16,
+            FrameKind::LinkTable => 17,
         }
     }
 
@@ -144,6 +158,9 @@ impl FrameKind {
             FrameKind::Outcome => "outcome",
             FrameKind::End => "end",
             FrameKind::StartAdapt => "start-adapt",
+            FrameKind::Probe => "probe",
+            FrameKind::ListLinks => "list-links",
+            FrameKind::LinkTable => "link-table",
         }
     }
 
@@ -155,7 +172,11 @@ impl FrameKind {
     pub const fn spends_credit(self) -> bool {
         matches!(
             self,
-            FrameKind::Value | FrameKind::Event | FrameKind::Failure | FrameKind::Outcome
+            FrameKind::Value
+                | FrameKind::Event
+                | FrameKind::Failure
+                | FrameKind::Outcome
+                | FrameKind::LinkTable
         )
     }
 }

@@ -159,10 +159,21 @@ boundaries:
       - crates/ono-protocol/tests/authorization.rs::should_refuse_it_on_every_dispatch_path_the_server_exposes
       - crates/ono-protocol/tests/authorization.rs::should_offer_only_the_capabilities_the_clients_policy_allows
       - crates/ono-protocol/tests/authorization.rs::should_leave_an_ungranted_action_capability_out_of_the_offer_the_provider_advertises
+      - crates/ono-protocol/tests/link_table.rs::should_refuse_and_record_a_link_table_the_connection_may_not_observe
     dispatch_paths:
       - method: query
         path: crates/ono-protocol/src/service.rs
         entry: "Message::StartQuery"
+        guard: require_observe
+      # A peer's own link table (`ono.link.links/1`, ADR-1097): the read `get link` is, under the
+      # check `get link` is served under.
+      - method: links
+        path: crates/ono-protocol/src/service.rs
+        entry: "Message::ListLinks"
+        guard: require_observe
+      - method: links
+        path: crates/ono-remote/src/agent.rs
+        entry: "async fn links"
         guard: require_observe
       - method: subscribe
         path: crates/ono-protocol/src/service.rs

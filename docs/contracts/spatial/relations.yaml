@@ -332,6 +332,23 @@ relations:
       A link this session holds to another host (§3.5, §19.1). Crossing it is always explicit:
       `jump` never opens a connection because a name resembles a known place (§35.4).
 
+  - id: connection.reaches_host
+    source: Connection
+    target: Host
+    direction: outbound
+    canonical_label: host
+    inverse_label: connection
+    canonical_group: hosts
+    inverse_group: connections
+    confidence: exact_or_provider_declared
+    cost_class: remote
+    doc: >-
+      A connection of this host whose far end is a host this session links to (§14.5, §19.4,
+      ADR-1098). Never `exact`: `strong` where the far side's own socket table holds the mirror
+      of the connection, `inferred` where only the remote address is one of the far side's, and
+      no edge where the evidence points at more than one link. Read across the links on request
+      — `map links --connections` — because it costs the far sides' socket and address tables.
+
 # §36.1, §31.7, §31.26, ADR-0585. What a relation a KUANG/11 package contributed is, and what the
 # host keeps for itself. Nothing here is a relation of this build, so `relations:` above stays the
 # closed list `ono_spatial_core::relations()` is compared against in both directions and the drift

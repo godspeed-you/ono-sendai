@@ -421,6 +421,9 @@ impl SessionLink {
             clock_uncertainty: connection.and_then(LinkConnection::peer_clock_uncertainty),
             boot_id: connection.and_then(|connection| connection.boot_id.clone()),
             round_trip: connection.and_then(LinkConnection::handshake_round_trip),
+            prober: connection
+                .and_then(LinkConnection::agent_link)
+                .map(|link| link.protocol().prober()),
         }
     }
 }

@@ -42,6 +42,211 @@ pub struct LinkFacts {
     pub last_seen: Option<jiff::Timestamp>,
     /// The boot of the kernel the far side runs, as its `kernel` target answered.
     pub boot_id: Option<String>,
+    /// What probes the link while it is open, where the far side is an agent (ADR-1095).
+    pub prober: Option<Prober>,
+    /// The fingerprint of the key the far side proved, where the transport proved one: what a
+    /// far link table names a host by (ADR-1097).
+    pub fingerprint: Option<String>,
+}
+
+/// A handle that probes one link without holding it open (ADR-1095).
+#[cfg(feature = "remote")]
+pub type Prober = ono_protocol::Prober;
+
+/// A build without links has nothing to probe (ADR-0910).
+#[cfg(not(feature = "remote"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Prober {}
+
+/// How long one probe may wait for its answer (ADR-1095). A pass over every link probes them side
+/// by side, so this is also what a whole pass can cost.
+pub const PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// How long a measurement is reused rather than repeated (ADR-1095): drawing many maps, or a watch
+/// beside a map, sends at most one probe per link in this window.
+pub const PROBE_REUSE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// What a probe of a link found (ADR-1095): `ono.link-place/1`'s `latency_status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LatencyStatus {
+    /// The far side answered; `latency` is the round trip.
+    Measured,
+    /// The far side was asked and did not answer within [`PROBE_TIMEOUT`].
+    TimedOut,
+    /// The far side does not announce the probe: an older agent, or no agent at all.
+    NotOffered,
+    /// The link is not connected and followed, or the probe failed.
+    Unavailable,
+}
+
+impl LatencyStatus {
+    /// The word `ono.link-place/1` spells.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Measured => "measured",
+            Self::TimedOut => "timed_out",
+            Self::NotOffered => "not_offered",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+/// One probe's result, and when it was made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Measurement {
+    /// Which link was probed — a link made again is another link (ADR-1095).
+    pub link: u64,
+    /// The round trip, where the far side answered. Never a previous answer carried forward.
+    pub latency: Option<std::time::Duration>,
+    /// When the probe was made.
+    pub at: jiff::Timestamp,
+    /// What it found.
+    pub status: LatencyStatus,
+    /// The structured failure, where the probe failed: the reason a status is what it is.
+    pub failure: Option<ono_core::ErrorCode>,
+    /// Since when probes of this link have found what this one found: the moment the status
+    /// last changed, which is what a watch reports a transition by (ADR-1096).
+    pub since: jiff::Timestamp,
+    /// The monotonic moment it was made, which decides reuse.
+    taken: std::time::Instant,
+}
+
+fn measured() -> &'static std::sync::Mutex<BTreeMap<String, Measurement>> {
+    static MEASURED: std::sync::Mutex<BTreeMap<String, Measurement>> =
+        std::sync::Mutex::new(BTreeMap::new());
+    &MEASURED
+}
+
+/// The latest probe of `name`'s current link, where one was made (ADR-1095).
+///
+/// `None` when this link — this connection, not an earlier one under the same name — has never
+/// been probed.
+#[must_use]
+pub fn measurement(name: &str) -> Option<Measurement> {
+    let facts = facts(name)?;
+    let link = facts.prober.as_ref().map(prober_link)?;
+    measurement_of(name, link)
+}
+
+/// The latest probe of the link `link` known as `name`, where one was made.
+#[must_use]
+pub fn measurement_of(name: &str, link: u64) -> Option<Measurement> {
+    measured()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(name)
+        .filter(|measurement| measurement.link == link)
+        .cloned()
+}
+
+/// Whether this session has stopped following `name` (`detach link`).
+#[must_use]
+pub fn is_detached(name: &str) -> bool {
+    detached()
+        .read()
+        .ok()
+        .is_some_and(|left| left.contains_key(name))
+}
+
+#[cfg(feature = "remote")]
+fn prober_link(prober: &Prober) -> u64 {
+    prober.link()
+}
+
+#[cfg(not(feature = "remote"))]
+fn prober_link(prober: &Prober) -> u64 {
+    match *prober {}
+}
+
+/// Probes every connected, followed agent link whose last measurement is older than
+/// [`PROBE_REUSE`], side by side, each within [`PROBE_TIMEOUT`] (ADR-1095).
+///
+/// Passes are serialized process-wide, so a second caller waits for the first and then finds its
+/// measurements fresh: no probe storm however many views are drawn at once. Nothing is probed
+/// that is not connected and followed — a detached link is not this session's to keep asking.
+pub async fn measure() {
+    let due: Vec<(String, Prober)> = all()
+        .into_iter()
+        .filter(LinkFacts::reachable)
+        .filter_map(|facts| Some((facts.name.clone(), facts.prober.clone()?)))
+        .collect();
+    measure_links(due).await;
+}
+
+/// Probes these links as [`measure`] does: those measured within [`PROBE_REUSE`] are not asked
+/// again, the rest side by side within [`PROBE_TIMEOUT`], one pass at a time.
+#[cfg_attr(not(feature = "remote"), allow(clippy::unused_async))]
+pub async fn measure_links(links: Vec<(String, Prober)>) {
+    #[cfg(not(feature = "remote"))]
+    let _ = links;
+    #[cfg(feature = "remote")]
+    {
+        static PASS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        let _pass = PASS.lock().await;
+        let due: Vec<(String, Prober)> = links
+            .into_iter()
+            .filter_map(|(name, prober)| {
+                let fresh = measured()
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .get(&name)
+                    .is_some_and(|known| {
+                        // A link seen to have failed since it last answered is asked again at
+                        // once — which costs nothing, since a dead link sends no probe — rather
+                        // than reported reachable for the rest of the window.
+                        known.link == prober.link()
+                            && known.taken.elapsed() < PROBE_REUSE
+                            && (prober.is_alive() || known.status != LatencyStatus::Measured)
+                    });
+                (!fresh).then_some((name, prober))
+            })
+            .collect();
+        let probes = due.into_iter().map(|(name, prober)| async move {
+            let at = jiff::Timestamp::now();
+            let taken = std::time::Instant::now();
+            let outcome = prober.probe(PROBE_TIMEOUT).await;
+            let (latency, status, failure) = match outcome {
+                Ok(latency) => (Some(latency), LatencyStatus::Measured, None),
+                Err(error) => {
+                    let status = if !prober.is_offered() {
+                        LatencyStatus::NotOffered
+                    } else if error.metadata().get("timeout_ms").is_some() {
+                        LatencyStatus::TimedOut
+                    } else {
+                        LatencyStatus::Unavailable
+                    };
+                    (None, status, Some(error.code()))
+                }
+            };
+            (
+                name,
+                Measurement {
+                    link: prober.link(),
+                    latency,
+                    at,
+                    status,
+                    failure,
+                    since: at,
+                    taken,
+                },
+            )
+        });
+        let results = futures::future::join_all(probes).await;
+        let mut known = measured()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (name, mut measurement) in results {
+            if let Some(previous) = known.get(&name)
+                && previous.link == measurement.link
+                && previous.status == measurement.status
+                && previous.failure == measurement.failure
+            {
+                measurement.since = previous.since;
+            }
+            known.insert(name, measurement);
+        }
+    }
 }
 
 impl LinkFacts {
@@ -120,6 +325,11 @@ pub fn publish(rows: &[LinkRow]) {
                 round_trip: row.round_trip,
                 last_seen,
                 boot_id: row.boot_id.clone(),
+                #[cfg(feature = "remote")]
+                prober: row.prober.clone(),
+                #[cfg(not(feature = "remote"))]
+                prober: None,
+                fingerprint: row.transport_fingerprint.clone(),
             },
         );
     }
