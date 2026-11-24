@@ -98,12 +98,14 @@ commands:
       - {name: name, type: string, doc: "The package to transition."}
     options:
       - {name: version, type: string, doc: "The version to move to."}
+      - {name: latest, type: bool, doc: "Move an installed package to the newest version its repositories offer — v0.6 §3.1's `update package` (ADR-1084). A package that is not installed is not installed by it, and it is refused together with `--version`."}
       - {name: hold, type: bool, doc: "Pin the package at its current version."}
     privilege: elevated
     streaming: true
     phase: C
     examples:
       - set package nginx --version 1.24.0
+      - set package openssl --latest
 
   # The repository as an object, and the refresh that acts on it (ADR-0562, ADR-0565). Spec §9.1
   # names no verb for the index; a mutation acts on the object it names (§11.5), and the object

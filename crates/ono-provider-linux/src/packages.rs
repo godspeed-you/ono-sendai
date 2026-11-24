@@ -789,6 +789,32 @@ impl Mutation {
                 let mut commands = Vec::new();
                 let mut described = Vec::new();
                 let mut versioned = false;
+                // v0.6 §3.1's `update package` (ADR-1084): the newest version the repositories
+                // offer, for a package that is installed. `--only-upgrade` is apt-get's own way
+                // of never installing one that is not.
+                if flag("latest") == Some(true) {
+                    if text("version").is_some() {
+                        return unsupported(
+                            "`--latest` and `--version` name two destinations for one transition"
+                                .to_owned(),
+                            "write `--latest` to move to the newest version, or `--version` to \
+                             name one",
+                        );
+                    }
+                    commands.push((
+                        apt_get()?,
+                        vec![
+                            "install".to_owned(),
+                            "--only-upgrade".to_owned(),
+                            "-y".to_owned(),
+                            name.to_owned(),
+                        ],
+                    ));
+                    described.push(format!(
+                        "move `{name}` to the newest version its repositories offer"
+                    ));
+                    versioned = true;
+                }
                 if let Some(version) = text("version") {
                     commands.push((
                         apt_get()?,
@@ -817,7 +843,7 @@ impl Mutation {
                         "the package provider changes `version` and `hold`, and `set` named \
                          neither"
                             .to_owned(),
-                        "write `--version 1.24.0` or `--hold true`",
+                        "write `--version 1.24.0`, `--latest` or `--hold true`",
                     );
                 }
                 Ok(Self {
@@ -1063,6 +1089,70 @@ impl Provider for PackageProvider {
 )]
 mod tests {
     use super::*;
+
+    fn set_action(arguments: &[(&str, Value)]) -> Action {
+        arguments.iter().fold(
+            Action::new(
+                "package",
+                "set",
+                ObjectId::new(ono_value::SchemaId::new("ono.package", 1), []),
+            ),
+            |action, (name, value)| action.with(*name, value.clone()),
+        )
+    }
+
+    fn managers() -> Dpkg {
+        Dpkg {
+            dpkg_query: PathBuf::from("/fake/dpkg-query"),
+            apt_cache: None,
+            apt_get: Some(PathBuf::from("/fake/apt-get")),
+            apt_mark: None,
+            apt_config: None,
+        }
+    }
+
+    #[test]
+    fn should_upgrade_only_an_installed_package_when_an_update_is_asked_for() {
+        let mutation = Mutation::of(
+            &set_action(&[("latest", Value::Bool(true))]),
+            &managers(),
+            "curl",
+        )
+        .expect("an update is a mutation the provider runs");
+        assert_eq!(
+            mutation.commands,
+            [(
+                PathBuf::from("/fake/apt-get"),
+                vec![
+                    "install".to_owned(),
+                    "--only-upgrade".to_owned(),
+                    "-y".to_owned(),
+                    "curl".to_owned()
+                ]
+            )],
+            "ADR-1084: apt-get's upgrade-only install, which never installs a missing package"
+        );
+        assert!(
+            mutation.versioned,
+            "an update is read back from dpkg's version"
+        );
+    }
+
+    #[test]
+    fn should_refuse_an_update_that_also_names_a_version() {
+        let refused = Mutation::of(
+            &set_action(&[
+                ("latest", Value::Bool(true)),
+                ("version", Value::string("9.0")),
+            ]),
+            &managers(),
+            "curl",
+        );
+        assert!(
+            refused.is_err_and(|error| error.message().contains("--latest")),
+            "ADR-1084: one transition has one destination"
+        );
+    }
 
     #[test]
     fn should_read_the_tab_separated_listing() {

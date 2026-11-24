@@ -70,7 +70,7 @@ commands:
       interface a connected network link leaves by is CRITICAL (ADR-0850).
     examples:
       - plan restart service nginx
-      - plan update package openssl --protection require
+      - plan set package openssl --latest
       - get service | where state == failed | plan restart service
       - plan copy file ./nginx.conf /etc/nginx/nginx.conf
 

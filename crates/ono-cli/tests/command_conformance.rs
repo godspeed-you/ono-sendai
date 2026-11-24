@@ -8,12 +8,11 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 132 examples run; 243 are not run, each for the reason listed at the end of this file.
+//! 133 examples run; 243 are not run, each for the reason listed at the end of this file.
 //! 52 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
-//! Commands no example of which runs (144):
+//! Commands no example of which runs (143):
 //!
-//! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
 //! - `ono.change-plan.rebase` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
 //! - `ono.change-plan.resume` — runs `ono.change-plan.resume`, whose verb `resume` changes the system (verbs.yaml)
@@ -171,6 +170,18 @@
 mod conformance_harness;
 
 use conformance_harness as harness;
+
+/// `plan set package openssl --latest`
+#[rustfmt::skip]
+#[test]
+fn should_produce_what_ono_change_plan_declares_when_example_2_runs() {
+    harness::assert_example_conforms(&harness::ExampleCase {
+        command: "ono.change.plan",
+        example: "plan set package openssl --latest",
+        output: "ono.change-plan/1",
+        may_be_empty: None,
+    });
+}
 
 /// `get plan`
 #[rustfmt::skip]
@@ -1759,7 +1770,6 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // Not run, with the reason the contracts or docs/contracts/conformance/command_examples.yaml give:
 //
 // - `ono.change.plan` `plan restart service nginx` — exempt: plans against the unit `nginx`, which a test host need not have.
-// - `ono.change.plan` `plan update package openssl --protection require` — exempt: spells v0.6 §3.1's intent `update package`, and no verb `update` exists (verbs.yaml); the plan refuses it as not plannable. A gap between the specification's illustration and the verb vocabulary, recorded in ADR-0935, not a property of the test host.
 // - `ono.change.plan` `get service | where state == failed | plan restart service` — exempt: plans against the failed units of the host; a healthy test host has none, and a plan over nothing is refused rather than empty.
 // - `ono.change.plan` `plan copy file ./nginx.conf /etc/nginx/nginx.conf` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 // - `ono.change-plan.get` `get plan a82f` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
@@ -1892,6 +1902,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // - `ono.package.add` `add package nginx` — runs `ono.package.add`, whose verb `add` changes the system (verbs.yaml)
 // - `ono.package.remove` `remove package nginx` — runs `ono.package.remove`, whose verb `remove` changes the system (verbs.yaml)
 // - `ono.package.set` `set package nginx --version 1.24.0` — runs `ono.package.set`, whose verb `set` changes the system (verbs.yaml)
+// - `ono.package.set` `set package openssl --latest` — runs `ono.package.set`, whose verb `set` changes the system (verbs.yaml)
 // - `ono.package-source.refresh` `refresh package-source updates` — runs `ono.package-source.refresh`, whose verb `refresh` changes the system (verbs.yaml)
 // - `ono.process.get` `get process 4419` — exempt: names the process 4419, which a test host need not be running.
 // - `ono.process.inspect` `inspect process 4419` — runs `ono.process.inspect`, which declares privilege `conditional`
