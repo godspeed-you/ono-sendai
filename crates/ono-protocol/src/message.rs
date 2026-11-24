@@ -357,6 +357,10 @@ pub enum Message {
     StartAdapt(AdaptRequest),
     /// Answer at once with the stream's `end`, touching nothing (`ono.link.probe/1`).
     Probe,
+    /// Ask the agent for its own link table (`ono.link.links/1`).
+    ListLinks,
+    /// The agent's link table (`ono.link.links/1`).
+    LinkTable(crate::LinkTable),
 }
 
 /// An external invocation the agent is asked to adapt for a demand.
@@ -426,6 +430,8 @@ impl Message {
             Message::End => FrameKind::End,
             Message::StartAdapt(_) => FrameKind::StartAdapt,
             Message::Probe => FrameKind::Probe,
+            Message::ListLinks => FrameKind::ListLinks,
+            Message::LinkTable(_) => FrameKind::LinkTable,
         }
     }
 }
@@ -457,7 +463,8 @@ pub fn encode_message(message: &Message, limits: &Limits) -> Result<Vec<u8>, Pro
         Message::StartQuery(query) | Message::StartSubscribe(query) => query_to_json(query),
         Message::Act(request) => act_to_json(request),
         Message::StartAdapt(request) => to_serde(kind, request)?,
-        Message::Cancel | Message::End | Message::Probe => Json::Null,
+        Message::Cancel | Message::End | Message::Probe | Message::ListLinks => Json::Null,
+        Message::LinkTable(table) => to_serde(kind, table)?,
         Message::Credit(credit) => Json::from(*credit),
         Message::Value(value) => to_json(value),
         Message::Event(event) => event_to_json(event),
@@ -508,6 +515,12 @@ pub fn decode_message(
         FrameKind::Cancel => Ok(Message::Cancel),
         FrameKind::End => Ok(Message::End),
         FrameKind::Probe => Ok(Message::Probe),
+        FrameKind::ListLinks => Ok(Message::ListLinks),
+        FrameKind::LinkTable => {
+            let table: crate::LinkTable = from_serde(kind, json)?;
+            table.check()?;
+            Ok(Message::LinkTable(table))
+        }
         FrameKind::Credit => json
             .as_u64()
             .and_then(|credit| u32::try_from(credit).ok())

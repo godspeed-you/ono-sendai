@@ -52,6 +52,18 @@ pub struct AgentConfig {
     audit: Audit,
     source_address: Option<String>,
     clock: Option<ono_protocol::PeerClock>,
+    links: Option<Arc<dyn LinkTableSource>>,
+}
+
+/// Where an agent's own link table comes from (`ono.link.links/1`, v0.4 §19.3, ADR-1097).
+///
+/// An agent that holds links answers with them, as it observed them; one that holds none is
+/// given no source and announces no link table at all, so a peer is never told "no links" by an
+/// agent that does not keep the table.
+#[async_trait::async_trait]
+pub trait LinkTableSource: Send + Sync + std::fmt::Debug + 'static {
+    /// The links this agent holds, as it observes them now.
+    async fn table(&self) -> ono_protocol::LinkTable;
 }
 
 impl AgentConfig {
@@ -73,7 +85,15 @@ impl AgentConfig {
             audit: Arc::new(NoAudit),
             source_address: None,
             clock: None,
+            links: None,
         }
+    }
+
+    /// The links this agent holds, for a peer that may observe them (ADR-1097).
+    #[must_use]
+    pub fn with_link_table(mut self, source: Arc<dyn LinkTableSource>) -> Self {
+        self.links = Some(source);
+        self
     }
 
     /// Where this agent's audit events go (v0.4.1 §14.1).
@@ -170,7 +190,10 @@ impl AgentConfig {
             .with_audit(Arc::clone(&self.audit))
             // The requests this protocol grew after version 1, announced so a client knows it
             // may send them (ADR-1056's one rule, ADR-1095).
-            .with_capabilities(ono_protocol::FEATURES.iter().copied());
+            .with_capabilities(ono_protocol::FEATURES.iter().copied().filter(|feature| {
+                // An agent without a link table does not announce the request for one.
+                *feature != ono_protocol::LINKS_CAPABILITY || self.links.is_some()
+            }));
         if let Some(address) = &self.source_address {
             config = config.with_source_address(address);
         }
@@ -217,6 +240,7 @@ pub async fn serve_registry<T: Transport>(
         registry: Arc::clone(&config.registry),
         adapters: config.adapters.clone(),
         action_capabilities: config.action_capabilities.clone(),
+        links: config.links.clone(),
     };
     ono_protocol::serve(transport, server, service).await
 }
@@ -247,6 +271,7 @@ struct RegistryService {
     registry: Arc<ProviderRegistry>,
     adapters: Option<Arc<ono_adapter::Registry>>,
     action_capabilities: Vec<(String, String, String)>,
+    links: Option<Arc<dyn LinkTableSource>>,
 }
 
 impl RegistryService {
@@ -263,6 +288,18 @@ impl RegistryService {
 
 #[async_trait::async_trait]
 impl RemoteService for RegistryService {
+    async fn links(&self, peer: &PeerAuthorization) -> Result<ono_protocol::LinkTable, ErrorValue> {
+        // Asked again on this side of the crate boundary, as every read is (§10.2).
+        peer.require_observe("get link")?;
+        match &self.links {
+            Some(source) => Ok(source.table().await),
+            None => Err(ErrorValue::new(
+                ErrorCode::ProviderUnsupported,
+                "this agent keeps no link table",
+            )),
+        }
+    }
+
     async fn query(
         &self,
         peer: &PeerAuthorization,

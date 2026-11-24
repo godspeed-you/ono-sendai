@@ -217,9 +217,18 @@ pub struct DemoService {
     /// What an action on `(target, operation)` needs to be allowed to do, as the serving side
     /// declares it — the fixture's stand-in for the CLI's command registry.
     capabilities: Vec<(String, String, String)>,
+    /// The link table the service answers `ono.link.links/1` with, where it keeps one.
+    links: Option<ono_protocol::LinkTable>,
 }
 
 impl DemoService {
+    /// The same service, answering link-table requests with `table` exactly as given — the
+    /// hostile suites hand it a table no honest agent would build.
+    pub fn with_links(mut self, table: ono_protocol::LinkTable) -> Self {
+        self.links = Some(table);
+        self
+    }
+
     /// A service reporting what it did into `observed`.
     pub fn new(observed: Arc<Observed>) -> Self {
         Self {
@@ -236,6 +245,7 @@ impl DemoService {
                     "service.manage".to_owned(),
                 ),
             ],
+            links: None,
         }
     }
 }
@@ -317,6 +327,15 @@ impl RemoteService for DemoService {
             .send_event(ObjectEvent::removed(&remote_record(4419, "nginx")).with_sequence(2))
             .await;
         Ok(())
+    }
+
+    async fn links(
+        &self,
+        _peer: &PeerAuthorization,
+    ) -> Result<ono_protocol::LinkTable, ErrorValue> {
+        self.links.clone().ok_or_else(|| {
+            ErrorValue::new(ErrorCode::ProviderUnsupported, "the fixture keeps no links")
+        })
     }
 
     async fn act(

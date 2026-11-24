@@ -235,6 +235,7 @@ enum Inbound {
     Event(Box<ObjectEvent>),
     Failure(Box<ErrorValue>),
     Outcome(Box<ActionOutcome>),
+    LinkTable(Box<crate::LinkTable>),
     End,
 }
 
@@ -269,6 +270,7 @@ impl OpenStream {
             Message::Act(request) => ("act", Some(request.target_name().to_owned())),
             Message::StartAdapt(request) => ("adapt", request.argv().first().cloned()),
             Message::Probe => ("probe", None),
+            Message::ListLinks => ("links", None),
             other => (other.kind().as_str(), None),
         };
         Self {
@@ -577,7 +579,7 @@ impl Link {
                     return Ok(*outcome);
                 }
                 Inbound::Failure(error) => refusal = Some(*error),
-                Inbound::Value(_) | Inbound::Event(_) => {}
+                Inbound::Value(_) | Inbound::Event(_) | Inbound::LinkTable(_) => {}
                 Inbound::End => break,
             }
         }
@@ -614,6 +616,86 @@ impl Link {
             offered: self.offers(crate::PROBE_CAPABILITY),
             link: self.id,
         }
+    }
+
+    /// Asks the far side for its own link table (`ono.link.links/1`, v0.4 §19.3, ADR-1097).
+    ///
+    /// Sent only when the handshake negotiated the request; otherwise the refusal is local. The
+    /// agent checks the connection may observe before it answers, and a refusal arrives as its
+    /// structured error — never as an empty table. A table larger than
+    /// [`MAX_LINK_TABLE_ENTRIES`](crate::MAX_LINK_TABLE_ENTRIES) or with a field longer than
+    /// [`MAX_LINK_FIELD_BYTES`](crate::MAX_LINK_FIELD_BYTES) is refused when it is decoded, and
+    /// fails the link as a protocol mismatch, as any malformed frame does.
+    ///
+    /// # Errors
+    ///
+    /// - `remote.protocol_mismatch` when the far side did not offer the request, or answered it
+    ///   with something that is not a link table;
+    /// - the far side's refusal, `remote.capability_denied` where the connection may not observe;
+    /// - `remote.unreachable` when the link is gone or no answer came within `timeout`.
+    pub async fn links(
+        &self,
+        timeout: std::time::Duration,
+    ) -> Result<crate::LinkTable, ErrorValue> {
+        if !self.offers(crate::LINKS_CAPABILITY) {
+            return Err(crate::features::not_offered(
+                crate::LINKS_CAPABILITY,
+                "the request for its link table",
+            ));
+        }
+        let mut opened = self.inner.open(FrameKind::ListLinks, &Message::ListLinks)?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let mut table = None;
+        let mut refusal = None;
+        loop {
+            match tokio::time::timeout_at(deadline, opened.receiver.recv()).await {
+                Ok(Some(Inbound::LinkTable(answer))) if table.is_none() => {
+                    table = Some(*answer);
+                }
+                Ok(Some(Inbound::Failure(error))) => refusal = Some(*error),
+                Ok(Some(Inbound::End)) => {
+                    self.inner.release(opened.id);
+                    break;
+                }
+                Ok(Some(_)) => {
+                    self.inner.cancel_stream(opened.id);
+                    return Err(ErrorValue::from(ProtocolError::MalformedPayload {
+                        kind: FrameKind::ListLinks,
+                        detail: "a link table request is answered with one table and an end"
+                            .to_owned(),
+                    }));
+                }
+                Ok(None) => {
+                    self.inner.release(opened.id);
+                    return Err(refusal.unwrap_or_else(|| {
+                        self.inner.status().err().unwrap_or_else(|| {
+                            unreachable("the link closed before the link table arrived")
+                        })
+                    }));
+                }
+                Err(_elapsed) => {
+                    self.inner.cancel_stream(opened.id);
+                    return Err(unreachable(format!(
+                        "the far side did not send its link table within {} ms",
+                        timeout.as_millis()
+                    ))
+                    .with_retryable(true)
+                    .with_metadata(
+                        "timeout_ms",
+                        Value::Int(i128::try_from(timeout.as_millis()).unwrap_or(i128::MAX)),
+                    ));
+                }
+            }
+        }
+        if let Some(refusal) = refusal {
+            return Err(refusal);
+        }
+        table.ok_or_else(|| {
+            ErrorValue::from(ProtocolError::MalformedPayload {
+                kind: FrameKind::ListLinks,
+                detail: "the far side ended the request without a link table".to_owned(),
+            })
+        })
     }
 
     /// Whether the handshake negotiated the protocol feature `id` (ADR-1056, rule 2).
@@ -828,9 +910,10 @@ impl RemoteStream {
                     self.link.release(self.id);
                     return None;
                 }
-                // An outcome belongs to an action, not to a query stream; ignoring it rather than
-                // failing the link keeps one confused stream from taking the others down.
-                Inbound::Outcome(_) => self.acknowledge(),
+                // An outcome belongs to an action, and a link table to its request, not to a
+                // query stream; ignoring them rather than failing the link keeps one confused
+                // stream from taking the others down.
+                Inbound::Outcome(_) | Inbound::LinkTable(_) => self.acknowledge(),
             }
         }
     }
@@ -944,6 +1027,7 @@ fn spawn_reader<R>(
                 Message::Event(event) => Inbound::Event(Box::new(event)),
                 Message::Failure(error) => Inbound::Failure(Box::new(error)),
                 Message::Outcome(outcome) => Inbound::Outcome(Box::new(outcome)),
+                Message::LinkTable(table) => Inbound::LinkTable(Box::new(table)),
                 Message::End => Inbound::End,
                 // Anything else on an established link is the peer restarting a conversation
                 // that is already over.

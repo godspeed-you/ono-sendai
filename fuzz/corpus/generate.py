@@ -71,6 +71,18 @@ put("remote-protocol", "impossible-length.bin", bytes([1, 1, 0, 0]) + struct.pac
 put("remote-protocol", "deep-value.bin", frame(1, 1, b"[" * 64 + b"]" * 64))
 for kind in range(0, 10):
     put("remote-protocol", f"kind-{kind:02d}.bin", frame(kind, kind, value))
+# ADR-1095, ADR-1097: the probe, the link-table request and a peer's link table. The bare
+# payloads start the message decoder, the frames the framing; the hostile tables carry more
+# entries than the bound, a field longer than it, and a shape that is not a table at all.
+entry = b'{"name":"db01","host":"db01:7022","transport":"tcp","state":"connected","fingerprint":"sha256:ab","round_trip_ns":1000}'
+table = b'{"links":[' + entry + b'],"truncated":false}'
+put("remote-protocol", "probe.bin", frame(15, 3, b"null"))
+put("remote-protocol", "list-links.bin", frame(16, 5, b"null"))
+put("remote-protocol", "link-table.bin", frame(17, 5, table))
+put("remote-protocol", "link-table.json", table)
+put("remote-protocol", "link-table-oversized.json", b'{"links":[' + b",".join([entry] * 80) + b"]}")
+put("remote-protocol", "link-table-long-field.json", b'{"links":[{"name":"' + b"x" * 300 + b'","host":"h","transport":"tcp","state":"connected"}]}')
+put("remote-protocol", "link-table-not-a-table.json", b'{"links":"all of them"}')
 
 # --------------------------------------------------------- plugin protocol
 # frame: 4-byte big-endian length + JSON envelope

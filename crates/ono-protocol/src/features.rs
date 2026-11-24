@@ -19,8 +19,11 @@ use ono_value::{ErrorValue, Value};
 /// The probe: one round trip the agent answers at once, touching no provider (v0.4 §19.1).
 pub const PROBE_CAPABILITY: &str = "ono.link.probe/1";
 
+/// A peer's own link table, served like any read (v0.4 §19.3, ADR-1097).
+pub const LINKS_CAPABILITY: &str = "ono.link.links/1";
+
 /// Every protocol feature this build implements.
-pub const FEATURES: &[&str] = &[PROBE_CAPABILITY];
+pub const FEATURES: &[&str] = &[PROBE_CAPABILITY, LINKS_CAPABILITY];
 
 /// Whether `id` names a protocol feature rather than a provider capability.
 #[must_use]

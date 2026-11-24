@@ -79,6 +79,17 @@ pub async fn connect<S: RemoteService>(
     server: ServerConfig,
     service: S,
 ) -> Result<Tapped, ErrorValue> {
+    connect_proving(client, server, service, None).await
+}
+
+/// The same, with the agent's transport reporting that the client proved `proves` — what a
+/// listening agent's TLS layer reports and an authorization policy is resolved from.
+pub async fn connect_proving<S: RemoteService>(
+    client: ClientConfig,
+    server: ServerConfig,
+    service: S,
+    proves: Option<ono_protocol::HostKey>,
+) -> Result<Tapped, ErrorValue> {
     let (client_near, client_far) = tokio::io::duplex(64 * 1024);
     let (server_near, server_far) = tokio::io::duplex(64 * 1024);
     let (inject, mut injected) = mpsc::unbounded_channel::<Frame>();
@@ -86,11 +97,11 @@ pub async fn connect<S: RemoteService>(
         inject: Some(inject),
         ..Tap::default()
     };
-    let handle = tokio::spawn(ono_protocol::serve(
-        UnauthenticatedTransport::new(server_near),
-        server,
-        service,
-    ));
+    let mut listening = UnauthenticatedTransport::new(server_near);
+    if let Some(key) = proves {
+        listening = listening.with_peer_key(key);
+    }
+    let handle = tokio::spawn(ono_protocol::serve(listening, server, service));
 
     let (mut to_server_read, mut to_server) = tokio::io::split(server_far);
     let (mut from_client, mut to_client) = tokio::io::split(client_far);
