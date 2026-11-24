@@ -399,6 +399,16 @@ impl SpatialSessionState {
         &self.index
     }
 
+    /// The place a record is, as the bridge of the scope stood in projects it — what a view
+    /// that absorbed the record draws it as (ADR-1098).
+    #[must_use]
+    pub fn place_of(&self, record: &RecordValue) -> Option<SpatialId> {
+        self.bridge()
+            .project(record)
+            .ok()
+            .map(|object| object.spatial_id().clone())
+    }
+
     /// The index and the bridge together, which is how anything is added to it.
     pub fn absorb_with(&mut self) -> (&mut SpatialIndex, &mut ProviderBridge) {
         let key = match &self.host {

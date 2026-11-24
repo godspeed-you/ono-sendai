@@ -239,7 +239,7 @@ pub fn map_lines(map: &RecordValue, width: usize, charset: Charset) -> Vec<MapLi
 
     // ADR-1097: what each linked host answered when asked for its own links. A refusal is
     // printed as one — "not permitted to see" is never drawn as a host without links.
-    let federation = far_links(map);
+    let federation = entries_of(map, "federation");
     if !federation.is_empty() {
         lines.push(MapLine::plain(String::new()));
         lines.push(MapLine::plain("  far links".to_owned()));
@@ -269,6 +269,52 @@ pub fn map_lines(map: &RecordValue, width: usize, charset: Charset) -> Vec<MapLi
                 &format!("    {link:<16} {said}"),
                 width,
             )));
+        }
+    }
+
+    // ADR-1098: a connection the evidence could not attribute to one linked host is said to be
+    // ambiguous, with the candidates; a link whose tables could not be read says so.
+    let correlations = entries_of(map, "correlations");
+    let unsettled: Vec<String> = correlations
+        .iter()
+        .filter_map(|entry| {
+            let field = |name: &str| match entry.get(name) {
+                Some(Value::String(text)) => ono_render::sanitise(text),
+                _ => String::new(),
+            };
+            match (field("subject").as_str(), field("status").as_str()) {
+                ("connection", "ambiguous") => {
+                    let links: Vec<String> = match entry.get("links") {
+                        Some(Value::List(links)) => links
+                            .iter()
+                            .filter_map(|link| link.as_str().ok().map(ono_render::sanitise))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    Some(format!(
+                        "    {}  ambiguous {} {}",
+                        field("connection"),
+                        charset.dash(),
+                        links.join(", ")
+                    ))
+                }
+                ("link", "read") | ("connection", _) => None,
+                ("link", status) => Some(format!(
+                    "    {:<16} {} {} {}",
+                    field("link"),
+                    status.replace('_', " "),
+                    charset.dash(),
+                    field("reason")
+                )),
+                _ => None,
+            }
+        })
+        .collect();
+    if !unsettled.is_empty() {
+        lines.push(MapLine::plain(String::new()));
+        lines.push(MapLine::plain("  connections".to_owned()));
+        for line in unsettled {
+            lines.push(MapLine::plain(fit(&line, width)));
         }
     }
 
@@ -581,9 +627,10 @@ fn hidden_line(map: &RecordValue) -> Option<String> {
     }
 }
 
-/// The `federation` entries of a `map links --depth 2` (ADR-1097), or none.
-fn far_links(map: &RecordValue) -> Vec<ono_value::MapValue> {
-    match map.get("federation") {
+/// The entries of a `map links` report field — `federation` (ADR-1097), `correlations`
+/// (ADR-1098) — or none.
+fn entries_of(map: &RecordValue, field: &str) -> Vec<ono_value::MapValue> {
+    match map.get(field) {
         Some(Value::List(items)) => items
             .iter()
             .filter_map(|item| match item {

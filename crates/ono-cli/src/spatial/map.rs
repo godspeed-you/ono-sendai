@@ -396,6 +396,7 @@ pub fn record_of(
         map,
         changes,
         Value::Null,
+        Value::Null,
     )
 }
 
@@ -414,7 +415,15 @@ pub fn historical_record_of(
     world: &crate::spatial::HistoricalWorld,
     map: &SpatialMap,
 ) -> Result<RecordValue, ErrorValue> {
-    map_record(world.index(), world.scope(), false, map, None, Value::Null)
+    map_record(
+        world.index(),
+        world.scope(),
+        false,
+        map,
+        None,
+        Value::Null,
+        Value::Null,
+    )
 }
 
 /// The places and edges around `center`, as the providers answer for them (§2.16, §45.6).
@@ -615,6 +624,7 @@ fn map_record(
     map: &SpatialMap,
     changes: Option<&ono_spatial_events::ChangeSet>,
     federation: Value,
+    correlations: Value,
 ) -> Result<RecordValue, ErrorValue> {
     let mut nodes = Vec::with_capacity(map.nodes.len());
     for node in &map.nodes {
@@ -679,6 +689,9 @@ fn map_record(
     // ADR-1097: what each linked host answered when `map links --depth 2` asked it for its own
     // links; null for every map that asked nobody.
     .set("federation", federation)?
+    // ADR-1098: what `map links --connections` read across each link and which connections it
+    // correlated or could not tell apart; null for every map that did not ask.
+    .set("correlations", correlations)?
     .build())
 }
 
@@ -1002,6 +1015,33 @@ impl CommandImpl for MapLinks {
                 horizon.edge(link_edge(&center, &root, &link, now));
                 hop1.push((link, root));
             }
+            // ADR-1098: which of this host's connections reach a linked host — on request,
+            // because it reads the far sides' socket and address tables.
+            let correlations = if arguments.flag("connections") {
+                if session.current_scope().is_remote() {
+                    return Err(ErrorValue::new(
+                        ErrorCode::ResolveTargetNotFound,
+                        "`map links --connections` correlates this host's own connections; \
+                         run it on the local host, not inside a link",
+                    ));
+                }
+                let correlation = crate::spatial::correlate::connections(
+                    ctx.providers(),
+                    &mut session,
+                    &hop1,
+                    now,
+                )
+                .await?;
+                for place in correlation.places {
+                    horizon.place(place);
+                }
+                for edge in correlation.edges {
+                    horizon.edge(edge);
+                }
+                Value::list(correlation.report)
+            } else {
+                Value::Null
+            };
             let federation = if depth >= 2 {
                 let own = own_fingerprint();
                 let federation =
@@ -1035,6 +1075,7 @@ impl CommandImpl for MapLinks {
                 &map,
                 None,
                 federation,
+                correlations,
             )?;
 
             if json {

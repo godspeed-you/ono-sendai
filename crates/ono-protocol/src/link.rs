@@ -889,6 +889,28 @@ impl Prober {
         links(&inner, self.offers_links, timeout).await
     }
 
+    /// Opens a query on the link, as [`Link::query`] does, without holding the link open
+    /// beyond the stream's own life — what a correlation of this host's connections with the far
+    /// side's sockets reads through (ADR-1098). The far side authorizes it as any query.
+    ///
+    /// # Errors
+    ///
+    /// As [`Link::query`]; a link that has been dropped is `remote.unreachable`.
+    pub fn query(&self, query: &RemoteQuery) -> Result<RemoteStream, ErrorValue> {
+        let Some(inner) = self.inner.upgrade() else {
+            return Err(unreachable("the link is closed"));
+        };
+        let opened = inner.open(FrameKind::StartQuery, &Message::StartQuery(query.clone()))?;
+        Ok(RemoteStream {
+            id: opened.id,
+            receiver: opened.receiver,
+            window: inner.window,
+            link: inner,
+            unacknowledged: 0,
+            finished: false,
+        })
+    }
+
     /// Whether the far side offered its link table at all.
     #[must_use]
     pub const fn offers_links(&self) -> bool {

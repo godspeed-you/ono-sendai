@@ -101,5 +101,16 @@ fields:
       links"), `not_offered` (an older agent, or no agent), `unavailable` (the link is down, or the
       request failed or timed out) or `not_asked` (the link is not connected and followed, or
       beyond the bound on peers one map asks). Null for every map that asked nobody.
+  correlations:
+    type: list<map>
+    nullable: true
+    doc: >-
+      What `map links --connections` found (v0.4 §14.5, §19.4, ADR-1098). An entry with `subject:
+      link` says what one link let this session read — `status` `read`, `not_permitted`,
+      `unavailable` or `not_asked`, with `reason`. An entry with `subject: connection` names a
+      connection of this host (`connection`, `tcp <local> → <remote>`) that was `correlated` — one
+      link, drawn as a `connection.reaches_host` edge — or `ambiguous` — several links on the same
+      evidence, none picked and no edge drawn — with its `basis` (`two_sided` or `address`) and
+      `links`. Null for every map that did not ask.
 default_view:
   columns: [center, zoom_level, completeness, generated_at]
