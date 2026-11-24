@@ -195,9 +195,24 @@ fn exit_line(group: &RecordValue) -> String {
 fn link_line(link: &RecordValue, at: Option<i128>) -> String {
     let name = text(link, "name").unwrap_or_default();
     let state = text(link, "state").unwrap_or_default();
-    let detail = match (link.get("round_trip"), link.get("last_seen")) {
-        (Some(Value::Duration(taken)), _) if state == "connected" => brief(taken.nanoseconds()),
-        (_, Some(Value::Timestamp(seen))) if state != "connected" => match at {
+    // A latency the link was probed for just now is the figure §19.1 shows; the handshake's
+    // round trip is older and is labelled as what it is, never passed off as current (ADR-1095).
+    let probed = text(link, "latency_status").unwrap_or_default();
+    let detail = match (
+        link.get("latency"),
+        link.get("round_trip"),
+        link.get("last_seen"),
+    ) {
+        (Some(Value::Duration(latency)), _, _) if state == "connected" => {
+            brief(latency.nanoseconds())
+        }
+        (_, _, _) if state == "connected" && probed == "timed_out" => {
+            "no answer to a probe".to_owned()
+        }
+        (_, Some(Value::Duration(taken)), _) if state == "connected" => {
+            format!("{} at handshake", brief(taken.nanoseconds()))
+        }
+        (_, _, Some(Value::Timestamp(seen))) if state != "connected" => match at {
             Some(at) => format!(
                 "last seen {} ago",
                 brief(at.saturating_sub(seen.as_nanosecond()))

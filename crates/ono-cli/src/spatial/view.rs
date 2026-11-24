@@ -965,6 +965,27 @@ pub fn link_records() -> Result<Vec<Value>, ErrorValue> {
         // names it; it does not stand on it (§35.4).
         ono_spatial_core::space::learn(&scope);
         let root = Value::string(&space::root().spatial_id_in(Some(&scope)).to_string());
+        // The latest probe of this very link (ADR-1095). Only a probe answered now is a latency;
+        // a link that is not held and followed is not asked and states none, and a probe that
+        // failed states none either rather than the last answer carried forward.
+        let measured = crate::spatial::links::measurement(&link.name).filter(|_| link.reachable());
+        let latency_status = match &measured {
+            Some(measured) => measured.status,
+            None if link.reachable() && link.prober.is_none() => {
+                crate::spatial::links::LatencyStatus::NotOffered
+            }
+            None => crate::spatial::links::LatencyStatus::Unavailable,
+        };
+        let latency = measured
+            .as_ref()
+            .and_then(|measured| measured.latency)
+            .and_then(|taken| i128::try_from(taken.as_nanos()).ok())
+            .map_or(Value::Null, |nanos| {
+                Value::Duration(ono_value::Duration::from_nanoseconds(nanos))
+            });
+        let latency_measured_at = measured
+            .as_ref()
+            .map_or(Value::Null, |measured| Value::Timestamp(measured.at));
         rows.push(Value::Record(std::sync::Arc::new(
             RecordValue::builder(
                 std::sync::Arc::clone(&schema),
@@ -994,6 +1015,9 @@ pub fn link_records() -> Result<Vec<Value>, ErrorValue> {
                 link.last_seen.map_or(Value::Null, Value::Timestamp),
             )?
             .set("same_host_as", Value::list(same_host))?
+            .set("latency", latency)?
+            .set("latency_measured_at", latency_measured_at)?
+            .set("latency_status", Value::string(latency_status.as_str()))?
             .build(),
         )));
     }

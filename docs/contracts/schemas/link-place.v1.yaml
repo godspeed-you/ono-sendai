@@ -80,5 +80,30 @@ fields:
       The other links whose far side runs the same boot of the same kernel, as each one's own
       `kernel` target answered when the link was made: they reach one machine. The places behind
       them stay two scopes; this is context, never identity (ADR-0985).
+  latency:
+    type: duration
+    nullable: true
+    doc: >-
+      The round trip of the latest probe of this link (`ono.link.probe/1`, ADR-1095): measured
+      while the link is open, when a view that shows it is drawn, and reused for at most five
+      seconds. Distinct from `round_trip`, which is the handshake's and is never relabelled as
+      current. Null when the link is not connected and followed, when the far side does not offer
+      the probe, and when the probe failed or went unanswered — a previous answer is never carried
+      forward.
+  latency_measured_at:
+    type: timestamp
+    nullable: true
+    doc: >-
+      When the latest probe of this link was made, answered or not. Null when this link — this
+      connection, not an earlier one under the same name — was never probed.
+  latency_status:
+    type: enum
+    required: true
+    values: [measured, timed_out, not_offered, unavailable]
+    doc: >-
+      What the latest probe found: `measured` (answered; `latency` is its round trip),
+      `timed_out` (asked, and not answered within two seconds), `not_offered` (the far side
+      announces no probe — an older agent, or the agentless fallback, which has no agent to ask),
+      `unavailable` (the link is not connected and followed, or the probe failed).
 default_view:
   columns: [name, host, transport, state]

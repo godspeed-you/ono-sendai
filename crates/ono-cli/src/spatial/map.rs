@@ -949,6 +949,8 @@ impl CommandImpl for MapLinks {
             // host's root whatever place the session is standing in — including a place on the
             // far side of one of these very links.
             let center = space::root().spatial_id_in(None);
+            // The links' latencies, measured now (ADR-1095): on demand, bounded, reused.
+            crate::spatial::links::measure().await;
             let mut horizon = MapHorizon::new();
             horizon.place(HorizonPlace::new(center.clone(), 0, None));
             for link in crate::spatial::links::all() {
@@ -1029,4 +1031,16 @@ fn link_edge(
     )
     .with_attribute("transport", Value::string(&link.transport))
     .with_attribute("state", Value::string(link.state()))
+    .with_attribute("latency", latency_of(link))
+}
+
+/// The link's latency as the latest probe of this very link measured it, or null (ADR-1095).
+fn latency_of(link: &crate::spatial::LinkFacts) -> Value {
+    crate::spatial::links::measurement(&link.name)
+        .filter(|_| link.reachable())
+        .and_then(|measured| measured.latency)
+        .and_then(|taken| i128::try_from(taken.as_nanos()).ok())
+        .map_or(Value::Null, |nanos| {
+            Value::Duration(ono_value::Duration::from_nanoseconds(nanos))
+        })
 }

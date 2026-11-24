@@ -144,6 +144,9 @@ pub struct LinkRow {
     pub boot_id: Option<String>,
     /// How long the handshake's exchange took (v0.4 §19.1). Not a field of `ono.link/1`.
     pub round_trip: Option<std::time::Duration>,
+    /// What probes the link while it is open (ADR-1095). Not a field of `ono.link/1`.
+    #[cfg(feature = "remote")]
+    pub prober: Option<ono_protocol::Prober>,
 }
 
 /// What the session has published for the provider to answer from.
