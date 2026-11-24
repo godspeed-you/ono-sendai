@@ -76,7 +76,9 @@ impl Ceiling {
 #[derive(Debug)]
 struct Live {
     fingerprint: Fingerprint,
-    /// Dropped or sent on to end the session (§12.5). `None` once it has been used.
+    /// Sent on to end the session (§12.5). `None` until the connection is
+    /// [revocable](ConnectionSlot::revocable) — a connection whose grant was never there has
+    /// nothing to withdraw — and `None` again once it has been used.
     close: Option<oneshot::Sender<()>>,
 }
 
@@ -155,8 +157,8 @@ impl ConnectionRegistry {
 
     /// Admits an authenticated peer, or reports which ceiling refuses it (§12.1, §12.3).
     ///
-    /// The returned receiver resolves when the connection is asked to end — because the operator
-    /// revoked the client's authorization, or because the agent is shutting the session down.
+    /// Admission counts the connection and nothing more: whether the revocation sweep may end it
+    /// is decided once the grant it runs under is known (ADR-1055).
     ///
     /// # Errors
     ///
@@ -164,7 +166,7 @@ impl ConnectionRegistry {
     pub(crate) fn admit(
         self: &Arc<Self>,
         fingerprint: Fingerprint,
-    ) -> Result<(ConnectionSlot, oneshot::Receiver<()>), ErrorValue> {
+    ) -> Result<ConnectionSlot, ErrorValue> {
         let mut state = self.locked();
         if state.live.len() >= self.limits.max_connections() as usize {
             return Err(at_ceiling(Ceiling::Agent, self.limits.max_connections()));
@@ -182,25 +184,25 @@ impl ConnectionRegistry {
         }
         state.next_id += 1;
         let id = state.next_id;
-        let (close, closed) = oneshot::channel();
         state.live.insert(
             id,
             Live {
                 fingerprint,
-                close: Some(close),
+                close: None,
             },
         );
         drop(state);
-        Ok((
-            ConnectionSlot {
-                registry: Arc::clone(self),
-                id,
-            },
-            closed,
-        ))
+        Ok(ConnectionSlot {
+            registry: Arc::clone(self),
+            id,
+        })
     }
 
-    /// Ends every live connection whose fingerprint `store` no longer authorizes (§12.5).
+    /// Ends every revocable connection whose fingerprint `store` no longer authorizes (§12.5).
+    ///
+    /// Only a connection that was granted when it began is revocable: one whose client the store
+    /// never listed is being refused by its own session, from the same store, and closing it here
+    /// would only swap the refusal for a dropped socket (issue #161, ADR-1055).
     ///
     /// Returns the fingerprints it closed, so a caller can record what it did. Idempotent: a
     /// connection already asked to end is not asked twice.
@@ -221,6 +223,14 @@ impl ConnectionRegistry {
 
     fn release(&self, id: u64) {
         self.locked().live.remove(&id);
+    }
+
+    fn revocable(&self, id: u64) -> oneshot::Receiver<()> {
+        let (close, closed) = oneshot::channel();
+        if let Some(live) = self.locked().live.get_mut(&id) {
+            live.close = Some(close);
+        }
+        closed
     }
 
     fn release_handshake(&self) {
@@ -264,6 +274,16 @@ impl ConnectionSlot {
     /// The connection id this slot was given, as the audit trail names it.
     fn connection_id(&self) -> String {
         format!("conn-{}", self.id)
+    }
+
+    /// Lets the revocation sweep end this connection, and returns what it will be told by.
+    ///
+    /// Called for a connection whose client the store granted when the connection began, and
+    /// only for one: §12.5 is about withdrawing a grant, and a connection that never had one is
+    /// refused by its own session instead (ADR-1055). The receiver resolves when the operator
+    /// withdraws the grant.
+    fn revocable(&self) -> oneshot::Receiver<()> {
+        self.registry.revocable(self.id)
     }
 }
 
@@ -567,7 +587,7 @@ async fn serve_one(
         return;
     };
 
-    let (slot, closed) = match registry.admit(fingerprint) {
+    let slot = match registry.admit(fingerprint) {
         Ok(admitted) => admitted,
         Err(refusal) => {
             record(
@@ -610,6 +630,23 @@ async fn serve_one(
         }
     };
 
+    // §12.5 withdraws a grant, so only a connection that holds one can have it withdrawn. The
+    // question is asked of the very store this session is about to authorize from: a client it
+    // does not list is refused by `serve_registry` from that same snapshot, so no sweep has to
+    // end it — and a sweep that did would replace the refusal with a dropped socket (#161).
+    let closed = store
+        .client(fingerprint)
+        .is_some()
+        .then(|| slot.revocable());
+    let revoked = async move {
+        match closed {
+            Some(closed) => {
+                let _ = closed.await;
+            }
+            None => std::future::pending::<()>().await,
+        }
+    };
+
     let config = config
         .clone()
         .with_authorization(ServerAuthorization::Store(store))
@@ -625,7 +662,7 @@ async fn serve_one(
                 ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
             }
         }
-        _ = closed => {
+        () = revoked => {
             record(
                 AuditEvent::new(AuditKind::ClientDisconnected, slot.connection_id(), "ended")
                     .with_peer(fingerprint)

@@ -302,6 +302,17 @@ fn store_of(authorized: &[&PeerIdentity]) -> AuthorizedClients {
 /// Opens one authenticated link to `agent` as `client`.
 async fn link(agent: &Agent, client: &PeerIdentity) -> Result<RemoteLink, ono_value::ErrorValue> {
     let transport = tls_connect(&agent.address, client).await?;
+    negotiate(agent, transport).await
+}
+
+/// Says hello over a transport that has already completed mutual TLS with `agent`.
+///
+/// Split from [`link`] so a test can hold a connection between the two halves of the handshake,
+/// which is where a slow client — or a loaded machine — leaves it.
+async fn negotiate(
+    agent: &Agent,
+    transport: impl ono_protocol::Transport,
+) -> Result<RemoteLink, ono_value::ErrorValue> {
     let store = TrustStore::in_memory();
     store
         .pin("testbox", &agent.host)
@@ -721,4 +732,68 @@ async fn should_terminate_an_established_session_when_its_authorization_is_revok
     within(link(&agent, &revoked))
         .await
         .expect_err("and the next connection from that key is refused (§12.5's MUST)");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revocation_sweep_runs_first()
+ {
+    // Issue #161. §12.5's sweep closes every live connection whose key the store no longer lists.
+    // A client the store *never* listed is not a grant being withdrawn: it is being refused, and
+    // §54.1 and §59.9 want that refusal to arrive. The interleaving that lost it on a loaded
+    // machine — the sweep running between the peer's TLS handshake and its `Hello` — is forced
+    // here rather than waited for: the stranger is admitted and holds its connection until a
+    // sweep has provably run over it.
+    let doomed = PeerIdentity::generate().expect("a client identity is generated");
+    let kept = PeerIdentity::generate().expect("a client identity is generated");
+    let stranger = PeerIdentity::generate().expect("an identity nobody authorized");
+    let agent = listening(ono_protocol::Limits::default(), &[&doomed, &kept]).await;
+
+    let pending = within(tls_connect(&agent.address, &stranger))
+        .await
+        .expect("mutual TLS completes: the stranger's key is real, only nobody authorized it");
+    until("the stranger is admitted and waiting to say hello", || {
+        agent.connections.live() == 1
+    })
+    .await;
+
+    // A grant that really is withdrawn, so the sweep has something to do and says that it did.
+    let session = within(link(&agent, &doomed))
+        .await
+        .expect("the doomed client is authorized for now");
+    *agent
+        .store
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = store_of(&[&kept]);
+    let doomed_fingerprint = doomed.fingerprint().to_string();
+    until(
+        "a revocation sweep has run over every live connection",
+        || {
+            agent.audit.lines().iter().any(|line| {
+                line.contains("connection_id=revoked") && line.contains(&doomed_fingerprint)
+            })
+        },
+    )
+    .await;
+    assert!(
+        !still_serves(&session).await,
+        "§12.5: the withdrawn grant's session is over — the sweep this test waited for is real"
+    );
+
+    let refused = within(negotiate(&agent, pending))
+        .await
+        .expect_err("§59.1: a client nobody authorized is refused");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::RemoteUnauthorized,
+        "§54.1, §59.9: the stranger is told it is not authorized; a sweep that ran first must \
+         not turn the refusal into a dropped socket (`remote.unreachable`), got {refused:?}"
+    );
+    let stranger_fingerprint = stranger.fingerprint().to_string();
+    assert!(
+        !agent.audit.lines().iter().any(|line| {
+            line.contains("connection_id=revoked") && line.contains(&stranger_fingerprint)
+        }),
+        "a client that was never granted anything has nothing revoked, got {:?}",
+        agent.audit.lines()
+    );
 }
