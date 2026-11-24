@@ -992,6 +992,8 @@ async fn freeze_all(
 ) -> Result<(Vec<FrozenTarget>, Resolved), ErrorValue> {
     let mut targets: Vec<FrozenTarget> = Vec::new();
     let mut resolved = Resolved::new();
+    // One plan is one observation of the machine (ADR-1081).
+    let relations = super::world::SharedRelations::of(providers);
     for resolution in resolutions {
         let Resolution::Operation {
             operation,
@@ -1027,6 +1029,7 @@ async fn freeze_all(
                 subject,
                 operation.subject,
                 operation.creates,
+                &relations,
             )
             .await?;
             // §7.1: a target on another host records that host.

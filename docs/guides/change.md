@@ -102,6 +102,20 @@ asks every plan that mutates to carry. And a line naming an operation no provide
 declares — `validate config nginx`, say, which is really nginx's own `nginx -t` — refuses rather
 than being guessed at. ADR-0813 records why.
 
+A plan holds the shell's own spellings. The specification's prose sometimes uses others, and two
+of them have a spelling here that is worth knowing:
+
+```text
+copy file ./nginx.conf /etc/nginx/nginx.conf     the copy: source, then destination, no `to`
+plan set package openssl --latest                "update package openssl": move an installed
+                                                 package to the newest version on offer
+```
+
+There is no `to` between the two paths of a copy — `to` is a command of its own (`to json`), and a
+file may be called `to` (ADR-1083). An update is `set package`'s version transition with the
+newest version as its destination (ADR-1084): it never installs a package that is not installed,
+the plan freezes the version it starts from, and `apply` refuses if that version moved since.
+
 The third form is worth pausing on. It produces **one** plan whose targets are the services that matched
 *at that moment*. If a fifth service starts failing before you apply, it does not join the plan.
 That is deliberate: a plan you read is a plan you can apply, and a set that grows between reading

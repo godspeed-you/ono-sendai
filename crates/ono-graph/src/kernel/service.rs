@@ -117,7 +117,7 @@ impl RelationshipProvider for ServiceProcesses {
             if Some(*pid) == main {
                 continue;
             }
-            match procfs::cgroups(&proc, *pid) {
+            match self.snapshots.cgroups(&proc, *pid) {
                 Ok(paths) => {
                     if let Some(path) = paths.iter().find(|path| belongs_to(path, &unit)) {
                         found.push(

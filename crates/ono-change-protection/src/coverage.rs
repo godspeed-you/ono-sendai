@@ -765,6 +765,8 @@ struct Cover {
     note: String,
     unknown_semantics: bool,
     exclusions: Vec<CoverageExclusion>,
+    /// Who could not be asked, where that is why nothing was offered (§55.6 case 29).
+    unasked: Option<String>,
 }
 
 impl Cover {
@@ -774,6 +776,7 @@ impl Cover {
             note,
             unknown_semantics: false,
             exclusions: Vec::new(),
+            unasked: None,
         }
     }
 }
@@ -794,7 +797,9 @@ fn cover(
     let objective = mutation.objective();
     let mode = request.policy().mode();
     // A.3: ask every provider that can run here, and remember the ones that could not.
-    let (candidates, mut note, exclusions) = discover(request, mutation, persistence, analysis);
+    let (candidates, mut note, exclusions, inconclusive) =
+        discover(request, mutation, persistence, analysis);
+    let unasked = inconclusive.then(|| note.clone());
     let copy_only =
         persistence.is_some_and(|domain| DomainReach::of(domain) == DomainReach::CopyOnly);
     let candidates = if copy_only {
@@ -877,6 +882,7 @@ fn cover(
         note,
         unknown_semantics,
         exclusions,
+        unasked,
     }
 }
 
@@ -949,6 +955,7 @@ fn boundary_row(
                     note,
                     unknown_semantics: false,
                     exclusions: Vec::new(),
+                    unasked: None,
                 },
                 irrelevant,
             );
@@ -1020,8 +1027,15 @@ impl RowDraft {
             mut note,
             unknown_semantics,
             exclusions: refused,
+            unasked,
         } = cover;
-        let protection = protection_of(&actions, mutation, unknown_semantics, &mut note);
+        let protection = protection_of(
+            &actions,
+            mutation,
+            unknown_semantics,
+            unasked.as_deref(),
+            &mut note,
+        );
         let mut exclusions: Vec<CoverageExclusion> = exclusion_for(mutation).into_iter().collect();
         for action in &actions {
             for exclusion in action.candidate().exclusions() {
@@ -1139,7 +1153,7 @@ fn discover(
     mutation: &MutationDomain,
     persistence: Option<&PersistenceDomain>,
     analysis: &mut CoverageAnalysis,
-) -> (Vec<RecoveryCandidate>, String, Vec<CoverageExclusion>) {
+) -> (Vec<RecoveryCandidate>, String, Vec<CoverageExclusion>, bool) {
     let subject = mutation.subject();
     let unresolved = || {
         format!(
@@ -1163,10 +1177,11 @@ fn discover(
                 subject,
                 persistence.detail(),
             )],
+            false,
         );
     }
     if persistence.is_none() && !subject.starts_with('/') {
-        return (Vec::new(), unresolved(), Vec::new());
+        return (Vec::new(), unresolved(), Vec::new(), false);
     }
     let outcome = request
         .registry()
@@ -1182,7 +1197,7 @@ fn discover(
     }
     let resolutions = outcome.resolutions();
     let Some(named) = persistence.or_else(|| resolutions.first().map(|(_, domain)| *domain)) else {
-        return (Vec::new(), unresolved(), Vec::new());
+        return (Vec::new(), unresolved(), Vec::new(), false);
     };
     let candidates: Vec<RecoveryCandidate> = outcome
         .candidates()
@@ -1225,7 +1240,10 @@ fn discover(
             named.object().unwrap_or(subject)
         )
     };
-    (candidates, note, Vec::new())
+    // Whether a provider that could have offered something could not be asked: the row keeps
+    // saying so even where a compensation describes the domain (ADR-1082).
+    let inconclusive = candidates.is_empty() && !outcome.is_conclusive();
+    (candidates, note, Vec::new(), inconclusive)
 }
 
 /// Appendix B.4: over an overlay whose writable layer cannot be followed, only a copy protects.
@@ -1429,6 +1447,7 @@ fn protection_of(
     actions: &[ProtectionAction],
     mutation: &MutationDomain,
     unknown_semantics: bool,
+    unasked: Option<&str>,
     note: &mut String,
 ) -> DomainProtection {
     if let Some(action) = actions.first() {
@@ -1447,6 +1466,12 @@ fn protection_of(
         // §27.4: an inverse action restores an acceptable semantic state, and calling it rollback
         // is exactly the confusion the word `compensatable` exists to prevent.
         *note = format!("compensated by {compensation}, which is not a rollback (§27.4)");
+        // A compensation does not explain why no recovery asset was offered. Where a provider
+        // could not be asked, that is the reason, and it stays on the row (ADR-1082).
+        if let Some(unasked) = unasked {
+            note.push_str("; ");
+            note.push_str(unasked);
+        }
         return DomainProtection::Compensatable;
     }
     DomainProtection::Unprotected

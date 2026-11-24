@@ -973,3 +973,147 @@ fn should_name_the_provider_and_the_privilege_when_explaining_a_package_install(
         "spec §17.1: an install is labelled as a mutation, got {plan:?}"
     );
 }
+
+// --- packages: an update, v0.6 §3.1 (ADR-1084) ---------------------------------------------------
+
+/// The fake managers, with an `apt-get` that writes every invocation to `<scratch>/apt-get.log`
+/// before refusing, so a test can say whether anything asked it to change a package.
+fn logging_managers(directory: &Scratch) -> PathBuf {
+    let bin = fake_managers(directory, Listing::TwoPackages);
+    let log = directory.path().join("apt-get.log");
+    let apt_get = format!(
+        "#!/bin/sh\ncase \"$1\" in\n  --version) echo 'apt 2.7.14 (amd64)'; exit 0;;\nesac\n\
+         echo \"$*\" >> '{}'\necho 'E: are you root?' >&2\nexit 100\n",
+        log.display()
+    );
+    executable(&bin.join("apt-get"), &apt_get);
+    bin
+}
+
+/// `script` with exactly `bin` as the `PATH`, and every XDG root inside `directory`, because a
+/// plan is written to the plan store.
+fn ono_planning(directory: &Scratch, bin: &std::path::Path, script: &str) -> ono_testkit::Run {
+    let root = directory.path().join("home");
+    let root = root.display().to_string();
+    Shell::new()
+        .env("PATH", bin.display().to_string())
+        .env("NO_COLOR", "1")
+        .env("HOME", root.clone())
+        .env("XDG_CONFIG_HOME", format!("{root}/config"))
+        .env("XDG_DATA_HOME", format!("{root}/data"))
+        .env("XDG_STATE_HOME", format!("{root}/state"))
+        .args(["-c", script])
+        .timeout(Duration::from_secs(60))
+        .run()
+}
+
+#[cfg(feature = "change")]
+#[test]
+fn should_plan_an_update_of_an_installed_package_with_its_protection_evaluated() {
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+
+    let run = ono_planning(&directory, &bin, "plan set package curl --latest | to json");
+
+    run.assert_success();
+    let plans = rows(&run);
+    assert_eq!(plans.len(), 1, "one plan, got {plans:?}");
+    let plan = &plans[0];
+    assert_eq!(
+        text(plan, "state"),
+        "sealed",
+        "v0.6 §4.4: the plan is sealed"
+    );
+    let action = &plan["actions"][0];
+    assert_eq!(
+        action["execution"]["operation"].as_str(),
+        Some("ono.package.set"),
+        "ADR-1084: an update is `set package`'s version transition. Got {action:?}"
+    );
+    let arguments = action["execution"]["arguments"]
+        .as_sequence()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        arguments
+            .iter()
+            .any(|argument| argument["name"].as_str() == Some("latest")
+                && argument["value"].as_bool() == Some(true)),
+        "the plan carries `--latest` to the provider. Got {arguments:?}"
+    );
+    let preconditions = action["preconditions"]
+        .as_sequence()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        preconditions.iter().any(
+            |precondition| precondition["kind"].as_str() == Some("version")
+                && precondition["expected"].as_str() == Some("8.5.0-2")
+        ),
+        "v0.6 §7.2: the installed version the update starts from is frozen. Got {preconditions:?}"
+    );
+    let protection = plan["protection"]
+        .as_sequence()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        protection
+            .iter()
+            .any(|row| row["domain"].as_str() == Some("filesystem-persistent")),
+        "v0.6 §30.2: the update's protection was evaluated over the package's files. Got \
+         {protection:?}"
+    );
+    assert!(
+        !directory.path().join("apt-get.log").exists(),
+        "v0.6 §2.1: planning an update ran no package manager command"
+    );
+}
+
+#[cfg(feature = "change")]
+#[test]
+fn should_refuse_to_plan_an_update_of_a_package_that_is_not_installed() {
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+
+    let run = ono_planning(&directory, &bin, "plan set package not-there --latest");
+
+    assert!(
+        run.output().contains("change.target_unresolved"),
+        "v0.6 §4.3: an update freezes an installed package, and none by that name is. Got {:?}",
+        run.output()
+    );
+}
+
+#[test]
+fn should_fail_with_permission_denied_when_updating_a_package_unprivileged() {
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+
+    let run = ono_with_path(&bin, "set package curl --latest | to json");
+
+    assert_failed_row(&single_result(&run), "ono.package.set", "Ono-Sendai-E0302");
+    run.assert_status(1);
+    assert!(
+        !directory.path().join("apt-get.log").exists(),
+        "spec §17.2: the refusal comes before any package manager is started"
+    );
+}
+
+#[test]
+fn should_refuse_an_update_and_a_named_version_together() {
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+
+    let run = ono_with_path(&bin, "set package curl --latest --version 9.0 | to json");
+
+    assert!(
+        !run.status().is_success() && run.output().contains("--latest"),
+        "ADR-1084: one transition has one destination, and the refusal names the conflict. Got \
+         {:?}",
+        run.output()
+    );
+    assert!(
+        !directory.path().join("apt-get.log").exists(),
+        "nothing was asked of the package manager"
+    );
+}

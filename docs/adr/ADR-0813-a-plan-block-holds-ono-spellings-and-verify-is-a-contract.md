@@ -1,6 +1,6 @@
 # ADR-0813: A plan block holds Ono spellings, and a `verify` line is a contract rather than an action
 
-- Status: accepted
+- Status: accepted; its `copy file <from> to <to>` spelling superseded by ADR-1083
 - Date: 2026-09-09
 - Spec refs: v0.6 §5.1, §5.2, §6.1, §6.2, §23.1, §31, §64; v0.2 §7, §7.1, §40.1
 - Decided by: agent (autonomous)

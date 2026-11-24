@@ -31,6 +31,16 @@ pub(crate) struct SharedSnapshots {
     cached: std::sync::Mutex<
         std::collections::HashMap<String, (Vec<Arc<RecordValue>>, Vec<ErrorValue>)>,
     >,
+    /// Each process's control groups, read once per observation: a service's members are found
+    /// by reading every process's `cgroup`, and an observation that expands fifty units must not
+    /// read the process table's control groups fifty times (ADR-1081).
+    #[allow(
+        clippy::type_complexity,
+        reason = "one private field, named right here"
+    )]
+    cgroups: std::sync::Mutex<
+        std::collections::HashMap<(std::path::PathBuf, i64), Result<Vec<String>, ErrorValue>>,
+    >,
 }
 
 impl SharedSnapshots {
@@ -55,6 +65,29 @@ impl SharedSnapshots {
         Ok(records
             .into_iter()
             .find(|record| record.get(field) == Some(value)))
+    }
+
+    /// The control groups of process `pid` under `proc`, read once per trace.
+    ///
+    /// # Errors
+    ///
+    /// What reading `/proc/<pid>/cgroup` refused with, the same refusal for every asker.
+    pub(crate) fn cgroups(&self, proc: &Path, pid: i64) -> Result<Vec<String>, ErrorValue> {
+        let key = (proc.to_path_buf(), pid);
+        if let Some(hit) = self
+            .cgroups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&key)
+        {
+            return hit.clone();
+        }
+        let read = super::procfs::cgroups(proc, pid);
+        self.cgroups
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, read.clone());
+        read
     }
 
     /// Every object of `target`, enumerated once per trace.

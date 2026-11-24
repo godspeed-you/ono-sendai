@@ -276,8 +276,9 @@ impl CommandImpl for RebasePlan {
             // object it names even where refreezing moved that object's identity.
             let mut refrozen: Vec<(String, ono_change_core::FrozenTarget)> =
                 Vec::with_capacity(plan.targets().len());
+            let relations = super::world::SharedRelations::of(&providers);
             for target in plan.targets() {
-                let next = super::world::refreeze(&providers, state.mounts(), target)
+                let next = super::world::refreeze(&providers, state.mounts(), target, &relations)
                     .await
                     .unwrap_or_else(|_| target.clone());
                 refrozen.push((target.identity().to_owned(), next.clone()));

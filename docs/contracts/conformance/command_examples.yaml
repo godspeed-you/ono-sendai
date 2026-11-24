@@ -179,13 +179,6 @@ exemptions:
       the unquoted form plans everything after `explain`, so the suite's `| inspect | to json`
       would become stages of the subject; the delimited examples of the same command run.
 
-  # --- examples that name what the shell does not have --------------------------------------
-  - command: ono.change.plan
-    example: plan update package openssl --protection require
-    reason: >-
-      spells v0.6 §3.1's intent `update package`, and no verb `update` exists (verbs.yaml); the
-      plan refuses it as not plannable. A gap between the specification's illustration and the
-      verb vocabulary, recorded in ADR-0935, not a property of the test host.
 
 # --- runs, and may produce no value in a fresh environment ------------------------------------
 #

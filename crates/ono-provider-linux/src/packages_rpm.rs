@@ -921,6 +921,36 @@ fn mutation_of(
             let mut commands = Vec::new();
             let mut described = Vec::new();
             let mut versioned = false;
+            // v0.6 §3.1's `update package` (ADR-1084): the front end's own upgrade, which moves
+            // an installed package to the newest version and installs nothing that is not there.
+            if flag("latest") == Some(true) {
+                if text("version").is_some() {
+                    return unsupported(
+                        "`--latest` and `--version` name two destinations for one transition"
+                            .to_owned(),
+                        "write `--latest` to move to the newest version, or `--version` to name \
+                         one",
+                    );
+                }
+                commands.push(match frontend {
+                    Frontend::RedHat(program) => (
+                        program.clone(),
+                        vec!["upgrade".to_owned(), "-y".to_owned(), name.to_owned()],
+                    ),
+                    Frontend::Suse(program) => (
+                        program.clone(),
+                        vec![
+                            "--non-interactive".to_owned(),
+                            "update".to_owned(),
+                            name.to_owned(),
+                        ],
+                    ),
+                });
+                described.push(format!(
+                    "move `{name}` to the newest version its repositories offer"
+                ));
+                versioned = true;
+            }
             if let Some(version) = text("version") {
                 commands.push(install(Some(&version)));
                 described.push(match installed {
@@ -958,7 +988,7 @@ fn mutation_of(
                 return unsupported(
                     "the package provider changes `version` and `hold`, and `set` named neither"
                         .to_owned(),
-                    "write `--version 1.24.0` or `--hold true`",
+                    "write `--version 1.24.0`, `--latest` or `--hold true`",
                 );
             }
             Ok(Mutation {
@@ -1383,6 +1413,58 @@ mod tests {
                 "-y".to_owned(),
                 "curl-8.7.0-1.fc40".to_owned()
             ]
+        );
+    }
+
+    fn set_latest() -> Action {
+        Action::new(
+            "package",
+            "set",
+            ObjectId::new(
+                SchemaId::new("ono.package", 1),
+                [Value::string("rpm"), Value::string("curl")],
+            ),
+        )
+        .with("latest", Value::Bool(true))
+    }
+
+    #[test]
+    fn should_upgrade_through_the_front_end_when_an_update_is_asked_for() {
+        // ADR-1084: v0.6 §3.1's `update package` is each front end's own upgrade, which moves an
+        // installed package to the newest version and installs nothing that is not there.
+        for (frontend, expected) in [
+            (
+                Frontend::RedHat(PathBuf::from("/usr/bin/dnf")),
+                vec!["upgrade", "-y", "curl"],
+            ),
+            (
+                Frontend::Suse(PathBuf::from("/usr/bin/zypper")),
+                vec!["--non-interactive", "update", "curl"],
+            ),
+        ] {
+            let rpm = Rpm {
+                root: std::path::PathBuf::from("/"),
+                rpm: PathBuf::from("/usr/bin/rpm"),
+                frontend: Some(frontend),
+            };
+            let mutation = mutation_of(&set_latest(), &rpm, "curl", Some("8.6.0-8.fc40"))
+                .expect("an update is a mutation this provider performs");
+            assert_eq!(mutation.commands[0].1, expected);
+            assert!(mutation.versioned);
+        }
+    }
+
+    #[test]
+    fn should_refuse_an_update_that_also_names_a_version_through_rpm() {
+        let rpm = Rpm {
+            root: std::path::PathBuf::from("/"),
+            rpm: PathBuf::from("/usr/bin/rpm"),
+            frontend: Some(Frontend::RedHat(PathBuf::from("/usr/bin/dnf"))),
+        };
+        let action = set_latest().with("version", Value::string("9.0"));
+        assert!(
+            mutation_of(&action, &rpm, "curl", Some("8.6.0-8.fc40")).is_err(),
+            "ADR-1084: one transition has one destination"
         );
     }
 

@@ -115,7 +115,7 @@ commands:
     provider_capability: file.copy
     selectors:
       - {name: source, type: path, doc: "What to copy."}
-      - {name: destination, type: path, doc: "Where to copy it."}
+      - {name: destination, type: path, doc: "Where to copy it: the word after the source, with no connective between them — `copy file ./a.txt ./b.txt` (ADR-1083)."}
     options:
       - {name: recursive, type: bool, doc: "Copy directories and their contents."}
       - {name: preserve, type: bool, doc: "Preserve ownership, mode and timestamps where permitted."}

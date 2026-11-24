@@ -51,7 +51,17 @@ fn should_bind_every_documented_example_against_its_contract() {
                         ) {
                             continue;
                         }
-                        if let Err(error) = resolved.contract.bind(resolved.arguments) {
+                        // `plan`'s own options end at the first bare word, and everything from
+                        // there on is the mutation it plans, bound when `plan` resolves it
+                        // (ADR-0814): `plan set package openssl --latest` hands `--latest` to
+                        // `set package`, not to `plan`. So `plan` binds its leading options and
+                        // the operation's head word, as `plan` itself splits them.
+                        let arguments = if resolved.contract.id() == "ono.change.plan" {
+                            &resolved.arguments[..own_end(resolved.contract, resolved.arguments)]
+                        } else {
+                            resolved.arguments
+                        };
+                        if let Err(error) = resolved.contract.bind(arguments) {
                             complaints.push(format!(
                                 "`{}` documents `{example}`, whose `{}` stage no longer binds: {}",
                                 contract.id(),
@@ -70,4 +80,27 @@ fn should_bind_every_documented_example_against_its_contract() {
         "spec §50: every documented example must still bind against its contract —\n{}",
         complaints.join("\n"),
     );
+}
+
+/// Where `plan`'s own arguments end: its leading options, the value of each that takes one, and
+/// the first word after them — the head of the mutation it plans (ADR-0814).
+fn own_end(contract: &ono_command::CommandContract, arguments: &[ono_parser::Argument]) -> usize {
+    use ono_parser::Argument;
+    let mut index = 0;
+    while let Some(Argument::Option(option)) = arguments.get(index) {
+        index += 1;
+        let takes_a_value = contract
+            .option(&option.name)
+            .is_some_and(|spec| spec.declared_type().name() != "bool");
+        if option.value.is_none()
+            && takes_a_value
+            && matches!(
+                arguments.get(index),
+                Some(Argument::Word(_) | Argument::Value(_))
+            )
+        {
+            index += 1;
+        }
+    }
+    (index + 1).min(arguments.len())
 }

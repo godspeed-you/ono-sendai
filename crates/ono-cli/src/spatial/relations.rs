@@ -462,6 +462,41 @@ pub async fn observe(
     interest: &Interest,
     now: Timestamp,
 ) -> Result<bool, ErrorValue> {
+    observe_within(providers, session, id, interest, now, None).await
+}
+
+/// The relationship providers of one observation of the machine, shared by every place it expands.
+///
+/// The kernel's relationship providers share one snapshot per target for as long as the set
+/// lives (`ono_graph`'s shared snapshots), so places expanded with one set read the process table
+/// and the unit list once between them. [`observe`] makes a set per call; a caller that observes
+/// many places as one observation — a plan freezing its targets (v0.6 §4.3, ADR-1081) — makes one
+/// and hands it to [`observe_within`] for each.
+pub struct SharedRelations(Vec<Arc<dyn RelationshipProvider>>);
+
+impl SharedRelations {
+    /// A fresh observation: nothing is read until a place is expanded with it.
+    #[must_use]
+    pub fn of(providers: &ProviderRegistry) -> Self {
+        let providers = Arc::new(providers.clone());
+        // §12 lists `user` among the exits of a process place, so the people behind the
+        // processes are part of the neighborhood rather than an option of `trace` (v0.2 §22.3).
+        let mut sources: Vec<Arc<dyn RelationshipProvider>> =
+            kernel_relationships(Arc::clone(&providers));
+        sources.push(Arc::new(ProcessUsers::new(providers)));
+        Self(sources)
+    }
+}
+
+/// [`observe`], expanding with the relationship providers of `observation` where one is given.
+pub async fn observe_within(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    id: &SpatialId,
+    interest: &Interest,
+    now: Timestamp,
+    observation: Option<&SharedRelations>,
+) -> Result<bool, ErrorValue> {
     if !interest.revalidate
         && session.index().contains(id)
         && session
@@ -478,7 +513,7 @@ pub async fn observe(
             return Ok(true);
         }
     }
-    expand(providers, session, id, interest, now).await?;
+    expand(providers, session, id, interest, now, observation).await?;
     Ok(false)
 }
 
@@ -489,6 +524,7 @@ async fn expand(
     id: &SpatialId,
     interest: &Interest,
     now: Timestamp,
+    observation: Option<&SharedRelations>,
 ) -> Result<(), ErrorValue> {
     let Some(record) = refresh(providers, session, id, now).await else {
         return Ok(());
@@ -640,12 +676,14 @@ async fn expand(
             declined.insert("hosts");
         }
     }
-    let providers = Arc::new(providers.clone());
-    // §12 lists `user` among the exits of a process place, so the people behind the processes
-    // are part of the neighborhood rather than an option of `trace` (v0.2 §22.3).
-    let mut sources: Vec<Arc<dyn RelationshipProvider>> =
-        kernel_relationships(Arc::clone(&providers));
-    sources.push(Arc::new(ProcessUsers::new(providers)));
+    let fresh;
+    let sources = match observation {
+        Some(shared) => &shared.0,
+        None => {
+            fresh = SharedRelations::of(providers);
+            &fresh.0
+        }
+    };
     for provider in sources {
         if !expands(provider.subjects()) {
             continue;

@@ -1,0 +1,52 @@
+# Issue #291, ADR-1084 — v0.6 §3.1's `update package` is `set package <name> --latest`. The plan
+# resolves the installed package, freezes the version it starts from (§7.2), evaluates protection
+# over the package's files (§30.2) and runs no package manager command (§2.1). `apply` goes
+# through the plan/apply path, and as the unprivileged user this container runs as it changes
+# nothing: the refusal comes before any package manager starts (spec §17.2).
+case: an update of an installed package is planned with its protection evaluated
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  BEFORE=$(dpkg-query -W -f '${Version}' dpkg)
+  echo "dpkg is installed at $BEFORE"
+
+  ono -c "plan set package dpkg --latest | to json" > /tmp/p441.json 2>&1
+  prove p1 "the update is sealed as a plan (§4.4)" 'grep -q "\"state\":\"sealed\"" /tmp/p441.json'
+  prove p2 "its action is \`set package\`'s version transition (ADR-1084)" \
+    'grep -q "\"operation\":\"ono.package.set\"" /tmp/p441.json && grep -q "\"name\":\"latest\",\"value\":true" /tmp/p441.json'
+  prove p3 "the version it starts from is frozen as a precondition (§7.2)" \
+    'grep -qF "\"kind\":\"version\"" /tmp/p441.json && grep -qF "\"expected\":\"$BEFORE\"" /tmp/p441.json'
+  prove p4 "its protection was evaluated over the package's files (§30.2)" \
+    'grep -q "\"domain\":\"filesystem-persistent\"" /tmp/p441.json'
+  prove p5 "\`--protection require\` refuses a plan nothing can protect, and says so (§17.2)" \
+    'ono -c "plan --protection require set package dpkg --latest" 2>&1 | grep -q "recovery.coverage_insufficient"'
+
+  ono -c "apply $(plan_id /tmp/p441.json) --accept-risk --accept-irreversible --confirm" > /tmp/p441.txt 2>&1
+  prove p6 "apply as an unprivileged user does not succeed" '! grep -q "\"status\":\"success\"" /tmp/p441.txt'
+  prove p7 "and the installed version is unchanged" '[ "$(dpkg-query -W -f "\${Version}" dpkg)" = "$BEFORE" ]'
+  prove p8 "an update together with a named version is refused (ADR-1084)" \
+    'ono -c "set package dpkg --latest --version 1.0 | to json" 2>&1 | grep -q -- "--latest"'
+
+  echo 'package update: done'
+exit: 0
+stdout-contains: PROVED p1
+stdout-contains: PROVED p2
+stdout-contains: PROVED p3
+stdout-contains: PROVED p4
+stdout-contains: PROVED p5
+stdout-contains: PROVED p6
+stdout-contains: PROVED p7
+stdout-contains: PROVED p8
+stdout-contains: package update: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

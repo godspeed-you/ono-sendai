@@ -282,6 +282,44 @@ fn should_copy_a_file_and_report_the_result() {
 }
 
 #[test]
+fn should_copy_onto_a_file_named_to_when_the_destination_is_the_word_to() {
+    // ADR-1083: `copy file <from> <to>` is the one spelling, and `to` is no connective. A file
+    // literally named `to` is the destination, which is what makes `copy file a to` unambiguous.
+    let directory = scratch();
+    directory.write("a.txt", "payload");
+
+    let run = ono_in(&directory, "copy file a.txt to | to json");
+
+    run.assert_success();
+    assert_eq!(
+        directory.read("to"),
+        "payload",
+        "the second positional word is the destination, whatever it spells"
+    );
+    assert_success_row(&single_result(&run), "ono.file.copy");
+}
+
+#[test]
+fn should_refuse_a_connective_between_source_and_destination() {
+    // ADR-1083 supersedes ADR-0813's `copy file <from> to <to>`: the grammar has no preposition
+    // keywords, so a third word is a third selector and the command says it takes two.
+    let directory = scratch();
+    directory.write("a.txt", "payload");
+
+    let run = ono_in(&directory, "copy file a.txt to b.txt");
+
+    assert!(
+        run.output().contains("type.mismatch") && run.output().contains("2 selector"),
+        "a third positional word is refused by name. Got {:?}",
+        run.output()
+    );
+    assert!(
+        !directory.path().join("b.txt").exists() && !directory.path().join("to").exists(),
+        "a refused copy wrote nothing"
+    );
+}
+
+#[test]
 fn should_copy_a_tree_when_recursive_is_given() {
     let directory = scratch();
     directory.write("src/inner/deep.txt", "deep");

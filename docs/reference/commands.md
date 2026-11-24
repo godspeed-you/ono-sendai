@@ -48,7 +48,7 @@ Describe a proposed change as an inspectable object, and change nothing.
 
 ```text
 plan restart service nginx
-plan update package openssl --protection require
+plan set package openssl --latest
 get service | where state == failed | plan restart service
 plan copy file ./nginx.conf /etc/nginx/nginx.conf
 ```
@@ -1545,7 +1545,7 @@ Copy file resources.
 | name | type | meaning |
 |---|---|---|
 | `source` | `path` | What to copy. |
-| `destination` | `path` | Where to copy it. |
+| `destination` | `path` | Where to copy it: the word after the source, with no connective between them — `copy file ./a.txt ./b.txt` (ADR-1083). |
 
 **Options**
 
@@ -4515,12 +4515,14 @@ Request a version transition where the provider supports it.
 | name | type | meaning |
 |---|---|---|
 | `--version` | `string` | The version to move to. |
+| `--latest` | `bool` | Move an installed package to the newest version its repositories offer — v0.6 §3.1's `update package` (ADR-1084). A package that is not installed is not installed by it, and it is refused together with `--version`. |
 | `--hold` | `bool` | Pin the package at its current version. |
 
 **Examples**
 
 ```text
 set package nginx --version 1.24.0
+set package openssl --latest
 ```
 
 ### `get package-source`

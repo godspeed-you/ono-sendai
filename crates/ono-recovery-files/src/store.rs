@@ -43,6 +43,8 @@ pub const OBJECTS_DIRECTORY: &str = "objects";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileRecoveryStore {
     root: PathBuf,
+    /// Why the store could not be opened, for a store that never was (issue #144, ADR-1082).
+    refused: Option<String>,
 }
 
 impl FileRecoveryStore {
@@ -56,7 +58,32 @@ impl FileRecoveryStore {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, ErrorValue> {
         let root = root.into();
         create_private_directory(&root)?;
-        Ok(Self { root })
+        Ok(Self {
+            root,
+            refused: None,
+        })
+    }
+
+    /// The store at `root` that [`FileRecoveryStore::open`] refused with `error`.
+    ///
+    /// Nothing is touched on the filesystem. The store is unusable for as long as it lives, and
+    /// [`FileRecoveryStore::unusable_reason`] is the open error, so a provider over it is
+    /// registered as unavailable *and says why* rather than not registered at all (§12.2, §55.6
+    /// case 29, ADR-1082).
+    #[must_use]
+    pub fn unopened(root: impl Into<PathBuf>, error: &ErrorValue) -> Self {
+        Self {
+            root: root.into(),
+            // The refusal's detail names the directory and the operating system's answer; its
+            // headline is the store family's generic sentence.
+            refused: Some(error.help().unwrap_or_else(|| error.message()).to_owned()),
+        }
+    }
+
+    /// Whether this store was never opened (ADR-1082).
+    #[must_use]
+    pub const fn was_refused(&self) -> bool {
+        self.refused.is_some()
     }
 
     /// The store's root directory.
@@ -89,6 +116,9 @@ impl FileRecoveryStore {
     /// that found nothing to protect (§55.6 case 29).
     #[must_use]
     pub fn unusable_reason(&self) -> Option<String> {
+        if let Some(refused) = &self.refused {
+            return Some(refused.clone());
+        }
         let metadata = match std::fs::metadata(&self.root) {
             Ok(metadata) => metadata,
             Err(error) => {

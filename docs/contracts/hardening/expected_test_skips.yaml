@@ -348,17 +348,17 @@ declared:
     category: fixture_not_applicable
     prerequisite: "`ONO_BTRFS_TESTS=1`, a validated `btrfs-progs`, and the privilege to make and mount a loop device, so the suite may build its own disposable filesystem and tear it down (v0.6 Appendix G.3)"
   - id: "crates/ono-cli/tests/change_gates.rs::should_refuse_a_high_risk_plan_when_the_risk_was_not_acknowledged"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding the fifty units a bulk restart plans against and reach v0.6 §53's high-risk bulk threshold (ADR-1080)"
   - id: "crates/ono-cli/tests/change_gates.rs::should_name_the_rule_that_fired_when_a_risk_gate_refuses"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding the fifty units a bulk restart plans against and reach v0.6 §53's high-risk bulk threshold (ADR-1080)"
   - id: "crates/ono-cli/tests/change_gates.rs::should_change_nothing_when_a_risk_gate_refuses"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding the fifty units a bulk restart plans against and reach v0.6 §53's high-risk bulk threshold (ADR-1080)"
   - id: "crates/ono-cli/tests/change_views.rs::should_show_the_gate_apply_will_raise_with_the_rules_own_reason"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding the fifty units a bulk restart plans against and reach v0.6 §53's high-risk bulk threshold (ADR-1080)"
   - id: "crates/ono-cli/tests/change_plan_resolution.rs::should_record_no_persistence_domain_for_a_file_on_a_volatile_filesystem"
     category: fixture_not_applicable
     prerequisite: "a writable tmpfs mounted at `/dev/shm`, the volatile filesystem Appendix B.7 refuses as a persistence domain"
@@ -369,17 +369,20 @@ declared:
     category: missing_kernel_feature
     prerequisite: "the host has /dev/null, a real device node a test can classify without privilege"
   - id: "crates/ono-cli/tests/change_gates.rs::should_get_past_the_gate_when_the_risk_is_acknowledged"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding the fifty units a bulk restart plans against and reach v0.6 §53's high-risk bulk threshold (ADR-1080)"
   - id: "crates/ono-cli/tests/change_gates.rs::should_seal_the_acknowledgement_into_a_new_revision"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding the fifty units a bulk restart plans against and reach v0.6 §53's high-risk bulk threshold (ADR-1080)"
   - id: "crates/ono-cli/tests/change_gates.rs::should_name_the_flag_that_answers_the_gate"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding the fifty units a bulk restart plans against and reach v0.6 §53's high-risk bulk threshold (ADR-1080)"
   - id: "crates/ono-cli/tests/change_gates.rs::should_require_the_commitment_to_be_confirmed_outside_a_terminal"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so a fifty-target restart can be planned and reach v0.6 §53's high-risk bulk threshold"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager holding the fifty units a bulk restart plans against and reach v0.6 §53's high-risk bulk threshold (ADR-1080)"
+  - id: "crates/ono-cli/tests/change_planning.rs::should_read_the_unit_list_once_per_plan_however_many_targets_it_freezes"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager whose requests the test counts at the D-Bus boundary (ADR-1080, ADR-1081)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_leave_the_service_untouched_when_a_restart_is_planned"
     category: fixture_not_applicable
     prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
