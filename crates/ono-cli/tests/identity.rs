@@ -21,7 +21,7 @@
 use std::os::unix::fs::MetadataExt;
 use std::time::Duration;
 
-use ono_testkit::{SkipReason, ono_within};
+use ono_testkit::ono_within;
 use serde_yaml_ng::Value;
 
 mod support;
@@ -392,7 +392,7 @@ fn should_trace_a_user_to_its_processes_and_groups() {
     let truncation = &graph["ono.graph.truncation"];
     if !(init_drawn && group_drawn) && truncation["node_limit"].as_u64().is_some() {
         ono_testkit::skipped(
-            SkipReason::FixtureNotApplicable,
+            ono_testkit::SkipReason::FixtureNotApplicable,
             &format!(
                 "root owns more objects than one trace graph draws ({}), so pid 1 and gid 0 \
                  cannot be told apart from the ones the bound left out",
