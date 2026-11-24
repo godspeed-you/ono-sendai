@@ -156,13 +156,16 @@ refusals:
       which of them was reached and the figure it was set to.
   - error: remote.handshake_timeout
     boundary: remote.tcp.transport
-    decided_by: ono-remote
+    decided_by: ono-protocol
     explains: [timeout_ms]
     over_the_wire: [timeout_ms]
     says: "handshake"
     doc: >-
       §12.2: a peer that opens a connection and says nothing holds a pre-negotiation slot for
-      free. The refusal names the deadline, so a slow link is told apart from a refused one.
+      free. The refusal names the deadline, so a slow link is told apart from a refused one. The
+      deadline has two halves: before TLS completes the peer has no channel and is only recorded;
+      after it, `ono_protocol::serve` tells the peer (ADR-1057), which is why the constructor —
+      and the row — belong to ono-protocol.
 
   # --- §16.3, native process confinement — §54.1's second example -----------------------------
   - error: plugin.confinement_failed

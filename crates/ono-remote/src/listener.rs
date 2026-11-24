@@ -320,24 +320,6 @@ fn at_ceiling(ceiling: Ceiling, limit: u32) -> ErrorValue {
         )
 }
 
-/// The refusal a peer that never finished negotiating receives (§12.2).
-fn handshake_timed_out(timeout: std::time::Duration) -> ErrorValue {
-    ErrorValue::new(
-        ErrorCode::RemoteHandshakeTimeout,
-        format!(
-            "the handshake did not complete within {} seconds",
-            timeout.as_secs_f64()
-        ),
-    )
-    .with_retryable(true)
-    .with_metadata(
-        "timeout_ms",
-        Value::Int(i128::from(
-            u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-        )),
-    )
-}
-
 /// The refusal a peer receives when the agent cannot read its own authorization store.
 ///
 /// The operator's diagnostic names the file and the line, because they are the one who can fix
@@ -581,7 +563,10 @@ async fn serve_one(
             return;
         }
         Err(_elapsed) => {
-            let refusal = handshake_timed_out(limits.handshake_timeout());
+            // The deadline passed before TLS completed, so there is no channel to say so over
+            // (§13.1): the decision is recorded and the socket closed. The Ono half of the same
+            // deadline, after TLS, is kept by `serve`, which can say it (ADR-1057).
+            let refusal = ono_protocol::handshake_timeout_refusal(limits.handshake_timeout());
             record(
                 AuditEvent::new(AuditKind::ConnectionLimitDenied, "unaccepted", "denied")
                     .with_error_code(refusal.code()),

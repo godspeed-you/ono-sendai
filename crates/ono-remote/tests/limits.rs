@@ -854,3 +854,53 @@ async fn should_not_tell_a_refused_peer_where_the_agent_keeps_its_store() {
         "§54.1: the sentence still names the boundary, got {refused:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_tell_a_client_whose_handshake_timed_out_that_it_did() {
+    // Issue #181. §12.2's deadline covers TLS *and* the Ono negotiation after it. A peer that
+    // completed mutual TLS has a channel to be told over, and §54.1 wants it told which boundary
+    // decided: `remote.handshake_timeout` (E1502), not a socket that closed for no stated reason.
+    // The client here is one whose `Hello` is late — what a stalled process or a loaded machine
+    // produces — and the test waits for the agent's own record of the decision rather than for a
+    // duration.
+    let client = PeerIdentity::generate().expect("a client identity is generated");
+    let agent = listening(
+        ono_protocol::Limits::default().with_handshake_timeout(std::time::Duration::from_secs(2)),
+        &[&client],
+    )
+    .await;
+
+    let late = within(tls_connect(&agent.address, &client))
+        .await
+        .expect("mutual TLS completes in time; the Hello will not");
+    until("the agent records that the handshake timed out", || {
+        agent
+            .audit
+            .lines()
+            .iter()
+            .any(|line| line.contains("error_code=remote.handshake_timeout"))
+    })
+    .await;
+
+    let refused = within(negotiate(&agent, late))
+        .await
+        .expect_err("§12.2: a handshake that missed its deadline does not become a link");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::RemoteHandshakeTimeout,
+        "§54.1: the client is told its handshake timed out, got {refused:?}"
+    );
+    assert_eq!(
+        refused.metadata().get("timeout_ms"),
+        Some(&ono_value::Value::Int(2_000)),
+        "refusals.yaml: E1502 carries the deadline the agent enforced, got {refused:?}"
+    );
+    let fingerprint = client.fingerprint().to_string();
+    assert!(
+        agent.audit.lines().iter().any(|line| {
+            line.contains("error_code=remote.handshake_timeout") && line.contains(&fingerprint)
+        }),
+        "§14.1: the agent's record names the authenticated peer it gave up on, got {:?}",
+        agent.audit.lines()
+    );
+}

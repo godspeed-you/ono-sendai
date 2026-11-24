@@ -91,6 +91,39 @@ where
     FrameSink { sender }
 }
 
+/// Writes one refusal and lets the peer go, all within `limits`' handshake timeout.
+///
+/// A refusal is the last thing a connection carries before a link exists, so it is written here
+/// rather than through a writer task: a writer task blocked on a peer that never reads would hold
+/// the socket for as long as the peer liked (§12.6). Inside the one bound, three things happen:
+/// the frame is written and flushed, the sending direction is shut down, and whatever the peer
+/// still sends is read and discarded until it hangs up — a socket closed with unread input is
+/// reset, and a reset can discard the refusal before the peer reads it. A peer that neither
+/// reads nor hangs up is let go when the bound runs out, and costs the agent exactly that long
+/// whatever it does (ADR-1057).
+pub(crate) async fn refuse_within<R, W>(
+    reader: &mut FrameReader<R>,
+    mut writer: W,
+    frame: &Frame,
+    limits: &Limits,
+) where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let mut buffer = BytesMut::new();
+    if encode(frame, limits, &mut buffer).is_err() {
+        // A refusal this end built and would not itself read is a defect here; nothing is sent.
+        return;
+    }
+    let _ = tokio::time::timeout(limits.handshake_timeout(), async {
+        if writer.write_all(&buffer).await.is_ok() && writer.flush().await.is_ok() {
+            let _ = writer.shutdown().await;
+        }
+        while matches!(reader.next().await, Ok(Some(_))) {}
+    })
+    .await;
+}
+
 /// The reading half of a connection.
 #[derive(Debug)]
 pub(crate) struct FrameReader<R> {
