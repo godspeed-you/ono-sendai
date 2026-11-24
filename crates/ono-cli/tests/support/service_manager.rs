@@ -7,7 +7,8 @@
 //! production provider, the same D-Bus calls, and a population that is a number the test chose.
 //!
 //! It implements the part of systemd's D-Bus API the shell reads and writes — `Manager.Version`,
-//! `Manager.ListUnits`, `Manager.LoadUnit`, the `Unit` and `Service` properties of each unit, and
+//! `Manager.ListUnits`, `Manager.LoadUnit`, the `Unit` and `Service` properties of each unit (every
+//! unit but the first `Wants` the first, so a unit's neighbourhood reaches the list), and
 //! the job methods `StartUnit`, `StopUnit`, `RestartUnit` and `ReloadUnit` — and counts every
 //! request at that boundary, so a test can state how often the shell asked the service manager
 //! anything without knowing which code path asked. A job is accepted and recorded; nothing on
@@ -203,13 +204,22 @@ async fn serve(
                 counters: Arc::clone(&counters),
             },
         )?;
+    let first = names.first().cloned();
     for name in names {
         let path = unit_path(&name);
+        // Every unit but the first wants the first, as most units of a host want a few shared
+        // ones: a dependency is what makes a unit's neighbourhood reach the rest of the list.
+        let wants = first
+            .iter()
+            .filter(|first| **first != name)
+            .cloned()
+            .collect();
         builder = builder
             .serve_at(
                 path.clone(),
                 FixtureUnit {
                     id: name.clone(),
+                    wants,
                     counters: Arc::clone(&counters),
                 },
             )?
@@ -326,6 +336,7 @@ impl FixtureManager {
 
 struct FixtureUnit {
     id: String,
+    wants: Vec<String>,
     counters: Arc<Counters>,
 }
 
@@ -364,6 +375,11 @@ impl FixtureUnit {
     #[zbus(property, name = "FragmentPath")]
     fn fragment_path(&self) -> String {
         format!("/etc/systemd/system/{}", self.id)
+    }
+
+    #[zbus(property, name = "Wants")]
+    fn wants(&self) -> Vec<String> {
+        self.wants.clone()
     }
 
     #[zbus(property, name = "UnitFileState")]

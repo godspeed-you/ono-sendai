@@ -15,6 +15,7 @@
 //! runtime rather than a nested runtime: the shell builds one runtime per process and a second
 //! one here would run a provider's I/O on a reactor nothing else knows about.
 
+pub use crate::spatial::relations::SharedRelations;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -136,6 +137,7 @@ pub async fn freeze(
     subject: &str,
     field: &str,
     creates: bool,
+    relations: &SharedRelations,
 ) -> Result<FrozenTarget, ErrorValue> {
     let (frozen, record) = resolved(
         providers,
@@ -146,7 +148,7 @@ pub async fn freeze(
         creates,
     )
     .await?;
-    Ok(placed(providers, frozen, record.as_ref()).await)
+    Ok(placed(providers, frozen, record.as_ref(), relations).await)
 }
 
 /// The frozen target `subject` names on `word`, and the record it was frozen from where a provider
@@ -293,6 +295,7 @@ async fn placed(
     providers: &ProviderRegistry,
     frozen: FrozenTarget,
     record: Option<&RecordValue>,
+    relations: &SharedRelations,
 ) -> FrozenTarget {
     let now = jiff::Timestamp::now();
     let mut spatial = crate::spatial::spatial_session().await;
@@ -317,10 +320,20 @@ async fn placed(
         return frozen;
     };
     // §33.2: a change resolves and revalidates what it is about; it never plans on a recalled
-    // neighbourhood.
+    // neighbourhood. Every target of one plan is placed within one observation, so the process
+    // table and the unit list the neighbourhoods are read from are read once per plan rather than
+    // once per target (ADR-1081): the plan is one snapshot of the machine, and `apply` still
+    // checks every precondition against the machine as it is then (§7.2).
     let interest = crate::spatial::relations::Interest::here().revalidated();
-    let _ =
-        crate::spatial::relations::observe(providers, &mut spatial, &place, &interest, now).await;
+    let _ = crate::spatial::relations::observe_within(
+        providers,
+        &mut spatial,
+        &place,
+        &interest,
+        now,
+        Some(relations),
+    )
+    .await;
     frozen.at_place(place.as_str())
 }
 
@@ -1401,6 +1414,7 @@ pub async fn refreeze(
     providers: &ProviderRegistry,
     mounts: &MountTable,
     target: &FrozenTarget,
+    relations: &SharedRelations,
 ) -> Result<FrozenTarget, ErrorValue> {
     let shape = match target.schema() {
         ono_change_plan::freeze::SERVICE_SCHEMA => TargetShape::Service,
@@ -1412,7 +1426,16 @@ pub async fn refreeze(
     // §7.5 refreezes what the plan already resolved, so the object is expected to be there:
     // `creates` is false, and a target that has gone is the refusal §7.5 reports.
     let _ = selector;
-    freeze(providers, mounts, shape, target.label(), "name", false).await
+    freeze(
+        providers,
+        mounts,
+        shape,
+        target.label(),
+        "name",
+        false,
+        relations,
+    )
+    .await
 }
 
 #[cfg(test)]

@@ -17,11 +17,15 @@
 
 #[path = "change_support/mod.rs"]
 mod change_support;
+#[path = "support/service_manager.rs"]
+mod service_manager;
 
 use change_support::{
-    home, in_the_past, one, ono_at, plan, requires_a_service, rows, service_generation, text,
+    home, in_the_past, one, ono_at, ono_with, plan, requires_a_service, rows, service_generation,
+    text,
 };
 use ono_testkit::{SkipReason, skipped};
+use service_manager::{FixtureServiceManager, Requests};
 
 /// What a host that serves no systemd unit cannot present (v0.4.1 §38.1).
 const NO_SERVICE: &str = "this host serves no systemd unit, so there is nothing to plan against";
@@ -442,4 +446,69 @@ fn should_answer_with_a_plan_that_serialises_through_to_json() {
         "v0.6 §36.4: a plan is referenced by an unambiguous prefix of its identity, and the \
          record `to json` produced carries the identity that prefix comes from"
     );
+}
+
+/// What one plan over every unit of a fixture service manager holding `units` asked it, or `None`
+/// where this host has no `dbus-daemon`.
+///
+/// The pipeline's own `get service` is subtracted: it is the input, read once whatever the plan
+/// does with it.
+fn asked_while_planning(units: i64) -> Option<Requests> {
+    let manager = FixtureServiceManager::try_start(units)?;
+    let home = home();
+    let listing = ono_with(
+        home.path(),
+        "DBUS_SYSTEM_BUS_ADDRESS",
+        &manager.address(),
+        "get service | count",
+    );
+    listing.assert_success();
+    let input = manager.requests();
+    let run = ono_with(
+        home.path(),
+        "DBUS_SYSTEM_BUS_ADDRESS",
+        &manager.address(),
+        "get service | plan restart service | to json",
+    );
+    run.assert_success();
+    assert_eq!(
+        one(&run)["targets"].as_sequence().map(Vec::len),
+        Some(usize::try_from(units).expect("a small count")),
+        "v0.6 §4.3: the plan froze every unit the pipeline supplied"
+    );
+    let total = manager.requests();
+    Some(Requests {
+        list_units: total.list_units - 2 * input.list_units,
+        load_unit: total.load_unit - 2 * input.load_unit,
+        unit_reads: total.unit_reads - 2 * input.unit_reads,
+        jobs: total.jobs - 2 * input.jobs,
+    })
+}
+
+#[test]
+fn should_read_the_unit_list_once_per_plan_however_many_targets_it_freezes() {
+    // Issue #140: every target read every unit again, so a fifty-target restart cost fifty
+    // enumerations of the service manager. One plan is one observation of the machine
+    // (ADR-1081): the unit list is read once per plan, and each target costs only the reads of
+    // its own unit.
+    let (Some(few), Some(many)) = (asked_while_planning(5), asked_while_planning(50)) else {
+        skipped(
+            SkipReason::ExternalToolUnavailable,
+            "this needs `dbus-daemon`, so the fixture can serve a service manager whose \
+             requests the test counts",
+        );
+        return;
+    };
+    assert_eq!(
+        few.list_units, many.list_units,
+        "the unit list is enumerated as often for fifty targets as for five — once per plan. \
+         Five targets asked {few:?}, fifty asked {many:?}"
+    );
+    assert_eq!(
+        few.unit_reads / 5,
+        many.unit_reads / 50,
+        "a target costs a constant number of unit reads, whatever else the plan freezes: \
+         five targets asked {few:?}, fifty asked {many:?}"
+    );
+    assert_eq!(many.jobs, 0, "v0.6 §2.1: planning a restart queued no job");
 }
