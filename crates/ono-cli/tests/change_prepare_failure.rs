@@ -93,3 +93,93 @@ fn should_refuse_to_mutate_when_the_protection_the_plan_was_sealed_with_cannot_b
         "§4.1 and Appendix F: the plan is prepare-failed, a state with no edge to APPLYING"
     );
 }
+
+/// Puts a dangling symbolic link where the recovery store lives, so it cannot be opened.
+fn unopenable_store(home: &Path) -> std::path::PathBuf {
+    let store = home.join("data/ono/change/recovery");
+    if store.is_dir() {
+        std::fs::remove_dir_all(&store).expect("the store is removed");
+    }
+    std::fs::create_dir_all(store.parent().expect("the store has a parent"))
+        .expect("the plan store's directory exists");
+    std::os::unix::fs::symlink(home.join("nowhere"), &store)
+        .expect("a dangling link stands where the store was");
+    store
+}
+
+#[test]
+fn should_name_the_recovery_store_when_it_cannot_be_opened() {
+    // Issue #144: a session whose store could not be opened had no file provider at all, and the
+    // matrix could not say why a file it would otherwise protect is unprotected.
+    let home = build_disk_home("store-unopenable");
+    let source = home.path().join("new.conf");
+    let target = home.path().join("target.conf");
+    std::fs::write(&source, "worker_processes 8;\n").expect("the source is written");
+    std::fs::write(&target, "before\n").expect("the target is written");
+    let store = unopenable_store(home.path());
+
+    let planned = ono_at(
+        home.path(),
+        &format!(
+            "plan copy file {} {} --overwrite | to json",
+            source.display(),
+            target.display()
+        ),
+    );
+
+    planned.assert_success();
+    let plan = one(&planned);
+    assert_ne!(
+        text(&plan, "protection_level"),
+        "protected",
+        "§2.4: a provider that could not be asked promises nothing. Got {plan:?}"
+    );
+    let rows = plan["protection"]
+        .as_sequence()
+        .expect("the plan carries its coverage matrix");
+    let note = rows
+        .iter()
+        .find(|row| row["domain"].as_str() == Some("filesystem-persistent"))
+        .and_then(|row| row["note"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        note.contains("ono.recovery.file-copy") && note.contains(&store.display().to_string()),
+        "§55.6 case 29: the row names the file provider and the store it could not open, rather \
+         than reading as if no provider existed. Note: {note:?}"
+    );
+}
+
+#[test]
+fn should_refuse_to_mutate_when_the_recovery_store_cannot_be_opened_after_the_seal() {
+    let home = build_disk_home("store-unopenable-apply");
+    let source = home.path().join("new.conf");
+    let target = home.path().join("target.conf");
+    std::fs::write(&source, "worker_processes 8;\n").expect("the source is written");
+    std::fs::write(&target, "before\n").expect("the target is written");
+    let plan = sealed_copy(home.path(), &source, &target);
+    unopenable_store(home.path());
+
+    let applied = ono_at(home.path(), &format!("apply {}", &plan[..8]));
+
+    assert!(
+        !applied.status().is_success(),
+        "§2.3, ADR-0842: a plan sealed as protected does not mutate once its protection cannot \
+         be created. Got {:?}",
+        applied.output()
+    );
+    assert!(
+        applied.stderr().contains("change.prepare_failed"),
+        "§45: the refusal is the prepare failure. Got {:?}",
+        applied.stderr()
+    );
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("the target is readable"),
+        "before\n",
+        "§2.3: the target is byte-for-byte as it was"
+    );
+    assert!(
+        !home.path().join("nowhere").exists(),
+        "nothing was created through the dangling link"
+    );
+}

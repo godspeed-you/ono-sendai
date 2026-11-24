@@ -910,6 +910,12 @@ fn create_and_validate(
             "the plan named a recovery provider this session has not registered",
         ));
     };
+    // §2.3: an asset is created only by a provider that can run here. One that is registered but
+    // unavailable — its tool missing, its store unusable — is refused with its own reason rather
+    // than asked and read afterwards (ADR-1082).
+    if let Some(reason) = provider.availability().reason() {
+        return Err(error::provider_unavailable(action.provider(), reason));
+    }
     let asset = provider.create(action)?;
     match provider.validate(&asset) {
         Ok(validation) => Ok(asset.validated(validation)),

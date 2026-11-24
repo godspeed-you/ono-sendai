@@ -1,0 +1,55 @@
+# Issue #144, ADR-1082 — a file recovery store that cannot be opened is a provider that says why
+# (v0.6 §12.2, §55.6 case 29, §2.3). The file provider is registered as unavailable with the
+# store's own error, so the coverage matrix names it instead of reading as if no file provider
+# existed; nothing is promised, and a plan sealed as protected still refuses at `apply`.
+case: an unopenable recovery store is named in the coverage matrix
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  plan_id() { sed -n 's/^\[{"id":"\([0-9a-f]\{16\}\)".*/\1/p' "$1" | head -1; }
+  W="$HOME/u440"
+  STORE="$HOME/.local/share/ono/change/recovery"
+  mkdir -p "$W"
+  printf 'new\n' > "$W/source"
+  printf 'before\n' > "$W/target"
+
+  echo '== a protected plan, sealed while the store opens =='
+  ono -c "plan copy file $W/source $W/target --overwrite | to json" > /tmp/u440a.json 2>&1
+  prove u1 "the plan is sealed protected (§10.3)" 'grep -q "\"protection_level\":\"protected\"" /tmp/u440a.json'
+
+  echo '== the store becomes a link to nowhere =='
+  rm -rf "$STORE" && ln -s "$HOME/nowhere440" "$STORE"
+  ono -c "plan copy file $W/source $W/target --overwrite | to json" > /tmp/u440b.json 2>&1
+  prove u2 "a new plan names the file provider it could not ask (§55.6 case 29)" \
+    'grep -q "ono.recovery.file-copy (" /tmp/u440b.json'
+  prove u3 "and the store it could not open" 'grep -qF "$STORE" /tmp/u440b.json'
+  prove u4 "and promises no protection (§2.4)" '! grep -q "\"protection_level\":\"protected\"" /tmp/u440b.json'
+
+  echo '== the plan sealed protected, applied now =='
+  ono -c "apply $(plan_id /tmp/u440a.json)" > /tmp/u440c.txt 2>&1
+  prove u5 "is refused as a prepare failure (§2.3, ADR-0842)" 'grep -q "change.prepare_failed" /tmp/u440c.txt'
+  prove u6 "and the target is unchanged" '[ "$(cat "$W/target")" = before ]'
+  prove u7 "and nothing was created through the link" '[ ! -e "$HOME/nowhere440" ]'
+  rm -f "$STORE"
+
+  echo 'unopenable recovery store: done'
+exit: 0
+stdout-contains: PROVED u1
+stdout-contains: PROVED u2
+stdout-contains: PROVED u3
+stdout-contains: PROVED u4
+stdout-contains: PROVED u5
+stdout-contains: PROVED u6
+stdout-contains: PROVED u7
+stdout-contains: unopenable recovery store: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

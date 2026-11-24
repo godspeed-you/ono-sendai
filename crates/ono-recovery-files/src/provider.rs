@@ -187,6 +187,7 @@ impl FileRecoveryProvider {
         action: &PlanAction,
         asset: &RecoveryAsset,
     ) -> Result<RestoreReport, ErrorValue> {
+        self.usable()?;
         self.owns(asset)?;
         if !asset.is_usable() {
             return Err(asset_invalid(
@@ -233,6 +234,23 @@ impl FileRecoveryProvider {
     /// Where an asset's copy actually lives: its own reference (§11.1).
     fn archive_of(asset: &RecoveryAsset) -> PathBuf {
         PathBuf::from(asset.reference())
+    }
+
+    /// Refuses to act at all over a store that was never opened (ADR-1082).
+    ///
+    /// The registry never asks an unavailable provider to discover, so this provider never
+    /// offers a candidate over such a store; this keeps every direct call honest as well.
+    fn usable(&self) -> Result<(), ErrorValue> {
+        if !self.store.was_refused() {
+            return Ok(());
+        }
+        Err(ono_change_core::error::provider_unavailable(
+            PROVIDER_ID,
+            &self
+                .store
+                .unusable_reason()
+                .unwrap_or_else(|| "its recovery store could not be opened".to_owned()),
+        ))
     }
 
     /// Refuses an asset another provider owns (§12.1).
@@ -672,6 +690,7 @@ impl RecoveryProvider for FileRecoveryProvider {
     }
 
     fn create(&self, action: &ProtectionAction) -> Result<RecoveryAsset, ErrorValue> {
+        self.usable()?;
         let scope = action.candidate().scope().clone();
         if action.provider() != PROVIDER_ID {
             return Err(asset_create_failed(
@@ -733,6 +752,7 @@ impl RecoveryProvider for FileRecoveryProvider {
     }
 
     fn validate(&self, asset: &RecoveryAsset) -> Result<RecoveryValidation, ErrorValue> {
+        self.usable()?;
         self.owns(asset)?;
         self.check(asset)
     }
@@ -856,6 +876,7 @@ impl RecoveryProvider for FileRecoveryProvider {
     }
 
     fn cleanup(&self, asset: &RecoveryAsset) -> Result<(), ErrorValue> {
+        self.usable()?;
         self.owns(asset)?;
         if asset.retention().is_held() {
             return Err(cleanup_blocked(

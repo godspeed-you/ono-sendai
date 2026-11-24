@@ -256,3 +256,70 @@ fn should_give_a_suite_scratch_space_on_the_filesystem_cargo_builds_into() {
         actual.display()
     );
 }
+
+#[test]
+fn should_be_unavailable_with_the_open_error_when_the_store_could_not_be_opened() {
+    let fixture = Fixture::new();
+    let root = fixture.path("dangling-store");
+    std::os::unix::fs::symlink(fixture.path("nowhere"), &root)
+        .expect("a dangling link stands where the store would be");
+    let refused = FileRecoveryStore::open(&root).expect_err("a dangling link is no store");
+    let provider = ono_recovery_files::FileRecoveryProvider::new(
+        FileRecoveryStore::unopened(&root, &refused),
+        support::at(0),
+    );
+
+    let availability = provider.availability();
+    assert!(
+        !availability.is_available(),
+        "§12.2, issue #144: a provider whose store could not be opened is registered as \
+         unavailable, never as available"
+    );
+    assert!(
+        availability.reason().is_some_and(|reason| reason
+            .contains(refused.help().unwrap_or(refused.message()))
+            && reason.contains(&root.display().to_string())),
+        "§55.6 case 29: the reason is the store's own error, got {availability:?}"
+    );
+}
+
+#[test]
+fn should_create_nothing_when_its_store_could_not_be_opened() {
+    let fixture = Fixture::new();
+    let configuration = fixture.write("etc/nginx.conf", "worker_processes 1;\n");
+    // The action a healthy provider would run, handed to one whose store never opened.
+    let domain = fixture
+        .provider
+        .resolve_domain(&configuration.display().to_string())
+        .expect("the domain resolves")
+        .expect("the path is the provider's business");
+    let candidates = fixture
+        .provider
+        .discover(&domain, ono_change_core::RecoveryObjective::PreserveExact)
+        .expect("discovery answers");
+    let actions = fixture
+        .provider
+        .plan_protection(&candidates, ono_change_core::ProtectionMode::Prefer)
+        .expect("the provider plans");
+    let root = fixture.path("dangling-store");
+    std::os::unix::fs::symlink(fixture.path("nowhere"), &root).expect("a dangling link");
+    let refused = FileRecoveryStore::open(&root).expect_err("a dangling link is no store");
+    let unopened = ono_recovery_files::FileRecoveryProvider::new(
+        FileRecoveryStore::unopened(&root, &refused),
+        support::at(0),
+    );
+
+    let created = unopened.create(&actions[0]);
+
+    let refusal =
+        created.expect_err("v0.6 §2.3: no asset is promised by a store that never opened");
+    assert_eq!(
+        refusal.code().name(),
+        "recovery.provider_unavailable",
+        "the refusal is the provider's unavailability, got {refusal:?}"
+    );
+    assert!(
+        !fixture.path("nowhere").exists(),
+        "nothing was created through the dangling link"
+    );
+}

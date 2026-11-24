@@ -165,16 +165,18 @@ fn registry(
     now: Timestamp,
 ) -> ProviderRegistry {
     let mut registry = ProviderRegistry::new();
-    if let Ok(store) =
-        ono_recovery_files::FileRecoveryStore::open(directory.join(RECOVERY_DIRECTORY))
-    {
-        let provider = ono_recovery_files::FileRecoveryProvider::new(store, now)
-            .with_retention(settings.retention_policy())
-            // A session outlives its first plan: each asset is dated, named and expired by when
-            // it was made, so two recovery points of one file are two assets (§11.1, §37.1).
-            .with_clock(Timestamp::now);
-        let _ = registry.register(Arc::new(provider));
-    }
+    // A store that cannot be opened still registers its provider, as unavailable with the
+    // store's own error, so the matrix says why a file is unprotected instead of reading as if
+    // no file provider existed (§55.6 case 29, issue #144, ADR-1082).
+    let root = directory.join(RECOVERY_DIRECTORY);
+    let store = ono_recovery_files::FileRecoveryStore::open(&root)
+        .unwrap_or_else(|refused| ono_recovery_files::FileRecoveryStore::unopened(&root, &refused));
+    let provider = ono_recovery_files::FileRecoveryProvider::new(store, now)
+        .with_retention(settings.retention_policy())
+        // A session outlives its first plan: each asset is dated, named and expired by when
+        // it was made, so two recovery points of one file are two assets (§11.1, §37.1).
+        .with_clock(Timestamp::now);
+    let _ = registry.register(Arc::new(provider));
     if settings.zfs_enabled() {
         let runner = Arc::new(ono_recovery_zfs::ProcessRunner::default());
         let provider = ono_recovery_zfs::ZfsProvider::new(runner)
