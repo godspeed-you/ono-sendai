@@ -69,6 +69,9 @@ declared:
   - id: "crates/ono-cli/tests/network.rs::should_include_the_listening_socket_when_tracing_its_interface"
     category: fixture_not_applicable
     prerequisite: "`lo` holds fewer objects than one trace graph draws (256), so a missing listener cannot be one the node limit left out; the graph itself says when it was truncated (ADR-0880)"
+  - id: "crates/ono-cli/tests/identity.rs::should_trace_a_user_to_its_processes_and_groups"
+    category: fixture_not_applicable
+    prerequisite: "root owns fewer objects than one trace graph draws (256), so a missing pid 1 or gid 0 cannot be one the node limit left out; the graph itself says when it was truncated (ADR-0880)"
   - id: "crates/ono-kuang-sdk/tests/compiled.rs::should_refuse_a_store_it_cannot_read_as_unreadable_not_as_another_engine"
     category: missing_privilege
     prerequisite: "the run is unprivileged, so a store without read or search permission is refused to it (ADR-0915)"
@@ -470,6 +473,15 @@ canonical_ci:
         times loaded per online processor, read before the map runs. A map that stays silent on
         a busier one is asked again with three times the watchdog, and skips as
         `fixture_not_applicable` only if it then answers; one that stays silent fails.
+    - id: "crates/ono-cli/tests/identity.rs::should_trace_a_user_to_its_processes_and_groups"
+      condition: "`trace user root` on the host draws its graph without reaching the node limit of 256 objects"
+      doc: >-
+        `trace user root` is bounded at 256 objects and says when it stopped. On a host where
+        other projects' containers run, root owns more processes than the bound, so pid 1 or
+        root's primary group can be among the objects the bound left out, and the graph reports
+        that it left some out; the test then cannot say whether they were left out or lost. A
+        runner where root owns fewer objects than the bound draws the whole graph and runs the
+        assertions (ADR-0880).
     - id: "crates/ono-cli/tests/network.rs::should_include_the_listening_socket_when_tracing_its_interface"
       condition: "`trace interface lo` on the host draws its graph without reaching the node limit of 256 objects"
       doc: >-

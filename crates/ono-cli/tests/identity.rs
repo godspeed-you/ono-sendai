@@ -21,7 +21,7 @@
 use std::os::unix::fs::MetadataExt;
 use std::time::Duration;
 
-use ono_testkit::ono_within;
+use ono_testkit::{SkipReason, ono_within};
 use serde_yaml_ng::Value;
 
 mod support;
@@ -376,20 +376,43 @@ fn should_trace_a_user_to_its_processes_and_groups() {
         graph["root"]
     );
     let nodes = items(&graph["nodes"]);
+    let init_drawn = nodes.iter().any(|node| {
+        node["kind"].as_str() == Some("ono.process/1") && node["value"]["pid"].as_i64() == Some(1)
+    });
+    let group_drawn = nodes.iter().any(|node| {
+        node["kind"].as_str() == Some("ono.group/1") && node["value"]["gid"].as_i64() == Some(0)
+    });
+    // A trace is bounded, and it says so: a graph that reached its node limit carries the limit
+    // and how many objects it did not draw. Root is the host's, and on a machine running other
+    // projects' containers it owns more processes than one graph draws — 287 on the one this was
+    // written on, where the graph drew 256 objects and left 91 out — so pid 1 or gid 0 can be
+    // among those left out, and the same graph says so. That is the host outgrowing the bound,
+    // which is the contract working, not the object missing from it (ADR-0880). A graph that
+    // drew everything and still lacks either is the defect.
+    let truncation = &graph["ono.graph.truncation"];
+    if !(init_drawn && group_drawn) && truncation["node_limit"].as_u64().is_some() {
+        ono_testkit::skipped(
+            SkipReason::FixtureNotApplicable,
+            &format!(
+                "root owns more objects than one trace graph draws ({}), so pid 1 and gid 0 \
+                 cannot be told apart from the ones the bound left out",
+                truncation["message"]
+                    .as_str()
+                    .unwrap_or("truncated at its node limit")
+            ),
+        );
+        return;
+    }
     assert!(
-        nodes
-            .iter()
-            .any(|node| node["kind"].as_str() == Some("ono.process/1")
-                && node["value"]["pid"].as_i64() == Some(1)),
-        "pid 1 (owned by root) is among the traced processes (spec §22.3), got {} nodes",
+        init_drawn,
+        "pid 1 (owned by root) is among the traced processes (spec §22.3) of a graph that was \
+         not truncated at its node limit, got {} nodes",
         nodes.len()
     );
     assert!(
-        nodes
-            .iter()
-            .any(|node| node["kind"].as_str() == Some("ono.group/1")
-                && node["value"]["gid"].as_i64() == Some(0)),
-        "root's primary group (gid 0) is among the traced groups, got {} nodes",
+        group_drawn,
+        "root's primary group (gid 0) is among the traced groups of a graph that was not \
+         truncated at its node limit, got {} nodes",
         nodes.len()
     );
     assert!(
