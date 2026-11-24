@@ -390,24 +390,28 @@ pub fn authorize_client(
     label: Option<&str>,
 ) -> Result<(), ErrorValue> {
     let fingerprint: Fingerprint = fingerprint.parse()?;
-    let store = open_authorized_clients(sources)?;
-    if store.client(fingerprint).is_some() {
-        return Err(ErrorValue::new(
-            ErrorCode::IoAlreadyExists,
-            format!("{fingerprint} is already an authorized client"),
-        )
-        .with_help(
-            "`set client-key <fingerprint> --allow …` changes what it may do; adding it again \
-             would silently reset a grant somebody made deliberately",
-        ));
-    }
-    let mut entry = AuthorizedClient::observing(fingerprint);
-    if let Some(label) = label {
-        entry = entry.with_label(label);
-    }
-    let mut entries = store.entries().to_vec();
-    entries.push(entry);
-    persist_authorized(sources, &entries)
+    let path = store_path_for_update(sources)?;
+    ono_protocol::update_store(&path, |entries| {
+        if entries
+            .iter()
+            .any(|entry| entry.fingerprint() == fingerprint)
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::IoAlreadyExists,
+                format!("{fingerprint} is already an authorized client"),
+            )
+            .with_help(
+                "`set client-key <fingerprint> --allow …` changes what it may do; adding it again \
+                 would silently reset a grant somebody made deliberately",
+            ));
+        }
+        let mut entry = AuthorizedClient::observing(fingerprint);
+        if let Some(label) = label {
+            entry = entry.with_label(label);
+        }
+        entries.push(entry);
+        Ok(((), true))
+    })
 }
 
 /// Replaces what an authorized client may do (§9.5, §9.7).
@@ -429,40 +433,38 @@ pub fn set_client_key(
     label: Option<&str>,
 ) -> Result<bool, ErrorValue> {
     let fingerprint: Fingerprint = fingerprint.parse()?;
-    let store = open_authorized_clients(sources)?;
-    let Some(existing) = store.client(fingerprint) else {
-        return Err(unauthorized_client(fingerprint));
-    };
-    let mut entry = existing.clone();
+    let mut granted = None;
     if let Some(allow) = allow {
-        let mut granted = Vec::new();
+        let mut ids = Vec::new();
         for id in allow.split(',').map(str::trim).filter(|id| !id.is_empty()) {
-            granted.push(id.parse::<ActionGrant>()?);
+            ids.push(id.parse::<ActionGrant>()?);
         }
-        entry = entry.with_actions(granted);
+        granted = Some(ids);
     }
-    if let Some(observe) = observe {
-        entry = entry.with_observe(observe);
-    }
-    if let Some(label) = label {
-        entry = entry.with_label(label);
-    }
-    if &entry == existing {
-        return Ok(false);
-    }
-    let entries: Vec<AuthorizedClient> = store
-        .entries()
-        .iter()
-        .map(|candidate| {
-            if candidate.fingerprint() == fingerprint {
-                entry.clone()
-            } else {
-                candidate.clone()
-            }
-        })
-        .collect();
-    persist_authorized(sources, &entries)?;
-    Ok(true)
+    let path = store_path_for_update(sources)?;
+    ono_protocol::update_store(&path, |entries| {
+        let Some(existing) = entries
+            .iter_mut()
+            .find(|entry| entry.fingerprint() == fingerprint)
+        else {
+            return Err(unauthorized_client(fingerprint));
+        };
+        let mut entry = existing.clone();
+        if let Some(granted) = granted {
+            entry = entry.with_actions(granted);
+        }
+        if let Some(observe) = observe {
+            entry = entry.with_observe(observe);
+        }
+        if let Some(label) = label {
+            entry = entry.with_label(label);
+        }
+        if entry == *existing {
+            return Ok((false, false));
+        }
+        *existing = entry;
+        Ok((true, true))
+    })
 }
 
 /// Revokes a client, so its next connection is refused (§9.7, §12.5).
@@ -476,17 +478,15 @@ pub fn revoke_client(
     fingerprint: &str,
 ) -> Result<(), ErrorValue> {
     let fingerprint: Fingerprint = fingerprint.parse()?;
-    let store = open_authorized_clients(sources)?;
-    if store.client(fingerprint).is_none() {
-        return Err(unauthorized_client(fingerprint));
-    }
-    let entries: Vec<AuthorizedClient> = store
-        .entries()
-        .iter()
-        .filter(|entry| entry.fingerprint() != fingerprint)
-        .cloned()
-        .collect();
-    persist_authorized(sources, &entries)
+    let path = store_path_for_update(sources)?;
+    ono_protocol::update_store(&path, |entries| {
+        let before = entries.len();
+        entries.retain(|entry| entry.fingerprint() != fingerprint);
+        if entries.len() == before {
+            return Err(unauthorized_client(fingerprint));
+        }
+        Ok(((), true))
+    })
 }
 
 fn unauthorized_client(fingerprint: Fingerprint) -> ErrorValue {
@@ -497,12 +497,11 @@ fn unauthorized_client(fingerprint: Fingerprint) -> ErrorValue {
     .with_help("`get client-key` lists the clients this machine authorizes")
 }
 
-fn persist_authorized(
-    sources: &crate::hosts::HostSources,
-    entries: &[AuthorizedClient],
-) -> Result<(), ErrorValue> {
-    let Some(path) = authorized_clients_path(sources) else {
-        return Err(ErrorValue::new(
+/// Where an update of the authorization store writes, or the refusal of a session that keeps no
+/// configuration directory.
+fn store_path_for_update(sources: &crate::hosts::HostSources) -> Result<PathBuf, ErrorValue> {
+    authorized_clients_path(sources).ok_or_else(|| {
+        ErrorValue::new(
             ErrorCode::IoNotFound,
             "this account has no configuration directory to keep an authorization store in",
         )
@@ -510,7 +509,6 @@ fn persist_authorized(
             "a listening agent decides who it serves from `~/.config/ono/authorized_clients` \
              (v0.4.1 section 9.2). Set `HOME`, `XDG_CONFIG_HOME` or `ONO_CONFIG_DIR` so there is \
              somewhere to keep one.",
-        ));
-    };
-    ono_protocol::write_store(&path, entries)
+        )
+    })
 }

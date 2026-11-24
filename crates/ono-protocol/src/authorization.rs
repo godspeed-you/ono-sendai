@@ -768,53 +768,47 @@ impl PeerAuthorization {
 /// agent's whole policy down with it.
 ///
 /// The file is created `0600`. It is the operator's decision about who may reach this machine,
-/// and an account that can rewrite it can authorize itself.
+/// and an account that can rewrite it can authorize itself. The write is serialised with every
+/// other update of a store in the same directory, and the trust store is written by the same
+/// sequence (ADR-1041).
 ///
 /// # Errors
 ///
 /// `io.permission_denied` naming the path that could not be written. The store at `path` is
 /// unchanged whenever this returns an error.
 pub fn write_store(path: &Path, entries: &[AuthorizedClient]) -> Result<(), ErrorValue> {
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
+    let locked =
+        crate::store_file::lock(path).map_err(|(at, error)| store_io_error(&at, &error))?;
+    crate::store_file::replace(&locked, path, render(entries).as_bytes())
+        .map_err(|(at, error)| store_io_error(&at, &error))
+}
 
-    let contents = render(entries);
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).map_err(|error| store_io_error(parent, &error))?;
+/// Changes the store at `path` as `change` says, starting from the file as it is now.
+///
+/// The read, the change and the write happen under one lock (ADR-1041), so two updates — from
+/// two shells, or a shell and an agent's operator — never start from the same store and undo each
+/// other: a client one of them revoked is not quietly authorized again by the other. `change`
+/// receives the entries the file holds and answers a value and whether it changed anything; the
+/// file is rewritten only when it did.
+///
+/// # Errors
+///
+/// [`ErrorCode::RemoteAuthorizationStoreInvalid`] when the store exists and cannot be read or does
+/// not parse — never an empty store; whatever `change` refuses with; and `io.permission_denied`
+/// when the store cannot be written. The store is unchanged whenever this returns an error.
+pub fn update_store<T>(
+    path: &Path,
+    change: impl FnOnce(&mut Vec<AuthorizedClient>) -> Result<(T, bool), ErrorValue>,
+) -> Result<T, ErrorValue> {
+    let locked =
+        crate::store_file::lock(path).map_err(|(at, error)| store_io_error(&at, &error))?;
+    let mut entries = AuthorizedClients::open(path)?.entries;
+    let (answer, changed) = change(&mut entries)?;
+    if changed {
+        crate::store_file::replace(&locked, path, render(&entries).as_bytes())
+            .map_err(|(at, error)| store_io_error(&at, &error))?;
     }
-    let temporary = path.with_extension("tmp");
-    // Removed rather than truncated in place: `create_new` then refuses a leftover another
-    // process is still writing, instead of two updates interleaving into one file.
-    let _ = std::fs::remove_file(&temporary);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&temporary)
-        .map_err(|error| store_io_error(&temporary, &error))?;
-    file.write_all(contents.as_bytes())
-        .map_err(|error| store_io_error(&temporary, &error))?;
-    file.sync_all()
-        .map_err(|error| store_io_error(&temporary, &error))?;
-    drop(file);
-    std::fs::rename(&temporary, path).map_err(|error| {
-        // The rename is the only step that can leave a temporary behind, and a temporary that
-        // outlives its update would refuse the next one.
-        let _ = std::fs::remove_file(&temporary);
-        store_io_error(path, &error)
-    })?;
-    // The rename is durable only once the directory entry is. Not every filesystem supports
-    // syncing a directory handle, and one that does not is not a reason to fail an update that
-    // already happened.
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-        && let Ok(directory) = std::fs::File::open(parent)
-    {
-        let _ = directory.sync_all();
-    }
-    Ok(())
+    Ok(answer)
 }
 
 fn store_io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
