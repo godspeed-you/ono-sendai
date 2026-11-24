@@ -676,6 +676,70 @@ fn should_report_an_authenticated_but_unauthorized_link_as_exactly_that() {
     );
 }
 
+/// Issue #182: the explanation `refusals.yaml` declares for E1202 — the refused fingerprint and
+/// whether the agent has a store at all — reaches the client over the link, at the default
+/// rendering path (§54.2) and on the structured value (§53.2), so an unauthorized client can tell
+/// an agent that authorizes nobody yet from one that lists somebody else.
+#[test]
+fn should_tell_an_unauthorized_client_whether_the_agent_authorizes_anybody() {
+    let home = scratch();
+    let agent = agent(&home, "first.pem");
+    ono_at_home(
+        &home,
+        &format!(
+            "add host-key 127.0.0.1 --fingerprint {} | select status",
+            agent.fingerprint
+        ),
+    )
+    .assert_success();
+    let mine = client_fingerprint(&home);
+
+    // No store on the agent's host: nobody is authorized yet.
+    let refused = ono_at_home(
+        &home,
+        &format!("link host {} --transport tcp", agent.address),
+    );
+    assert!(
+        !refused.status().is_success() && refused.stderr().contains("Ono-Sendai-E1202"),
+        "an unlisted client is refused, got {:?}",
+        refused.output()
+    );
+    for line in [
+        format!("  peer_fingerprint: {mine}"),
+        "  store_present: false".to_owned(),
+    ] {
+        assert!(
+            refused.stderr().lines().any(|seen| seen == line),
+            "refusals.yaml `remote.unauthorized` explains [peer_fingerprint, store_present], and \
+             the remote refusal shows `{line}` under its message; got {:?}",
+            refused.stderr()
+        );
+    }
+
+    // A store that lists somebody else.
+    let somebody = format!("sha256:{}", "ab".repeat(32));
+    ono_at_home(&home, &format!("add client-key {somebody} --label other")).assert_success();
+    let refused = ono_at_home(
+        &home,
+        &format!(
+            "try {{ link host {} --transport tcp }} catch e {{ $e | select code metadata | to json }}",
+            agent.address
+        ),
+    );
+    refused.assert_success();
+    let answered = last_line(&refused);
+    assert!(
+        answered.contains("Ono-Sendai-E1202") && answered.contains("\"store_present\":true"),
+        "issue #182: a store that lists somebody else is told apart from no store, on the value a \
+         script reads, got {answered:?}"
+    );
+    assert!(
+        !answered.contains(&somebody) && !answered.contains("authorized_clients"),
+        "§59.1: the refused client learns neither who is authorized nor where the store is, got \
+         {answered:?}"
+    );
+}
+
 /// §14.1 and §14.2 at the product: the listening agent writes structured events an operator can
 /// read, and never a key or a payload.
 #[test]

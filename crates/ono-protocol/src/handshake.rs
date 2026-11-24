@@ -729,10 +729,38 @@ impl Accept {
 ///
 /// The code is the dotted selector of an [`ono_core::ErrorCode`], so a refusal a script sees is
 /// the same kind of thing as any other error it can match on (ADR-0006).
+///
+/// `details` carries the explaining metadata `docs/contracts/hardening/refusals.yaml` lets cross
+/// the wire for the code (`over_the_wire`), and nothing else (ADR-1056). It is an optional field
+/// of protocol version 1: an older client ignores it and still reads a refusal, an older agent
+/// omits it and is still read as one, and a details block that is not what the contract
+/// declares is dropped by the reader rather than turning the refusal into a decoding failure.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reject {
     code: String,
     message: String,
+    #[serde(
+        default,
+        skip_serializing_if = "serde_json::Map::is_empty",
+        deserialize_with = "lenient_details"
+    )]
+    details: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Reads whatever a peer put in `details`, keeping it only if it is an object.
+///
+/// Anything else — an array, a string, `null` — is a block this build cannot interpret, and a
+/// refusal it cannot interpret the details of is still a refusal.
+fn lenient_details<'de, D>(
+    deserializer: D,
+) -> Result<serde_json::Map<String, serde_json::Value>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Object(details) => details,
+        _ => serde_json::Map::new(),
+    })
 }
 
 impl Reject {
@@ -742,7 +770,30 @@ impl Reject {
         Self {
             code: code.name().to_owned(),
             message: message.into(),
+            details: serde_json::Map::new(),
         }
+    }
+
+    /// The refusal `refusal` becomes on the wire: its code, its sentence, and the explaining
+    /// metadata the refusal census lets a refused peer learn (ADR-1056).
+    ///
+    /// Every other key stays on this side, whatever the error value carries.
+    #[must_use]
+    pub fn refusing(refusal: &ono_value::ErrorValue) -> Self {
+        Self {
+            code: refusal.code().name().to_owned(),
+            message: refusal.message().to_owned(),
+            details: crate::refusal::details_for_the_wire(refusal),
+        }
+    }
+
+    /// The structured error a client reports for this refusal.
+    ///
+    /// Only the details the census declares for the code, in the shape it declares them, are
+    /// kept; a code this build does not know is reported as `remote.protocol_mismatch`.
+    #[must_use]
+    pub fn to_error(&self) -> ono_value::ErrorValue {
+        crate::refusal::refusal_from_the_wire(self.code(), &self.message, &self.details)
     }
 
     /// The stable code, where it names one this build knows.

@@ -253,6 +253,23 @@ impl Drop for Agent {
 
 /// An agent on a loopback port the system chooses, serving the fixture registry under `limits`.
 async fn listening(limits: ono_protocol::Limits, authorized: &[&PeerIdentity]) -> Agent {
+    let store = Arc::new(std::sync::Mutex::new(store_of(authorized)));
+    let reading = Arc::clone(&store);
+    listening_to(limits, store, move || {
+        Ok(reading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone())
+    })
+    .await
+}
+
+/// An agent that reads its authorization store from `source`, however that store came to be.
+async fn listening_to(
+    limits: ono_protocol::Limits,
+    store: Arc<std::sync::Mutex<AuthorizedClients>>,
+    source: impl Fn() -> Result<AuthorizedClients, ono_value::ErrorValue> + Send + Sync + 'static,
+) -> Agent {
     let identity = PeerIdentity::generate().expect("a host identity is generated");
     let host = identity.peer_key();
     let listener = TlsListener::bind("127.0.0.1:0", &identity)
@@ -262,8 +279,6 @@ async fn listening(limits: ono_protocol::Limits, authorized: &[&PeerIdentity]) -
         .local_addr()
         .expect("the system reports the port it chose")
         .to_string();
-    let store = Arc::new(std::sync::Mutex::new(store_of(authorized)));
-    let reading = Arc::clone(&store);
     let audit = Arc::new(Recording::default());
     let registry = fixture_registry(Arc::new(FixtureObserved::default()));
     let agent = ListeningAgent::new(
@@ -272,12 +287,7 @@ async fn listening(limits: ono_protocol::Limits, authorized: &[&PeerIdentity]) -
     )
     .with_limits(limits)
     .with_audit(Arc::clone(&audit) as ono_protocol::Audit)
-    .with_authorization_source(move || {
-        Ok(reading
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone())
-    });
+    .with_authorization_source(source);
     let connections = agent.connections();
     let task = tokio::spawn(agent.run());
     Agent {
@@ -302,6 +312,17 @@ fn store_of(authorized: &[&PeerIdentity]) -> AuthorizedClients {
 /// Opens one authenticated link to `agent` as `client`.
 async fn link(agent: &Agent, client: &PeerIdentity) -> Result<RemoteLink, ono_value::ErrorValue> {
     let transport = tls_connect(&agent.address, client).await?;
+    negotiate(agent, transport).await
+}
+
+/// Says hello over a transport that has already completed mutual TLS with `agent`.
+///
+/// Split from [`link`] so a test can hold a connection between the two halves of the handshake,
+/// which is where a slow client — or a loaded machine — leaves it.
+async fn negotiate(
+    agent: &Agent,
+    transport: impl ono_protocol::Transport,
+) -> Result<RemoteLink, ono_value::ErrorValue> {
     let store = TrustStore::in_memory();
     store
         .pin("testbox", &agent.host)
@@ -721,4 +742,165 @@ async fn should_terminate_an_established_session_when_its_authorization_is_revok
     within(link(&agent, &revoked))
         .await
         .expect_err("and the next connection from that key is refused (§12.5's MUST)");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revocation_sweep_runs_first()
+ {
+    // Issue #161. §12.5's sweep closes every live connection whose key the store no longer lists.
+    // A client the store *never* listed is not a grant being withdrawn: it is being refused, and
+    // §54.1 and §59.9 want that refusal to arrive. The interleaving that lost it on a loaded
+    // machine — the sweep running between the peer's TLS handshake and its `Hello` — is forced
+    // here rather than waited for: the stranger is admitted and holds its connection until a
+    // sweep has provably run over it.
+    let doomed = PeerIdentity::generate().expect("a client identity is generated");
+    let kept = PeerIdentity::generate().expect("a client identity is generated");
+    let stranger = PeerIdentity::generate().expect("an identity nobody authorized");
+    let agent = listening(ono_protocol::Limits::default(), &[&doomed, &kept]).await;
+
+    let pending = within(tls_connect(&agent.address, &stranger))
+        .await
+        .expect("mutual TLS completes: the stranger's key is real, only nobody authorized it");
+    until("the stranger is admitted and waiting to say hello", || {
+        agent.connections.live() == 1
+    })
+    .await;
+
+    // A grant that really is withdrawn, so the sweep has something to do and says that it did.
+    let session = within(link(&agent, &doomed))
+        .await
+        .expect("the doomed client is authorized for now");
+    *agent
+        .store
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = store_of(&[&kept]);
+    let doomed_fingerprint = doomed.fingerprint().to_string();
+    until(
+        "a revocation sweep has run over every live connection",
+        || {
+            agent.audit.lines().iter().any(|line| {
+                line.contains("connection_id=revoked") && line.contains(&doomed_fingerprint)
+            })
+        },
+    )
+    .await;
+    assert!(
+        !still_serves(&session).await,
+        "§12.5: the withdrawn grant's session is over — the sweep this test waited for is real"
+    );
+
+    let refused = within(negotiate(&agent, pending))
+        .await
+        .expect_err("§59.1: a client nobody authorized is refused");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::RemoteUnauthorized,
+        "§54.1, §59.9: the stranger is told it is not authorized; a sweep that ran first must \
+         not turn the refusal into a dropped socket (`remote.unreachable`), got {refused:?}"
+    );
+    let stranger_fingerprint = stranger.fingerprint().to_string();
+    assert!(
+        !agent.audit.lines().iter().any(|line| {
+            line.contains("connection_id=revoked") && line.contains(&stranger_fingerprint)
+        }),
+        "a client that was never granted anything has nothing revoked, got {:?}",
+        agent.audit.lines()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_not_tell_a_refused_peer_where_the_agent_keeps_its_store() {
+    // §9.2, §59.5: a store that will not parse authorizes nobody, and the agent refuses every
+    // connection until it is repaired. The *operator* is told which file and which line; the
+    // peer is told that the agent cannot read its policy — §59.1 allows it "minimal rejection
+    // protocol data", and a directory on the agent's host is not that (ADR-1056).
+    let directory =
+        std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join("limits-unreadable-store");
+    std::fs::create_dir_all(&directory).expect("a scratch directory");
+    let path = directory.join("authorized_clients");
+    std::fs::write(&path, "this is not an authorization entry\n").expect("the store is written");
+    let reading = path.clone();
+    let agent = listening_to(
+        ono_protocol::Limits::default(),
+        Arc::new(std::sync::Mutex::new(AuthorizedClients::empty())),
+        move || AuthorizedClients::open(&reading),
+    )
+    .await;
+    let client = PeerIdentity::generate().expect("a client identity is generated");
+
+    let refused = within(link(&agent, &client))
+        .await
+        .expect_err("§9.2: a malformed store authorizes nobody");
+
+    assert_eq!(refused.code(), ErrorCode::RemoteAuthorizationStoreInvalid);
+    let told = format!("{refused:?}");
+    for withheld in [
+        path.display().to_string(),
+        directory.display().to_string(),
+        "limits-unreadable-store".to_owned(),
+    ] {
+        assert!(
+            !told.contains(&withheld),
+            "§59.1: the refused peer learned `{withheld}` about the agent's filesystem: {told}"
+        );
+    }
+    assert_eq!(
+        refused.metadata().get("denied_because"),
+        Some(&ono_value::Value::string("authorization_store_malformed")),
+        "refusals.yaml: which boundary decided still crosses the wire, got {refused:?}"
+    );
+    assert!(
+        refused.message().contains("authorization"),
+        "§54.1: the sentence still names the boundary, got {refused:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_tell_a_client_whose_handshake_timed_out_that_it_did() {
+    // Issue #181. §12.2's deadline covers TLS *and* the Ono negotiation after it. A peer that
+    // completed mutual TLS has a channel to be told over, and §54.1 wants it told which boundary
+    // decided: `remote.handshake_timeout` (E1502), not a socket that closed for no stated reason.
+    // The client here is one whose `Hello` is late — what a stalled process or a loaded machine
+    // produces — and the test waits for the agent's own record of the decision rather than for a
+    // duration.
+    let client = PeerIdentity::generate().expect("a client identity is generated");
+    let agent = listening(
+        ono_protocol::Limits::default().with_handshake_timeout(std::time::Duration::from_secs(2)),
+        &[&client],
+    )
+    .await;
+
+    let late = within(tls_connect(&agent.address, &client))
+        .await
+        .expect("mutual TLS completes in time; the Hello will not");
+    until("the agent records that the handshake timed out", || {
+        agent
+            .audit
+            .lines()
+            .iter()
+            .any(|line| line.contains("error_code=remote.handshake_timeout"))
+    })
+    .await;
+
+    let refused = within(negotiate(&agent, late))
+        .await
+        .expect_err("§12.2: a handshake that missed its deadline does not become a link");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::RemoteHandshakeTimeout,
+        "§54.1: the client is told its handshake timed out, got {refused:?}"
+    );
+    assert_eq!(
+        refused.metadata().get("timeout_ms"),
+        Some(&ono_value::Value::Int(2_000)),
+        "refusals.yaml: E1502 carries the deadline the agent enforced, got {refused:?}"
+    );
+    let fingerprint = client.fingerprint().to_string();
+    assert!(
+        agent.audit.lines().iter().any(|line| {
+            line.contains("error_code=remote.handshake_timeout") && line.contains(&fingerprint)
+        }),
+        "§14.1: the agent's record names the authenticated peer it gave up on, got {:?}",
+        agent.audit.lines()
+    );
 }

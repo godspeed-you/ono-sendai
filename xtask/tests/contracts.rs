@@ -999,6 +999,39 @@ fn should_report_a_refusal_that_claims_a_field_nobody_attaches() {
     );
 }
 
+#[test]
+fn should_report_a_refusal_that_sends_the_peer_a_field_it_does_not_explain() {
+    // ADR-1056: what a handshake refusal carries to the refused peer is a subset of what it
+    // explains, so a key can only cross the wire after it has been declared — and argued — here.
+    let repo = consistent();
+    repo.write(
+        "docs/contracts/hardening/refusals.yaml",
+        "version: 1\ncovers:\n  prefixes: []\n  codes: []\nrefusals:\n  - error: resource.item_limit\n    boundary: pipeline.materialization\n    decided_by: ono-value\n    explains: [stage]\n    over_the_wire: [stage, store_path]\n    says: budget after\n",
+    );
+    repo.write(
+        "docs/contracts/errors.yaml",
+        "version: 1\nerrors:\n  - code: Ono-Sendai-E1101\n    name: resource.item_limit\n    kind: resource\n    summary: A ceiling was reached.\n    help: Narrow the input.\n",
+    );
+    repo.write(
+        "crates/ono-value/src/budget.rs",
+        "fn refuse() { error.with_metadata(\"stage\", stage) }\n",
+    );
+    let problems = xtask::contracts::check_refusals(repo.path());
+    assert!(
+        problems
+            .iter()
+            .any(|problem| problem.detail.contains("store_path")
+                && problem.detail.contains("over_the_wire")),
+        "a key sent to the peer that the row does not explain is reported: {problems:?}"
+    );
+    assert!(
+        !problems
+            .iter()
+            .any(|problem| problem.detail.contains("`stage`")),
+        "a key the row explains may cross the wire: {problems:?}"
+    );
+}
+
 // --- §6: the security boundary inventory and its owners (issue #118, ADR-0546) ------------------
 
 /// The §6.1 table, typed from the specification rather than read from the registry.

@@ -156,6 +156,43 @@ async fn should_report_a_protocol_mismatch_when_the_transport_answers_with_rubbi
 }
 
 #[tokio::test]
+async fn should_report_an_unreachable_peer_when_its_answer_is_cut_off_mid_frame() {
+    // The connection is lost in the middle of the agent's answer: half a frame, then nothing.
+    // That is a transport failure — not a refusal the client could read, and never a link.
+    let (near, far) = tokio::io::duplex(1024);
+    tokio::spawn(async move {
+        use tokio::io::AsyncWriteExt as _;
+        let mut far = far;
+        let mut frame = bytes::BytesMut::new();
+        ono_protocol::encode(
+            &ono_protocol::Frame::new(
+                ono_protocol::FrameKind::Reject,
+                0,
+                br#"{"code":"remote.unauthorized","message":"refused"}"#.to_vec(),
+            ),
+            &ono_protocol::Limits::default(),
+            &mut frame,
+        )
+        .expect("a frame");
+        let _ = far.write_all(&frame[..frame.len() / 2]).await;
+        let _ = far.shutdown().await;
+    });
+
+    let error = within(ono_protocol::Link::connect(
+        UnauthenticatedTransport::new(near),
+        client_config("testhost"),
+    ))
+    .await
+    .expect_err("half an answer is no answer");
+
+    assert_eq!(
+        error.code(),
+        ErrorCode::RemoteUnreachable,
+        "a frame cut off by a lost connection is a transport failure, got {error:?}"
+    );
+}
+
+#[tokio::test]
 async fn should_carry_the_local_identity_to_the_remote_end() {
     let client = ClientConfig::new("testhost")
         .with_schemas(common::schemas())

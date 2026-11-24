@@ -63,6 +63,7 @@ mod handshake;
 mod limits;
 mod link;
 mod message;
+mod refusal;
 mod service;
 mod store_file;
 mod trust;
@@ -87,7 +88,8 @@ pub use limits::{
 pub use link::{ClientConfig, Link, RemoteMessage, RemoteStream};
 pub use message::{ActRequest, AdaptRequest, Message, RemoteQuery, decode_message, encode_message};
 pub use service::{
-    RemoteService, ServerAuthorization, ServerConfig, StreamResponder, refuse, serve,
+    RemoteService, ServerAuthorization, ServerConfig, StreamResponder, handshake_timeout_refusal,
+    refuse, serve,
 };
 pub use transport::{Transport, UnauthenticatedTransport};
 pub use trust::{Fingerprint, HostKey, TrustDecision, TrustEntry, TrustPolicy, TrustStore};

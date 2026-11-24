@@ -1,0 +1,1 @@
+{"code":"remote.unauthorized","message":"refused","details":{"store_present":"yes","peer_fingerprint":[1,{"a":null}],"store_path":"/etc/ono/authorized_clients","limit":-1,"timeout_ms":1e400}}

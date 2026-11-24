@@ -21,7 +21,7 @@ use tokio::sync::Semaphore;
 
 use crate::audit::{Audit, AuditEvent, AuditKind, NoAudit};
 use crate::authorization::{AuthorizationContext, AuthorizedClients, PeerAuthorization};
-use crate::connection::{FrameReader, FrameSink, spawn_writer};
+use crate::connection::{FrameReader, FrameSink, refuse_within, spawn_writer};
 use crate::error::unreachable;
 use crate::handshake::{
     CapabilityDescriptor, Identity, Offer, PeerClock, ProviderDescriptor, negotiate,
@@ -517,13 +517,16 @@ fn with_streams<T>(
 /// Refuses a connection that completed the cryptographic handshake, saying why (§54.1, §12.1).
 ///
 /// The peer has an authenticated channel, so it can be told which boundary decided rather than
-/// meeting a socket that closes for no stated reason. It is told that and nothing else: no
-/// provider, no schema, no capability, no target, which is §59.1's rule for a refusal made before
+/// meeting a socket that closes for no stated reason. It is told that and nothing else: the code,
+/// the sentence and the details the refusal census lets cross the wire (ADR-1056) — no provider,
+/// no schema, no capability, no target, which is §59.1's rule for a refusal made before
 /// negotiation.
 ///
-/// The caller's opening `Hello` is read and discarded first. A refusal written into a connection
-/// whose other direction is still full would race the peer's own write into a reset, and the
-/// reason for the refusal would be the thing that got lost.
+/// The caller's opening `Hello` is read and discarded first, within the handshake timeout. A
+/// refusal written into a connection whose other direction is still full would race the peer's
+/// own write into a reset, and the reason for the refusal would be the thing that got lost. The
+/// refusal itself is then written, and the peer let go, within one more handshake timeout
+/// (ADR-1057), so a peer that never reads it holds the agent no longer than one that does.
 ///
 /// # Errors
 ///
@@ -535,26 +538,79 @@ pub async fn refuse<T: Transport>(
 ) -> Result<(), ErrorValue> {
     let (reader, writer) = tokio::io::split(transport);
     let mut reader = FrameReader::new(reader, limits.clone());
-    let frames = spawn_writer(writer, limits.clone());
+    let payload = encode_message(&Message::Reject(Reject::refusing(refusal)), limits)
+        .map_err(ErrorValue::from)?;
     let _ = tokio::time::timeout(limits.handshake_timeout(), reader.next()).await;
-    let reject = Reject::new(refusal.code(), refusal.message().to_owned());
-    let payload = encode_message(&Message::Reject(reject), limits).map_err(ErrorValue::from)?;
-    let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));
-    frames.hangup();
-    // Waiting for the peer to go is what makes the refusal observable rather than a race with
-    // the socket closing under it.
-    let _ = tokio::time::timeout(limits.handshake_timeout(), async {
-        while matches!(reader.next().await, Ok(Some(_))) {}
-    })
+    refuse_within(
+        &mut reader,
+        writer,
+        &Frame::new(FrameKind::Reject, 0, payload),
+        limits,
+    )
     .await;
     Ok(())
 }
 
+/// The refusal a peer receives when it did not complete the handshake within `timeout` (§12.2).
+///
+/// One constructor for both halves of §12.2's deadline: the listener's TLS half, which can only
+/// record it because there is no channel yet, and the Ono half in [`serve`], which also says it.
+#[must_use]
+pub fn handshake_timeout_refusal(timeout: std::time::Duration) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::RemoteHandshakeTimeout,
+        format!(
+            "the handshake did not complete within {} seconds",
+            timeout.as_secs_f64()
+        ),
+    )
+    .with_retryable(true)
+    .with_metadata(
+        "timeout_ms",
+        Value::Int(i128::from(
+            u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+        )),
+    )
+}
+
+/// Refuses a link whose opening frame is not a hello this agent can read, and says so.
+///
+/// The peer is told `remote.protocol_mismatch` with this side's reading of what it sent, the
+/// decision is recorded (§14.1), and the failure is returned: from the agent's side the caller
+/// was not speaking this protocol, which is what `serve` reports.
+async fn refuse_opening<R, W>(
+    failure: ErrorValue,
+    reader: &mut FrameReader<R>,
+    writer: W,
+    limits: &Limits,
+    record: &impl Fn(AuditEvent),
+) -> Result<(), ErrorValue>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    record(
+        AuditEvent::new(AuditKind::ProtocolMismatch, "unaccepted", "denied")
+            .with_error_code(failure.code()),
+    );
+    let payload = encode_message(&Message::Reject(Reject::refusing(&failure)), limits)
+        .map_err(ErrorValue::from)?;
+    refuse_within(
+        reader,
+        writer,
+        &Frame::new(FrameKind::Reject, 0, payload),
+        limits,
+    )
+    .await;
+    Err(failure)
+}
+
 /// Answers one link with `service` until the caller disconnects.
 ///
-/// The handshake happens first (spec §21.2); a caller that shares no protocol version is refused
-/// with a [`Reject`](crate::Reject) and the connection ends, which is a successful outcome for
-/// this function — the agent did its job.
+/// The handshake happens first (spec §21.2). A caller that is refused — it shares no protocol
+/// version, the policy does not list it, or it did not say hello before the handshake timeout —
+/// is told so with a [`Reject`](crate::Reject) and the connection ends, which is a successful
+/// outcome for this function: the agent did its job.
 ///
 /// # Errors
 ///
@@ -572,33 +628,6 @@ where
     let peer_key = transport.peer_key().cloned();
     let (reader, writer) = tokio::io::split(transport);
     let mut reader = FrameReader::new(reader, limits.clone());
-    let frames = spawn_writer(writer, limits.clone());
-
-    // §12.2: TLS and *Ono protocol negotiation* together have a deadline. TLS is bounded by the
-    // listener that accepted the socket; this is the other half — a peer that completed the
-    // cryptographic handshake and then says nothing must not hold the connection open for ever.
-    let opening = tokio::time::timeout(limits.handshake_timeout(), reader.next())
-        .await
-        .map_err(|_| {
-            ErrorValue::new(
-                ErrorCode::RemoteHandshakeTimeout,
-                format!(
-                    "the caller did not say hello within {} seconds",
-                    limits.handshake_timeout().as_secs_f64()
-                ),
-            )
-            .with_retryable(true)
-        })??
-        .ok_or_else(|| unreachable("the caller closed the link before saying hello"))?;
-    let Message::Hello(hello) =
-        decode_message(opening.kind(), opening.payload(), &schemas, &limits)
-            .map_err(ErrorValue::from)?
-    else {
-        return Err(ErrorValue::from(ProtocolError::MalformedPayload {
-            kind: opening.kind(),
-            detail: "a link opens with a hello".to_owned(),
-        }));
-    };
 
     let audit = Arc::clone(&config.audit);
     let address = config.source_address.clone();
@@ -609,6 +638,75 @@ where
             event = event.with_peer(fingerprint);
         }
         audit.record(&event);
+    };
+    // Until a link is accepted, everything this side writes is one refusal, written and bounded
+    // by `refuse_within` rather than queued for a writer task a silent peer could hold open.
+    let reject = |refusal: Reject| -> Result<Frame, ErrorValue> {
+        let payload =
+            encode_message(&Message::Reject(refusal), &limits).map_err(ErrorValue::from)?;
+        Ok(Frame::new(FrameKind::Reject, 0, payload))
+    };
+
+    // §12.2: TLS and *Ono protocol negotiation* together have a deadline. TLS is bounded by the
+    // listener that accepted the socket; this is the other half — a peer that completed the
+    // cryptographic handshake and then says nothing must not hold the connection open for ever.
+    // It has a channel, so it is told why it is being let go (§54.1, issue #181).
+    let opening = match tokio::time::timeout(limits.handshake_timeout(), reader.next()).await {
+        Ok(Ok(Some(opening))) => opening,
+        Ok(Ok(None)) => {
+            // Gone before it said anything: there is nobody to tell, and still a decision to
+            // record (§14.1) — a handshake that never finished is not a session that ended.
+            let lost = unreachable("the caller closed the link before saying hello");
+            record(
+                AuditEvent::new(AuditKind::ClientDisconnected, "unaccepted", "ended")
+                    .with_error_code(lost.code()),
+            );
+            return Err(lost);
+        }
+        Ok(Err(failure)) if failure.code() == ErrorCode::RemoteProtocolMismatch => {
+            // Bytes that are not a frame this build reads — an unknown framing version or kind,
+            // a length over the limit: the peer is told the two ends share no protocol.
+            return refuse_opening(failure, &mut reader, writer, &limits, &record).await;
+        }
+        Ok(Err(failure)) => {
+            record(
+                AuditEvent::new(AuditKind::ClientDisconnected, "unaccepted", "ended")
+                    .with_error_code(failure.code()),
+            );
+            return Err(failure);
+        }
+        Err(_elapsed) => {
+            let refusal = handshake_timeout_refusal(limits.handshake_timeout());
+            record(
+                AuditEvent::new(AuditKind::ConnectionLimitDenied, "unaccepted", "denied")
+                    .with_error_code(refusal.code()),
+            );
+            let frame = reject(Reject::refusing(&refusal))?;
+            refuse_within(&mut reader, writer, &frame, &limits).await;
+            return Ok(());
+        }
+    };
+    let hello = match decode_message(opening.kind(), opening.payload(), &schemas, &limits) {
+        Ok(Message::Hello(hello)) => hello,
+        Ok(_) => {
+            let failure = ErrorValue::from(ProtocolError::MalformedPayload {
+                kind: opening.kind(),
+                detail: "a link opens with a hello".to_owned(),
+            });
+            return refuse_opening(failure, &mut reader, writer, &limits, &record).await;
+        }
+        // A hello this build cannot read — what an older agent meets from a client whose hello
+        // changed shape — is a protocol this agent does not share, and the peer is told so.
+        Err(failure) => {
+            return refuse_opening(
+                ErrorValue::from(failure),
+                &mut reader,
+                writer,
+                &limits,
+                &record,
+            )
+            .await;
+        }
     };
 
     let authorization = match resolve(&config.authorization, peer_key.as_ref()) {
@@ -623,10 +721,8 @@ where
                 AuditKind::UnknownClientRefused
             };
             record(AuditEvent::new(kind, "unaccepted", "denied").with_error_code(refusal.code()));
-            let reject = Reject::new(refusal.code(), refusal.message().to_owned());
-            let payload =
-                encode_message(&Message::Reject(reject), &limits).map_err(ErrorValue::from)?;
-            let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));
+            let frame = reject(Reject::refusing(&refusal))?;
+            refuse_within(&mut reader, writer, &frame, &limits).await;
             return Ok(());
         }
     };
@@ -644,19 +740,19 @@ where
 
     let accept = match negotiate(&hello, &config.offer_for(&authorization)) {
         Ok(accept) => accept,
-        Err(reject) => {
+        Err(refusal) => {
             record(
                 event(AuditKind::ProtocolMismatch, "denied")
                     .with_error_code(ErrorCode::RemoteProtocolMismatch),
             );
-            let payload =
-                encode_message(&Message::Reject(reject), &limits).map_err(ErrorValue::from)?;
-            let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));
+            let frame = reject(refusal)?;
+            refuse_within(&mut reader, writer, &frame, &limits).await;
             return Ok(());
         }
     };
     record(event(AuditKind::ConnectionAccepted, "allowed").with_protocol_version(accept.version()));
     let window = accept.credit_window();
+    let frames = spawn_writer(writer, limits.clone());
     let payload = encode_message(&Message::Accept(accept), &limits).map_err(ErrorValue::from)?;
     frames
         .send(Frame::new(FrameKind::Accept, 0, payload))

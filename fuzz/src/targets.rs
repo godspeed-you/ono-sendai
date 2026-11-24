@@ -347,6 +347,25 @@ fn remote_handshake(data: &[u8]) {
         if let Ok(message) = decode_message(kind, data, schemas, &limits) {
             let _ = message.kind();
             let _ = ono_protocol::encode_message(&message, &limits);
+            // ADR-1056: whatever a refusing agent put in `details`, the client's error carries
+            // only the census's keys for the code, each bounded — a hostile details block is
+            // dropped, never believed and never allowed to grow the error.
+            if let ono_protocol::Message::Reject(reject) = &message {
+                let refused = reject.to_error();
+                assert!(
+                    refused.metadata().len() <= 2,
+                    "a handshake refusal carries at most two details, got {refused:?}"
+                );
+                for (key, value) in refused.metadata().iter() {
+                    assert!(
+                        key != "store_path",
+                        "ADR-1056: a place on the agent's filesystem never reaches a client"
+                    );
+                    if let ono_value::Value::String(text) = value {
+                        assert!(text.len() <= 256, "a text detail is bounded");
+                    }
+                }
+            }
         }
     }
 }

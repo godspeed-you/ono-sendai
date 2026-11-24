@@ -3409,8 +3409,18 @@ pub fn check_refusals(root: &Path) -> Vec<Problem> {
             )));
             continue;
         }
+        let explains = string_sequence(row, "explains");
+        for key in string_sequence(row, "over_the_wire") {
+            if !explains.contains(&key) {
+                problems.push(problem(format!(
+                    "{subject} sends `{key}` to the refused peer (`over_the_wire`) and does not \
+                     list it in `explains`; a key crosses the wire only after it is declared as \
+                     explaining the refusal (ADR-1056)"
+                )));
+            }
+        }
         let attached = attached_metadata_keys(&sources);
-        for key in string_sequence(row, "explains") {
+        for key in explains {
             if !attached.contains(&key) {
                 problems.push(problem(format!(
                     "{subject} claims to carry `{key}`, and nothing in `crates/{owner}/src` \

@@ -23,6 +23,14 @@
 #                "which boundary decided" (§53.2: no string matching for policy). The gate checks
 #                each key is attached somewhere in `decided_by`'s own sources, so a row cannot
 #                claim a field nobody sets.
+#   over_the_wire
+#                the `explains` keys a *handshake* refusal (`Reject`) carries to the peer that was
+#                refused, as the `details` of the frame (ADR-1056). A subset of `explains`, and
+#                empty when omitted: the agent strips every other key before the frame is written,
+#                and the client drops every other key it is sent. Decided per refusal by what a
+#                peer that is authenticated and *not* authorized may learn — never a secret, a key,
+#                or a place on the agent's filesystem. A refusal made after authorization (a
+#                stream `Failure`) is a different path and is not governed by this field.
 #   says         a fragment the rendered message contains, which is the human half. §54.2 is about
 #                the ordinary error. Since ADR-0938 the default path also renders each `explains`
 #                key the error carries, as a `key: value` line between the message and the help,
@@ -97,6 +105,7 @@ refusals:
     boundary: remote.tcp.authorization
     decided_by: ono-protocol
     explains: [denied_because]
+    over_the_wire: [denied_because]
     says: "no key"
     doc: >-
       §2.2: authorization cannot begin without an authenticated identity. The refusal says the
@@ -105,11 +114,14 @@ refusals:
     boundary: remote.tcp.authorization
     decided_by: ono-protocol
     explains: [peer_fingerprint, store_present]
+    over_the_wire: [peer_fingerprint, store_present]
     says: "is authenticated and is not authorized"
     doc: >-
       The fingerprint is in the sentence because it is what the operator types into
       `add client-key` to fix the refusal, and §53.3 permits public identity material in full.
-      `store_present` distinguishes "you are not on the list" from "there is no list".
+      `store_present` distinguishes "you are not on the list" from "there is no list". Both cross
+      the wire: the fingerprint is the refused peer's own, and whether a store exists is what the
+      message already says in words (ADR-1056).
   - error: remote.capability_denied
     boundary: remote.tcp.authorization
     decided_by: ono-protocol
@@ -124,28 +136,36 @@ refusals:
     boundary: remote.tcp.authorization
     decided_by: ono-protocol
     explains: [denied_because, store_path]
+    over_the_wire: [denied_because]
     says: "authorization"
     doc: >-
       §9.2, §59.5: a malformed store is never read as an empty one. The refusal names the file and
-      the line, so the boundary that decided is a place on disk rather than a mood.
+      the line, so the boundary that decided is a place on disk rather than a mood. That place is
+      the operator's to read: `store_path` and the sentence that names it stay on the agent's
+      side, and a refused peer is told only that the agent cannot read its policy (ADR-1056).
 
   # --- §12, the listening ceilings ------------------------------------------------------------
   - error: remote.connection_limit
     boundary: remote.tcp.transport
     decided_by: ono-remote
     explains: [ceiling, limit]
+    over_the_wire: [ceiling, limit]
     says: "connections"
     doc: >-
       §12.1 and §12.3 are two different ceilings with two different settings, and the message says
       which of them was reached and the figure it was set to.
   - error: remote.handshake_timeout
     boundary: remote.tcp.transport
-    decided_by: ono-remote
+    decided_by: ono-protocol
     explains: [timeout_ms]
+    over_the_wire: [timeout_ms]
     says: "handshake"
     doc: >-
       §12.2: a peer that opens a connection and says nothing holds a pre-negotiation slot for
-      free. The refusal names the deadline, so a slow link is told apart from a refused one.
+      free. The refusal names the deadline, so a slow link is told apart from a refused one. The
+      deadline has two halves: before TLS completes the peer has no channel and is only recorded;
+      after it, `ono_protocol::serve` tells the peer (ADR-1057), which is why the constructor —
+      and the row — belong to ono-protocol.
 
   # --- §16.3, native process confinement — §54.1's second example -----------------------------
   - error: plugin.confinement_failed
