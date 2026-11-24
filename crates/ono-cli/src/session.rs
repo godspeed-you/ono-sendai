@@ -534,13 +534,17 @@ impl LinkConnection {
     }
 
     /// What the trust store concluded about that key, as `ono.link/1` spells it.
+    ///
+    /// The shell asks for `TrustPolicy::Pinned` or `Unauthenticated` and never for trust on first
+    /// use, so a link it made cannot carry `NewlyPinned`; should one ever, the answer is unknown
+    /// rather than `pinned`, a word for a key somebody pinned before the handshake (ADR-1044).
     #[must_use]
     pub fn transport_trust(&self) -> Option<&'static str> {
         self.agent_link()
-            .map(|link| match link.negotiated().trust() {
-                ono_protocol::TrustDecision::Pinned => "pinned",
-                ono_protocol::TrustDecision::NewlyPinned => "newly_pinned",
-                ono_protocol::TrustDecision::Unauthenticated => "unauthenticated",
+            .and_then(|link| match link.negotiated().trust() {
+                ono_protocol::TrustDecision::Pinned => Some("pinned"),
+                ono_protocol::TrustDecision::Unauthenticated => Some("unauthenticated"),
+                ono_protocol::TrustDecision::NewlyPinned => None,
             })
     }
 

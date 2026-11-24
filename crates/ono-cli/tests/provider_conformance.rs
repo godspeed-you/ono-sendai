@@ -1114,7 +1114,7 @@ async fn should_shape_ono_link_1_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "protocol", ty: "int", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "providers", ty: "list<string>", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "transport_fingerprint", ty: "string", required: false, nullable: true, unit: None },
-            harness::FieldContract { name: "transport_trust", ty: "enum<pinned|newly_pinned|unauthenticated>", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "transport_trust", ty: "enum<pinned|unauthenticated>", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "authenticated", ty: "bool", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "authorized", ty: "bool", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "runtime_user", ty: "string", required: false, nullable: true, unit: None },
