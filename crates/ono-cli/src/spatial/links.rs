@@ -102,6 +102,9 @@ pub struct Measurement {
     pub status: LatencyStatus,
     /// The structured failure, where the probe failed: the reason a status is what it is.
     pub failure: Option<ono_core::ErrorCode>,
+    /// Since when probes of this link have found what this one found: the moment the status
+    /// last changed, which is what a watch reports a transition by (ADR-1096).
+    pub since: jiff::Timestamp,
     /// The monotonic moment it was made, which decides reuse.
     taken: std::time::Instant,
 }
@@ -120,12 +123,27 @@ fn measured() -> &'static std::sync::Mutex<BTreeMap<String, Measurement>> {
 pub fn measurement(name: &str) -> Option<Measurement> {
     let facts = facts(name)?;
     let link = facts.prober.as_ref().map(prober_link)?;
+    measurement_of(name, link)
+}
+
+/// The latest probe of the link `link` known as `name`, where one was made.
+#[must_use]
+pub fn measurement_of(name: &str, link: u64) -> Option<Measurement> {
     measured()
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(name)
         .filter(|measurement| measurement.link == link)
         .cloned()
+}
+
+/// Whether this session has stopped following `name` (`detach link`).
+#[must_use]
+pub fn is_detached(name: &str) -> bool {
+    detached()
+        .read()
+        .ok()
+        .is_some_and(|left| left.contains_key(name))
 }
 
 #[cfg(feature = "remote")]
@@ -145,23 +163,40 @@ fn prober_link(prober: &Prober) -> u64 {
 /// measurements fresh: no probe storm however many views are drawn at once. Nothing is probed
 /// that is not connected and followed — a detached link is not this session's to keep asking.
 pub async fn measure() {
+    let due: Vec<(String, Prober)> = all()
+        .into_iter()
+        .filter(LinkFacts::reachable)
+        .filter_map(|facts| Some((facts.name.clone(), facts.prober.clone()?)))
+        .collect();
+    measure_links(due).await;
+}
+
+/// Probes these links as [`measure`] does: those measured within [`PROBE_REUSE`] are not asked
+/// again, the rest side by side within [`PROBE_TIMEOUT`], one pass at a time.
+#[cfg_attr(not(feature = "remote"), allow(clippy::unused_async))]
+pub async fn measure_links(links: Vec<(String, Prober)>) {
+    #[cfg(not(feature = "remote"))]
+    let _ = links;
     #[cfg(feature = "remote")]
     {
         static PASS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
         let _pass = PASS.lock().await;
-        let due: Vec<(String, Prober)> = all()
+        let due: Vec<(String, Prober)> = links
             .into_iter()
-            .filter(LinkFacts::reachable)
-            .filter_map(|facts| {
-                let prober = facts.prober.clone()?;
+            .filter_map(|(name, prober)| {
                 let fresh = measured()
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(&facts.name)
+                    .get(&name)
                     .is_some_and(|known| {
-                        known.link == prober.link() && known.taken.elapsed() < PROBE_REUSE
+                        // A link seen to have failed since it last answered is asked again at
+                        // once — which costs nothing, since a dead link sends no probe — rather
+                        // than reported reachable for the rest of the window.
+                        known.link == prober.link()
+                            && known.taken.elapsed() < PROBE_REUSE
+                            && (prober.is_alive() || known.status != LatencyStatus::Measured)
                     });
-                (!fresh).then_some((facts.name, prober))
+                (!fresh).then_some((name, prober))
             })
             .collect();
         let probes = due.into_iter().map(|(name, prober)| async move {
@@ -189,6 +224,7 @@ pub async fn measure() {
                     at,
                     status,
                     failure,
+                    since: at,
                     taken,
                 },
             )
@@ -197,7 +233,14 @@ pub async fn measure() {
         let mut known = measured()
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for (name, measurement) in results {
+        for (name, mut measurement) in results {
+            if let Some(previous) = known.get(&name)
+                && previous.link == measurement.link
+                && previous.status == measurement.status
+                && previous.failure == measurement.failure
+            {
+                measurement.since = previous.since;
+            }
             known.insert(name, measurement);
         }
     }

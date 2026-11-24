@@ -4,6 +4,8 @@
 //! a `latency` the shell measures with the link protocol's probe when the map is drawn — on
 //! demand, bounded, and reused for a few seconds — and states when it measured it. A link that
 //! cannot be probed says why, with a null rather than an old number.
+// The core build of #127 leaves this tier out (ADR-0910, ADR-0925).
+#![cfg(feature = "remote")]
 #![allow(
     clippy::expect_used,
     clippy::unwrap_used,
@@ -14,16 +16,9 @@
 use ono_testkit::ono;
 use serde_json::Value;
 
-const LINK: &str = "link host testbox --transport local";
+mod support;
 
-/// Every JSON document the script wrote, one per line.
-fn documents(run: &ono_testkit::Run) -> Vec<Value> {
-    run.stdout()
-        .lines()
-        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
-        .filter(Value::is_object)
-        .collect()
-}
+const LINK: &str = "link host testbox --transport local";
 
 /// The link-map entry for `name` in one `look --json` document.
 fn link_in(view: &Value, name: &str) -> Value {
@@ -47,7 +42,7 @@ fn field<'a>(link: &'a Value, name: &str) -> &'a Value {
 fn should_measure_a_live_latency_beside_the_handshake_round_trip_when_the_map_is_drawn() {
     let run = ono(&format!("{LINK}; look --json"));
     run.assert_success();
-    let views = documents(&run);
+    let views = support::json_lines(&run);
     let link = link_in(&views[0], "testbox");
 
     assert_eq!(
@@ -71,7 +66,7 @@ fn should_reuse_one_probe_for_every_view_drawn_within_the_reuse_window() {
     // storm. Three views drawn back to back carry one measurement, taken once.
     let run = ono(&format!("{LINK}; look --json; look --json; look --json"));
     run.assert_success();
-    let views = documents(&run);
+    let views = support::json_lines(&run);
     assert_eq!(views.len(), 3, "three views, got {:?}", run.stdout());
     let taken: Vec<Value> = views
         .iter()
@@ -87,7 +82,7 @@ fn should_reuse_one_probe_for_every_view_drawn_within_the_reuse_window() {
 fn should_state_no_latency_for_a_link_this_session_no_longer_follows() {
     let run = ono(&format!("{LINK}; detach link testbox; look --json"));
     run.assert_success();
-    let link = link_in(&documents(&run)[0], "testbox");
+    let link = link_in(&support::json_lines(&run)[0], "testbox");
     assert!(
         field(&link, "latency").is_null(),
         "a detached link is not probed, and no earlier figure stands in for one, got {link}"
@@ -104,7 +99,7 @@ fn should_not_carry_a_measurement_over_to_a_link_made_again() {
          --transport local; look --json"
     ));
     run.assert_success();
-    let views = documents(&run);
+    let views = support::json_lines(&run);
     let nas = link_in(&views[1], "nas01");
     assert!(
         field(&nas, "latency").is_null() && field(&nas, "latency_measured_at").is_null(),
@@ -119,7 +114,7 @@ fn should_say_a_link_without_an_agent_cannot_be_probed() {
     // unknown, and the reason is stated rather than a zero or the handshake figure.
     let run = ono("link host testbox --transport local --agentless; look --json");
     run.assert_success();
-    let link = link_in(&documents(&run)[0], "testbox");
+    let link = link_in(&support::json_lines(&run)[0], "testbox");
     assert!(field(&link, "latency").is_null(), "got {link}");
     assert_eq!(
         field(&link, "latency_status"),

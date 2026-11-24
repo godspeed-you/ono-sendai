@@ -756,6 +756,15 @@ impl Prober {
         probe(&inner, self.offered, timeout).await
     }
 
+    /// Whether the link is still up, as far as this side has seen: no transport failure, no
+    /// hang-up. Asking sends nothing.
+    #[must_use]
+    pub fn is_alive(&self) -> bool {
+        self.inner
+            .upgrade()
+            .is_some_and(|inner| inner.status().is_ok())
+    }
+
     /// Whether the far side offered the probe at all.
     #[must_use]
     pub const fn is_offered(&self) -> bool {

@@ -274,6 +274,13 @@ commands:
     privilege: none
     streaming: true
     phase: H
+    note: >-
+      Each poll reads the host table, and reading it probes the link this session holds to each
+      host (`ono.link.probe/1`, ADR-1096): `reachability` is `reachable`, `unreachable`,
+      `unauthorized` or `unknown`, with its reason and since when, and a transition is a
+      `changed` event. Nothing is dialled — a host without a held link is `unknown`, and `test
+      host` is what dials one. A probe waits at most two seconds and is reused for five, so a
+      fast `--every` does not multiply the traffic.
     examples:
       - watch host prod-db --every 30s
 

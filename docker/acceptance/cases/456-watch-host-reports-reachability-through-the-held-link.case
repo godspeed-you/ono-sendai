@@ -1,0 +1,66 @@
+# Issue #219 (a): `watch host` reported a snapshot of the host sources and never said whether a
+# host answered; ADR-0105 left probing "a later decision, taken when a cheap liveness check exists
+# on the link protocol". ADR-1095 built it, and ADR-1096 makes it the watch's: a host's
+# `reachability` is what the latest probe of the link held to it found, a transition is a
+# `changed` event, and nothing is dialled — a host without a held link is `unknown`.
+#
+# The far side that dies is a second agent listening on 127.0.0.2 with a home of its own; the
+# container has no network, and the loopback interface is all the case needs.
+case: watch host reports reachability through the held link, a dying peer as a change, and dials nothing
+timeout: 180
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -5 | sed 's/^/        /'
+    fi
+  }
+  client=$(mktemp -d); far=$(mktemp -d)
+  at() { local home="$1"; shift; HOME="$home" XDG_CONFIG_HOME="$home" ono -c "$*"; }
+
+  at "$client" 'link host testbox --transport local; add host lone --address 192.0.2.1; watch host --every 1s | take 2 | to jsonl' > /tmp/local.jsonl 2>/dev/null
+  at "$client" 'remove host lone' >/dev/null 2>&1
+
+  # A second agent, with its own identity, that the client may observe and has pinned.
+  HOME="$far" XDG_CONFIG_HOME="$far" ono --agent --listen 127.0.0.2:0 2> /tmp/far.log &
+  agent=$!
+  for _ in $(seq 1 200); do grep -q 'listening on' /tmp/far.log && grep -q 'host key' /tmp/far.log && break; sleep 0.05; done
+  address=$(sed -n 's/.*listening on \([^ ]*\).*/\1/p' /tmp/far.log | head -1)
+  key=$(sed -n 's/.*host key \([^ ]*\).*/\1/p' /tmp/far.log | head -1)
+  mine=$(HOME="$client" XDG_CONFIG_HOME="$client" ono --print-peer-key)
+  at "$far" "add client-key $mine --label case" >/dev/null 2>&1
+  at "$client" "add host-key 127.0.0.2 --fingerprint $key" >/dev/null 2>&1
+
+  at "$client" "link host $address --transport tcp; watch host --every 1s | to jsonl" > /tmp/watch.jsonl 2>/dev/null &
+  watcher=$!
+  for _ in $(seq 1 400); do grep -q '"reachability":"reachable"' /tmp/watch.jsonl && break; sleep 0.05; done
+  kill "$agent"; wait "$agent" 2>/dev/null
+  for _ in $(seq 1 400); do grep -q '"reachability":"unreachable"' /tmp/watch.jsonl && break; sleep 0.05; done
+  kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+
+  echo "== a host held over a link is probed (ADR-1096) =="
+  prove r1 "the local link's host is reachable, with since when" \
+    "grep -E '\"name\":\"testbox\"' /tmp/local.jsonl | grep -qE '\"reachability\":\"reachable\".*\"reachability_since\":\"[^\"]+\"'"
+  prove r2 "a host without a held link is unknown, and nothing was dialled to find out" \
+    "grep -E '\"name\":\"lone\"' /tmp/local.jsonl | grep -qE '\"reachability\":\"unknown\".*test host'"
+
+  echo "== a far side that dies is a change, not a stale snapshot =="
+  prove d1 "the agent over tcp was reachable first" \
+    "grep '^{' /tmp/watch.jsonl | head -1 | grep -qE '\"kind\":\"snapshot\".*\"reachability\":\"reachable\"'"
+  prove d2 "its death is one changed event to unreachable" \
+    "grep -E '\"reachability\":\"unreachable\"' /tmp/watch.jsonl | head -1 | grep -q '\"kind\":\"changed\"'"
+  prove d3 "and nothing was emitted while it stayed reachable" \
+    "[ \"\$(grep -c '\"reachability\":\"reachable\"' /tmp/watch.jsonl)\" = 1 ]"
+  echo done=ok
+exit: 0
+stdout-contains: PROVED r1
+stdout-contains: PROVED r2
+stdout-contains: PROVED d1
+stdout-contains: PROVED d2
+stdout-contains: PROVED d3
+stdout-contains: done=ok
+stdout-not-contains: FAILED
