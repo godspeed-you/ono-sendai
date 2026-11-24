@@ -205,17 +205,12 @@ impl State {
 }
 
 impl EventAnchors for SessionLedger {
-    fn instant_of(&self, id: &EventId) -> Option<Timestamp> {
-        let state = self.locked();
-        let mut matches = state
-            .events
-            .iter()
-            .filter(|event| event.event_id.as_str().starts_with(id.as_str()));
-        let first = matches.next()?;
-        matches
-            .next()
-            .is_none()
-            .then(|| first.times.presentation_instant())
+    fn instant_of(&self, id: &EventId) -> Result<Option<Timestamp>, ErrorValue> {
+        // The same lookup `event` answers with, so an ambiguous prefix is refused by name here as
+        // well rather than reading as "no such event" (§11.6, issue #142).
+        Ok(self
+            .event(id)?
+            .map(|event| event.times.presentation_instant()))
     }
 }
 

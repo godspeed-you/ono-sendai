@@ -110,6 +110,7 @@ pub fn find_events(
 pub struct EventRef {
     short: Arc<str>,
     full: EventId,
+    at: Timestamp,
 }
 
 impl EventRef {
@@ -123,6 +124,15 @@ impl EventRef {
     #[must_use]
     pub const fn event_id(&self) -> &EventId {
         &self.full
+    }
+
+    /// When the event it stands for happened, as the reader was shown it.
+    ///
+    /// Kept so that a reference whose event the ledger no longer holds can still say which
+    /// instant it was about, rather than reading as a reference to nothing (issue #142).
+    #[must_use]
+    pub const fn at(&self) -> Timestamp {
+        self.at
     }
 }
 
@@ -272,6 +282,7 @@ impl EventReferences {
         let minted = EventRef {
             short: Arc::from(&identity[..length]),
             full: event.event_id.clone(),
+            at: event.times.presentation_instant(),
         };
         self.issued.push(minted.clone());
         minted
@@ -280,11 +291,15 @@ impl EventReferences {
     /// The full identity a reference this session issued stands for.
     #[must_use]
     pub fn lookup(&self, reference: &str) -> Option<&EventId> {
-        let bare = reference.strip_prefix('@').unwrap_or(reference);
-        self.issued
-            .iter()
-            .find(|held| held.as_str() == bare)
-            .map(EventRef::event_id)
+        self.issued_as(reference).map(EventRef::event_id)
+    }
+
+    /// The reference this session issued under the spelling `reference`, if it issued one.
+    #[must_use]
+    pub fn issued_as(&self, reference: &str) -> Option<&EventRef> {
+        let bare = reference.trim();
+        let bare = bare.strip_prefix('@').unwrap_or(bare);
+        self.issued.iter().find(|held| held.as_str() == bare)
     }
 
     /// The event `reference` names, in this session or in the ledger (§11.6).

@@ -324,32 +324,16 @@ pub fn configure_from(settings: &crate::settings::Settings) {
         session::set_why_max_candidates(max);
     }
     recorder::configure(recorder_settings(settings));
-    let zone = jiff::tz::TimeZone::system();
-    let recording = settings.flag("temporal.recording.enabled").unwrap_or(false);
-    if let Ok(mut state) = session::session_state().try_lock() {
-        state.configure(zone, show_source_tags);
-        // §10.7: the in-memory ledger is bounded by `temporal.session.max_events`, and the bound
-        // is the configured one rather than the built-in default — `get recorder` states it as a
-        // fact, so it has to be one.
-        state.set_ledger(recorder::session_ledger());
-        // §10.2 makes persistent recording opt-in and off by default, and §33 makes
-        // `temporal.recording.enabled` the switch. A session that finds it on starts the
-        // recorder, which is what makes §56.6 true: events recorded by one `ono` are queryable
-        // from the next. `start recorder` turns it on for the running session; the setting is how
-        // a user says "and for the next one too".
-        //
-        // The recorder is built only when the setting says so, so §32.1's disabled path still
-        // touches no filesystem: below this line, a shell with recording off has done nothing.
-        if recording {
-            match recorder::start_recorder(&mut state, jiff::Timestamp::now()) {
-                // §31.7 and §44.3: a store that cannot be opened leaves the shell working with
-                // persistence off. The session ledger of §10.7 is what remains, and `get
-                // recorder` reports the health rather than the prompt reporting a failure the
-                // user did not ask for.
-                Ok(_) | Err(_) => {}
-            }
-        }
-    }
+    // The configuration is handed to the state rather than applied only if the lock happens to
+    // be free: a shell that skipped it whenever something else held the temporal state started
+    // without its recorder, read the empty session ledger, and said "no event retained" about a
+    // store it had never opened (issue #142). Applied now where the state is free, and otherwise
+    // by whoever takes the state next — before it reads anything.
+    session::configure(session::Configuration {
+        zone: jiff::tz::TimeZone::system(),
+        show_source_tags,
+        recording: settings.flag("temporal.recording.enabled").unwrap_or(false),
+    });
     session::install_evidence();
 }
 

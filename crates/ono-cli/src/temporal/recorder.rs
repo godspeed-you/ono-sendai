@@ -127,6 +127,19 @@ pub(crate) fn note_started(at: Option<Timestamp>) {
     }
 }
 
+/// Why the start the session's configuration asked for was refused, where it was (issue #142).
+fn start_refusal() -> &'static RwLock<Option<ErrorValue>> {
+    static REFUSAL: OnceLock<RwLock<Option<ErrorValue>>> = OnceLock::new();
+    REFUSAL.get_or_init(|| RwLock::new(None))
+}
+
+/// Keeps the refusal of a start nobody typed, so `get recorder` can say what happened.
+pub(crate) fn note_start_refusal(refusal: ErrorValue) {
+    if let Ok(mut held) = start_refusal().write() {
+        *held = Some(refusal);
+    }
+}
+
 /// The §10.4 and §10.7 limits this session was configured with (§33).
 ///
 /// Read once, from the resolved settings, and kept for every later `start recorder`: the settings
@@ -174,7 +187,35 @@ pub(crate) fn start_recorder(
     let outcome = recorder().start(&configured_settings(), now)?;
     state.set_shared_ledger(recorder().ledger());
     note_started(outcome.status.since);
+    if let Ok(mut held) = start_refusal().write() {
+        *held = None;
+    }
     Ok(outcome)
+}
+
+/// Why persistent recording is not running although it was asked for, where that is the case.
+///
+/// §44.3 lets a shell whose store could not be opened keep working on §10.7's session ledger, and
+/// the recorder keeps the reason as its diagnostic. A question that the session ledger cannot
+/// answer is then a question about a store that could not be read, and the answer has to say so
+/// rather than read as "nothing retained" (issue #142). `None` where recording was never asked
+/// for, or is running.
+pub(crate) fn persistence_failure(now: Timestamp) -> Option<ErrorValue> {
+    let status = recorder().status(now);
+    if status.running || status.health != ono_recorder::RecorderHealth::Failed {
+        return None;
+    }
+    // The diagnostic is the refusal's terse rendering — its message, then its help — and the
+    // help is the part that names the store and the reason.
+    let reason = status.diagnostic.as_deref().map_or(
+        "persistent recording was asked for and could not be brought up",
+        |diagnostic| {
+            diagnostic
+                .split_once('\n')
+                .map_or(diagnostic, |(_, help)| help)
+        },
+    );
+    Some(error::store_unavailable(reason))
 }
 
 /// One turn of the recorder's own maintenance, where the shell has a turn to give (§10.4, §31.8).
@@ -198,6 +239,14 @@ pub(crate) fn maintain(now: Timestamp) {
 /// is writing coverage and gaps of its own (ADR-0777).
 fn status_record(state: &TemporalState, now: Timestamp) -> Result<Value, ErrorValue> {
     let mut status = recorder().status(now);
+    // §43.4 and issue #142: a start the configuration asked for and the recorder refused is part
+    // of the recorder's health, not something to forget. The recorder's own diagnostic wins
+    // where it has one, because it is the newer word.
+    if status.diagnostic.is_none()
+        && let Some(refusal) = start_refusal().read().ok().and_then(|held| held.clone())
+    {
+        status.diagnostic = Some(Arc::from(refusal.render_terse().as_str()));
+    }
     let retention = state.ledger().retention();
     status.events = retention.events;
     status.size = retention.stored_size;

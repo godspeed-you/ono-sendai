@@ -7070,7 +7070,7 @@ Resolve a time selector and evaluate everything that follows at that instant.
 |---|---|---|
 | `selector` | `string` | The instant to stand at: an RFC 3339 timestamp, a local date and time, a local time today, a negative relative duration, or `event @e42` (v0.5 §4.4). Written as words so `at event @e42` and `at 2026-08-31 12:17:00` both read as themselves. *(repeatable)* |
 
-**Note.** §12.1: the selector and its coverage are resolved before the session moves, so an unresolvable selector leaves the coordinate exactly where it was. §4.2: only the temporal coordinate changes — the spatial place is untouched.
+**Note.** §12.1: the selector and its coverage are resolved before the session moves, so an unresolvable selector leaves the coordinate exactly where it was. §4.2: only the temporal coordinate changes — the spatial place is untouched. `event @e42` resolves exactly as `inspect event` and `why event` do, and a reference that does not resolve says why (ADR-1065): `temporal.invalid_time` where no retained event matches, `temporal.out_of_retention` where this session showed the event and the ledger no longer holds it, `temporal.ambiguous_event` where it names several, and the store's own refusal (`temporal.store_unavailable`, …) where the store could not be read or persistent recording was asked for and could not be brought up.
 
 **Examples**
 
@@ -7319,7 +7319,7 @@ One event with its times, its subject and the evidence it rests on.
 
 | name | type | meaning |
 |---|---|---|
-| `reference` | `string` | The event reference a timeline printed, `@e42` — a prefix of the content digest, refused with `temporal.ambiguous_event` where it names more than one (v0.5 §11.6). |
+| `reference` | `string` | The event reference a timeline printed, `@e42` — a prefix of the content digest, refused with `temporal.ambiguous_event` where it names more than one (v0.5 §11.6), `temporal.out_of_retention` where this session showed it and the ledger no longer holds it, `temporal.store_unavailable` where the store it would be in could not be read, and `temporal.invalid_time` where no retained event matches (ADR-1065). |
 
 **Examples**
 

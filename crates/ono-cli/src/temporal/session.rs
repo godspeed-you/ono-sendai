@@ -199,6 +199,12 @@ impl TemporalState {
         &mut self.references
     }
 
+    /// The same references, for a reader that only resolves them.
+    #[must_use]
+    pub fn issued_references(&self) -> &EventReferences {
+        &self.references
+    }
+
     /// The zone wall clocks are displayed in (§25.3).
     #[must_use]
     pub fn zone(&self) -> &TimeZone {
@@ -244,9 +250,77 @@ pub fn session_state() -> &'static Mutex<TemporalState> {
     STATE.get_or_init(|| Arc::new(Mutex::new(TemporalState::new(TimeZone::system()))))
 }
 
-/// Borrows this process's temporal state.
+/// Borrows this process's temporal state, configured.
 pub async fn temporal_session() -> MutexGuard<'static, TemporalState> {
-    session_state().lock().await
+    let mut state = session_state().lock().await;
+    apply_pending(&mut state);
+    state
+}
+
+/// Borrows this process's temporal state where it is free now, configured.
+///
+/// For the synchronous readers that cannot wait for it (`--at` on a provider query).
+pub fn try_temporal_session() -> Option<MutexGuard<'static, TemporalState>> {
+    let mut state = session_state().try_lock().ok()?;
+    apply_pending(&mut state);
+    Some(state)
+}
+
+/// The session's resolved `temporal.*` configuration, as `configure_from` reads it (§33).
+#[derive(Debug, Clone)]
+pub struct Configuration {
+    /// The zone wall clocks are read and displayed in (§25.3).
+    pub zone: TimeZone,
+    /// `temporal.ui.show_source_tags`.
+    pub show_source_tags: bool,
+    /// `temporal.recording.enabled` (§10.2).
+    pub recording: bool,
+}
+
+/// A configuration not yet applied, because the state was held when it arrived.
+fn pending() -> &'static std::sync::Mutex<Option<Configuration>> {
+    static PENDING: OnceLock<std::sync::Mutex<Option<Configuration>>> = OnceLock::new();
+    PENDING.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// Hands the session its configuration: applied at once where the state is free, and otherwise
+/// by the next holder of the state, before that holder reads anything (issue #142).
+///
+/// Never by waiting for the lock. The caller is synchronous and may be running under a guard of
+/// the same state further up its own stack, where waiting would never end.
+pub fn configure(configuration: Configuration) {
+    if let Ok(mut held) = pending().lock() {
+        *held = Some(configuration);
+    }
+    if let Ok(mut state) = session_state().try_lock() {
+        apply_pending(&mut state);
+    }
+}
+
+/// Applies the configuration waiting for this state, if one is.
+fn apply_pending(state: &mut TemporalState) {
+    let Some(configuration) = pending().lock().ok().and_then(|mut held| held.take()) else {
+        return;
+    };
+    state.configure(configuration.zone, configuration.show_source_tags);
+    // §10.7: the in-memory ledger is bounded by `temporal.session.max_events`, and the bound is
+    // the configured one rather than the built-in default — `get recorder` states it as a fact,
+    // so it has to be one.
+    state.set_ledger(super::recorder::session_ledger());
+    // §10.2 makes persistent recording opt-in and off by default, and §33 makes
+    // `temporal.recording.enabled` the switch. A session that finds it on starts the recorder,
+    // which is what makes §56.6 true: events recorded by one `ono` are queryable from the next.
+    //
+    // The recorder is built only when the setting says so, so §32.1's disabled path still touches
+    // no filesystem: below this line, a shell with recording off has done nothing.
+    if configuration.recording {
+        // §31.7 and §44.3: a store that cannot be opened leaves the shell working with
+        // persistence off, and `get recorder` reports the health and the reason. A refusal the
+        // recorder raises instead is kept for `get recorder` too, rather than dropped (#142).
+        if let Err(refusal) = super::recorder::start_recorder(state, Timestamp::now()) {
+            super::recorder::note_start_refusal(refusal);
+        }
+    }
 }
 
 /// The committed coordinate, readable without the lock.
@@ -448,4 +522,45 @@ impl crate::spatial::TemporalEvidence for SessionEvidence {
 /// which §55.9 names as the failure that makes the whole feature invalid. It is idempotent.
 pub fn install_evidence() {
     crate::spatial::historical::install(Arc::new(SessionEvidence));
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+
+    #[tokio::test]
+    async fn should_apply_the_configuration_when_the_state_was_busy_as_it_arrived() {
+        // Issue #142: a configuration that met a held temporal state was skipped whole, and the
+        // shell ran without the recorder its settings asked for. It is applied by the next holder
+        // instead, before that holder reads anything.
+        let busy = session_state().lock().await;
+        let zone = TimeZone::get("Asia/Kolkata").expect("the zone database has Asia/Kolkata");
+        configure(Configuration {
+            zone: zone.clone(),
+            show_source_tags: true,
+            recording: false,
+        });
+        drop(busy);
+
+        let applied = temporal_session()
+            .await
+            .zone()
+            .iana_name()
+            .map(str::to_owned);
+        configure(Configuration {
+            zone: TimeZone::system(),
+            show_source_tags: true,
+            recording: false,
+        });
+        assert_eq!(
+            applied.as_deref(),
+            Some("Asia/Kolkata"),
+            "the configuration that arrived while the state was held is the one in force"
+        );
+    }
 }

@@ -133,6 +133,37 @@ pub fn out_of_retention(at: Timestamp, earliest: Timestamp) -> ErrorValue {
     .with_metadata("earliest", Value::Timestamp(earliest))
 }
 
+/// An event this session showed, which the ledger it reads no longer holds (§34 E1303, §11.6).
+///
+/// The reference was issued from a rendering, so the event was retained when the reader saw it;
+/// that it is not retained now is a fact about retention, and saying "no event with that
+/// reference" instead would read as a typo (issue #142). `earliest` is the earliest instant the
+/// ledger still holds, `None` where it holds nothing.
+#[must_use]
+pub fn event_out_of_retention(
+    reference: &str,
+    at: Timestamp,
+    earliest: Option<Timestamp>,
+) -> ErrorValue {
+    let held = earliest.map_or_else(
+        || "the ledger this session reads now retains no events".to_owned(),
+        |earliest| format!("retention holds from {earliest}"),
+    );
+    ErrorValue::new(
+        ErrorCode::TemporalOutOfRetention,
+        format!(
+            "`{reference}` was shown in this session, and the event it names ({at}) is no longer \
+             retained"
+        ),
+    )
+    .with_help(format!(
+        "{held}; `get recorder` shows the policy in force and whether persistent recording is on"
+    ))
+    .with_metadata("reference", Value::string(reference))
+    .with_metadata("at", Value::Timestamp(at))
+    .with_metadata("earliest", earliest.map_or(Value::Null, Value::Timestamp))
+}
+
 /// A mutation attempted while historical context is active (§34 E1304, §4.7).
 #[must_use]
 pub fn read_only(command: &str) -> ErrorValue {

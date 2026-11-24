@@ -353,13 +353,7 @@ async fn why_request(
     match subject.split_first() {
         Some((head, rest)) if head == "event" => {
             let reference = rest.first().map(String::as_str).unwrap_or_default();
-            let ledger = state.ledger_handle();
-            let event = state
-                .references()
-                .resolve(reference, ledger.as_ref())?
-                .ok_or_else(|| {
-                    error::invalid_time(reference, "no event with that reference is retained")
-                })?;
+            let event = super::coordinate::retained_event(state, reference, Timestamp::now())?;
             Ok(WhyRequest::event(&event.event_id))
         }
         Some((head, rest)) if head == "field" => {
@@ -521,14 +515,8 @@ impl CommandImpl for InspectEvent {
                 .and_then(|value| value.as_str().ok())
                 .unwrap_or_default()
                 .to_owned();
-            let mut state = temporal_session().await;
-            let ledger = state.ledger_handle();
-            let event = state
-                .references()
-                .resolve(&reference, ledger.as_ref())?
-                .ok_or_else(|| {
-                    error::invalid_time(&reference, "no event with that reference is retained")
-                })?;
+            let state = temporal_session().await;
+            let event = super::coordinate::retained_event(&state, &reference, Timestamp::now())?;
             let record = ono_temporal_core::value::event_record_with_reference(
                 &event,
                 Some(reference.trim_start_matches('@')),

@@ -38,7 +38,13 @@ commands:
     note: >-
       §12.1: the selector and its coverage are resolved before the session moves, so an
       unresolvable selector leaves the coordinate exactly where it was. §4.2: only the temporal
-      coordinate changes — the spatial place is untouched.
+      coordinate changes — the spatial place is untouched. `event @e42` resolves exactly as
+      `inspect event` and `why event` do, and a reference that does not resolve says why
+      (ADR-1065): `temporal.invalid_time` where no retained event matches,
+      `temporal.out_of_retention` where this session showed the event and the ledger no longer
+      holds it, `temporal.ambiguous_event` where it names several, and the store's own refusal
+      (`temporal.store_unavailable`, …) where the store could not be read or persistent recording
+      was asked for and could not be brought up.
     examples:
       - at -10m
       - at 12:17
@@ -216,7 +222,7 @@ commands:
     output: ono.temporal-event/1
     provider_capability: null
     selectors:
-      - {name: reference, type: string, doc: "The event reference a timeline printed, `@e42` — a prefix of the content digest, refused with `temporal.ambiguous_event` where it names more than one (v0.5 §11.6)."}
+      - {name: reference, type: string, doc: "The event reference a timeline printed, `@e42` — a prefix of the content digest, refused with `temporal.ambiguous_event` where it names more than one (v0.5 §11.6), `temporal.out_of_retention` where this session showed it and the ledger no longer holds it, `temporal.store_unavailable` where the store it would be in could not be read, and `temporal.invalid_time` where no retained event matches (ADR-1065)."}
     options: []
     privilege: none
     streaming: false
