@@ -63,6 +63,7 @@ mod handshake;
 mod limits;
 mod link;
 mod message;
+mod refusal;
 mod service;
 mod store_file;
 mod trust;

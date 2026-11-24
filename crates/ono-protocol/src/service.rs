@@ -537,7 +537,7 @@ pub async fn refuse<T: Transport>(
     let mut reader = FrameReader::new(reader, limits.clone());
     let frames = spawn_writer(writer, limits.clone());
     let _ = tokio::time::timeout(limits.handshake_timeout(), reader.next()).await;
-    let reject = Reject::new(refusal.code(), refusal.message().to_owned());
+    let reject = Reject::refusing(refusal);
     let payload = encode_message(&Message::Reject(reject), limits).map_err(ErrorValue::from)?;
     let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));
     frames.hangup();
@@ -623,7 +623,7 @@ where
                 AuditKind::UnknownClientRefused
             };
             record(AuditEvent::new(kind, "unaccepted", "denied").with_error_code(refusal.code()));
-            let reject = Reject::new(refusal.code(), refusal.message().to_owned());
+            let reject = Reject::refusing(&refusal);
             let payload =
                 encode_message(&Message::Reject(reject), &limits).map_err(ErrorValue::from)?;
             let _ = frames.send(Frame::new(FrameKind::Reject, 0, payload));

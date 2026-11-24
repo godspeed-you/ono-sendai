@@ -1,0 +1,45 @@
+# Issue #182, ADR-1056. `docs/contracts/hardening/refusals.yaml` declares the fields that explain
+# E1202 — the refused fingerprint and whether the agent has a store at all — and since v0.6.3
+# (ADR-0938) a refusal shows its declared fields under its message. Over a link they never
+# arrived: the `Reject` frame carried a code and a sentence. It now carries the explaining fields
+# the census lets cross the wire, so an unauthorized client can tell an agent that authorizes
+# nobody yet from one that lists somebody else, and learns neither who that is nor where the store
+# lives.
+case: a refused client is told whether the agent authorizes anybody, and nothing more
+timeout: 180
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  B=$(mktemp -d)
+  export B
+  UNKNOWN=$(ONO_CONFIG_DIR=$B ono --print-peer-key)
+
+  ono --agent --listen 127.0.0.1:7751 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 50); do grep -q 'listening on' "$HOME/agent.log" && break; sleep 0.2; done
+  HOSTKEY=$(sed -n 's/.*host key //p' "$HOME/agent.log" | head -1)
+  ONO_CONFIG_DIR=$B ono -c "add host-key 127.0.0.1 --fingerprint $HOSTKEY | select status | to json"
+
+  echo "== no store on the agent's host: the refusal says so =="
+  ONO_CONFIG_DIR=$B ono -c 'link host 127.0.0.1:7751 --transport tcp' 2> "$HOME/first.err" || true
+  grep -E '^  (peer_fingerprint|store_present): ' "$HOME/first.err"
+  test "$(sed -n 's/^  peer_fingerprint: //p' "$HOME/first.err")" = "$UNKNOWN" && echo "the refused fingerprint is the client's own"
+
+  echo "== a store that lists somebody else: the refusal says that instead =="
+  ono -c "add client-key $(ono --print-peer-key) --label somebody-else | select status | to json"
+  ONO_CONFIG_DIR=$B ono -c 'try { link host 127.0.0.1:7751 --transport tcp } catch e { $e | select code metadata | to json }'
+
+  kill "$AGENT" 2>/dev/null || true
+  wait "$AGENT" 2>/dev/null || true
+  echo "== the agent's own audit line names the same decision =="
+  grep -c 'error_code=remote.unauthorized' "$HOME/agent.log" | sed 's/^/refusals audited: /'
+exit: 0
+stdout-contains:   store_present: false
+stdout-contains: the refused fingerprint is the client's own
+stdout-contains: "store_present":true
+stdout-contains: refusals audited: 2
+stdout-not-contains: somebody-else
+stdout-not-contains: authorized_clients
+stdout-not-contains: panicked
