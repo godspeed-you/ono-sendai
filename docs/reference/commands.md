@@ -1545,7 +1545,7 @@ Copy file resources.
 | name | type | meaning |
 |---|---|---|
 | `source` | `path` | What to copy. |
-| `destination` | `path` | Where to copy it. |
+| `destination` | `path` | Where to copy it: the word after the source, with no connective between them — `copy file ./a.txt ./b.txt` (ADR-1083). |
 
 **Options**
 
