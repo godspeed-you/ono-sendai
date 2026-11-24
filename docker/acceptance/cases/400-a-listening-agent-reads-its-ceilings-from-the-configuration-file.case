@@ -1,0 +1,61 @@
+# Issue #190, ADR-1042. The `limits.remote_*` ceilings are ordinary settings, and a listening agent
+# reads them where the shell does: `config.ono` first, the `ONO_*` environment over it. Before
+# v0.6.6 the agent read only the environment, so a ceiling written in the file was a figure
+# `inspect limits` printed and the listener ignored. A configuration the agent cannot read in full
+# refuses the listener rather than falling back to Appendix A's wider figures (v0.4.1 §55.2).
+case: a listening agent enforces the ceilings config.ono sets, and refuses one it cannot read
+timeout: 120
+env: NO_COLOR=1
+run: |
+  HOME=$(mktemp -d)
+  export HOME
+  export XDG_CONFIG_HOME="$HOME"
+  mkdir -p "$HOME/ono"
+  printf 'set config limits.remote_pending_handshakes = 1\nset config limits.remote_handshake_timeout_ms = 60000\nset config limits.remote_connections = 3\n' > "$HOME/ono/config.ono"
+
+  echo "== the summary prints the file's ceilings =="
+  ono --agent --listen 127.0.0.1:7741 2> "$HOME/agent.log" &
+  AGENT=$!
+  for _ in $(seq 1 100); do grep -q 'handshake timeout' "$HOME/agent.log" && break; sleep 0.2; done
+  sed -n 's/^ono: //p' "$HOME/agent.log" | grep -E '^maximum|^handshake'
+
+  echo "== and the listener enforces them: one pending handshake, the next peer is closed =="
+  exec 3<>/dev/tcp/127.0.0.1/7741
+  exec 4<>/dev/tcp/127.0.0.1/7741
+  head -c 1 <&4 > /dev/null
+  echo "the peer over the file's pending-handshake ceiling was closed at once"
+  exec 3<&-
+  exec 4<&-
+  kill "$AGENT" 2>/dev/null || true
+  wait "$AGENT" 2>/dev/null || true
+
+  echo "== the environment is the later layer =="
+  ONO_LIMITS_REMOTE_CONNECTIONS=5 ono --agent --listen 127.0.0.1:7742 2> "$HOME/agent2.log" &
+  AGENT=$!
+  for _ in $(seq 1 100); do grep -q 'handshake timeout' "$HOME/agent2.log" && break; sleep 0.2; done
+  grep -o 'maximum connections [0-9]*$' "$HOME/agent2.log" | head -1 | sed 's/^/environment: /'
+  kill "$AGENT" 2>/dev/null || true
+  wait "$AGENT" 2>/dev/null || true
+
+  echo "== a ceiling out of range refuses the listener =="
+  printf 'set config limits.remote_connections = 0\n' > "$HOME/ono/config.ono"
+  if ono --agent --listen 127.0.0.1:7743 2> "$HOME/agent3.log"; then
+    echo "the agent started"
+  else
+    echo "the agent refused with status $?"
+  fi
+  grep -c 'listening on' "$HOME/agent3.log" | sed 's/^/listening lines: /'
+  grep -o 'not listening: the configuration has [0-9]* problem' "$HOME/agent3.log"
+  grep -o 'limits.remote_connections. accepts 1 to 65536' "$HOME/agent3.log" | head -1
+exit: 0
+stdout-contains: maximum connections 3
+stdout-contains: maximum pending handshakes 1
+stdout-contains: handshake timeout 60s
+stdout-contains: the peer over the file's pending-handshake ceiling was closed at once
+stdout-contains: environment: maximum connections 5
+stdout-contains: the agent refused with status 1
+stdout-contains: listening lines: 0
+stdout-contains: not listening: the configuration has 1 problem
+stdout-contains: limits.remote_connections` accepts 1 to 65536
+stdout-not-contains: the agent started
+stdout-not-contains: panicked

@@ -69,7 +69,7 @@ fn main() -> ExitCode {
             }
         }
         #[cfg(feature = "remote")]
-        Invocation::Agent(_, agent_options) => {
+        Invocation::Agent(options, agent_options) => {
             // The remote end of a link (spec §21.2): serve this machine's providers over
             // stdin/stdout. The transport already carried authentication (ADR-0037), and the
             // agent talks the protocol and nothing else — no prompt, no terminal, no config
@@ -120,7 +120,12 @@ fn main() -> ExitCode {
                 // `provider_capability` field `docs/contracts/commands/` already declares. A peer
                 // never says which capability it needs; this side resolves it (§65.2).
                 let config = with_action_capabilities(config);
-                return runtime.block_on(serve_authenticated(address, &identity, config));
+                // Before the store and the socket: a ceiling the agent cannot apply as written
+                // must stop it before it is reachable (§2.3, §55.2, ADR-1042).
+                let Some(limits) = configured_limits(&options) else {
+                    return ExitCode::from(ExitStatus::FAILURE);
+                };
+                return runtime.block_on(serve_authenticated(address, &identity, config, limits));
             }
             return runtime.block_on(ono_remote::agent_main(
                 tokio::io::stdin(),
@@ -324,6 +329,7 @@ async fn serve_authenticated(
     address: &str,
     identity: &ono_remote::PeerIdentity,
     config: ono_remote::AgentConfig,
+    limits: ono_protocol::Limits,
 ) -> ExitCode {
     // Before the socket, not after: an agent that bound first and then discovered it had no
     // usable policy would have been reachable while it decided (§2.3, §59.5).
@@ -353,9 +359,8 @@ async fn serve_authenticated(
         }
     };
 
-    // The agent enforces the ceilings the configuration layer declares, so a figure an operator
+    // The agent enforces the ceilings the configuration layers declare, so a figure an operator
     // set is the figure the summary prints and the listener applies (§12.4, §52.2, ADR-0501).
-    let limits = configured_limits();
     print_startup_summary(bound, identity, store.entries().len(), &limits);
 
     let agent = ono_remote::ListeningAgent::new(listener, config)
@@ -419,29 +424,44 @@ fn print_startup_summary(
 /// set moves it — through the same catalogue `Settings::assign` range-checks and `inspect limits`
 /// reports, so the figure a user reads is the figure the listener applies (ADR-0456, ADR-0461).
 ///
-/// Agent mode reads the environment layer and no file, which is what agent mode does for every
-/// other setting: `ono --agent` is a protocol endpoint and has never had a configuration file
-/// execution surface. Honouring `config.ono` here as well is recorded for the board.
+/// The settings are read the way the shell reads them — `config.ono` (or the file `--config`
+/// names, or none under `--no-config`), then the `ONO_*` variables, the environment winning — by
+/// the loader the shell itself uses (ADR-1042). Any problem on the way refuses: the agent cannot
+/// know whether what it failed to read was a ceiling, and falling back to Appendix A would widen
+/// a limit the operator narrowed (§55.2). `None` once the refusal has been said.
 #[cfg(feature = "remote")]
-fn configured_limits() -> ono_protocol::Limits {
-    let mut settings = ono_cli::settings::Settings::new();
-    let variables: std::collections::BTreeMap<std::ffi::OsString, std::ffi::OsString> =
-        std::env::vars_os().collect();
-    settings.apply_environment(&variables, &mut |error| {
-        // §55.2: a security-sensitive agent limit never silently becomes unlimited because a
-        // value failed to parse. Nothing was stored, so the declared default stays in force, and
-        // the operator is told which variable they have to fix.
-        ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
-    });
+fn configured_limits(options: &ono_cli::invocation::Options) -> Option<ono_protocol::Limits> {
+    let reporter = Reporter::new(Presentation::choose(std::io::stderr().is_terminal(), &[]));
+    let mut session = Session::new(false);
+    let problems = config::load_settings(&mut session, options, &reporter);
+    if !problems.is_empty() {
+        let name = ono_core::SHORT_NAME;
+        ono_core::diagnostic!(
+            "{name}: not listening: the configuration has {} problem(s), and an agent does not \
+             open a socket on ceilings it could not read (v0.4.1 section 55.2)",
+            problems.len()
+        );
+        for problem in &problems {
+            ono_core::diagnostic!("{name}: {}", problem.message());
+        }
+        ono_core::diagnostic!(
+            "{name}: fix the setting named above, or start with `ono --no-config --agent \
+             --listen` to use the built-in ceilings deliberately"
+        );
+        return None;
+    }
+    let settings = session.settings();
     let read =
-        |key: &str| u32::try_from(ono_cli::limits::magnitude(&settings, key)).unwrap_or(u32::MAX);
-    ono_protocol::Limits::default()
-        .with_max_connections(read("limits.remote_connections"))
-        .with_max_pending_handshakes(read("limits.remote_pending_handshakes"))
-        .with_max_connections_per_client(read("limits.remote_connections_per_client"))
-        .with_handshake_timeout(std::time::Duration::from_millis(
-            ono_cli::limits::magnitude(&settings, "limits.remote_handshake_timeout_ms"),
-        ))
+        |key: &str| u32::try_from(ono_cli::limits::magnitude(settings, key)).unwrap_or(u32::MAX);
+    Some(
+        ono_protocol::Limits::default()
+            .with_max_connections(read("limits.remote_connections"))
+            .with_max_pending_handshakes(read("limits.remote_pending_handshakes"))
+            .with_max_connections_per_client(read("limits.remote_connections_per_client"))
+            .with_handshake_timeout(std::time::Duration::from_millis(
+                ono_cli::limits::magnitude(settings, "limits.remote_handshake_timeout_ms"),
+            )),
+    )
 }
 
 /// Writes an invocation flag's one answer to standard output.
