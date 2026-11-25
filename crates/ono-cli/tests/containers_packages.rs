@@ -1117,3 +1117,51 @@ fn should_refuse_an_update_and_a_named_version_together() {
         "nothing was asked of the package manager"
     );
 }
+
+#[test]
+fn should_refuse_a_package_name_a_manager_would_read_as_an_option_or_an_instruction() {
+    // Review finding SEC-C-1 (ADR-1084, amended): a name reached apt-get, dpkg-query, dnf, zypper
+    // and rpm as written and without `--`, so a "name" beginning with `-` was read as an option
+    // and apt read `curl-` as "remove curl" and `xz.` as a pattern over every package. Every such
+    // name is refused with type.mismatch before any manager runs — the database query included.
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+    let log = directory.path().join("dpkg-query.log");
+    executable(
+        &bin.join("dpkg-query"),
+        &format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\nprintf 'curl\\t8.5.0-2\\tinstall ok installed\\n'\nexit 0\n",
+            log.display()
+        ),
+    );
+    for script in [
+        "add package \"--allow-unauthenticated\" | to json",
+        "add package \"-oDebug::pkgProblemResolver=1\" | to json",
+        "remove package \"curl-\" | to json",
+        "set package \"curl-\" --latest | to json",
+        "add package \"xz.\" | to json",
+    ] {
+        let run = ono_with_path(&bin, script);
+        assert!(
+            !run.status().is_success() && run.output().contains("Ono-Sendai-E0201"),
+            "SEC-C-1: `{script}` is refused as not one package. Got {:?}",
+            run.output()
+        );
+        // Resolving a selector may ask the database about the name — after `--`, as a name.
+        let asked = std::fs::read_to_string(&log).unwrap_or_default();
+        let name = script
+            .split('"')
+            .nth(1)
+            .expect("the script quotes the name");
+        for (at, _) in asked.match_indices(name) {
+            assert!(
+                asked[..at].ends_with("-- "),
+                "`{script}`: dpkg-query is handed the name only after `--`: {asked:?}"
+            );
+        }
+        assert!(
+            !directory.path().join("apt-get.log").exists(),
+            "`{script}`: apt-get never ran"
+        );
+    }
+}

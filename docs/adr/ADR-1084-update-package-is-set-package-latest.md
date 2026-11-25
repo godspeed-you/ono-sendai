@@ -31,10 +31,27 @@ cannot spell (`latest` is a legal version string for some managers).
   its repositories offer. It never installs a package that is not installed, and it is refused
   together with `--version` (one destination per transition).
 - The providers run the manager's own upgrade-only form: `apt-get install --only-upgrade -y
-  <name>` (dpkg), `dnf upgrade -y <name>` (dnf/yum), `zypper --non-interactive update <name>`
-  (zypper). As every package mutation, it runs only as root and answers `io.permission_denied`
+  --no-remove -- <name>` (dpkg), `dnf upgrade -y -- <name>` (dnf/yum), `zypper --non-interactive
+  update -- <name>` (zypper). As every package mutation, it runs only as root and answers `io.permission_denied`
   otherwise, before any manager is started (ADR-0115 §5); `changed` is the installed version before
   against after.
+- *Amended (review findings SEC-C-1, SEC2-5, COR-C5).* Every name and version reaches a manager
+  as exactly one package, for every package operation, both providers, and every way a name
+  arrives (a piped record's identity, a creating verb's selector, `resolve`'s pass-through):
+  `act` checks it before any process starts — the root check and `rpm -q`/`dpkg-query` included —
+  and refuses with `type.mismatch` (E0201). dpkg/apt: deb-control(5)'s grammar, no trailing `-` or
+  `+` (apt reads them as "remove" and "install"), and a name with a `.` only where dpkg has that
+  exact name installed (apt reads a dotted name no package has as a regular expression — `xz.`
+  selects every package with `xz` in its name), so `add package python3.11` is refused on apt
+  where it is not installed; a local archive (`/…/x.deb`, `./x.deb`) is let through for `add`.
+  rpm: rpm's name grammar (no globs, provides or paths — dnf and zypper read `*`, `cu*`,
+  `/usr/bin/curl`, `pkgconfig(x)` as selections). A version is letters, digits and `.+~:-_^`.
+  Every built command puts `--` before the package (`apt-get install -y --no-remove -- curl`,
+  `apt-mark hold -- curl`, `dpkg-query -W -f … -- curl`, `dnf upgrade -y -- curl`,
+  `zypper --non-interactive update -- curl`, `rpm -q --queryformat … -- curl`), and apt's installs
+  carry `--no-remove`. `set --latest` of a package that is not installed is refused with
+  `io.not_found` before any manager runs, in both providers — `apt-get install --only-upgrade`
+  skips a missing package with status 0, which the action reported as success.
 - Planning is the established path, unchanged: `plan set package openssl --latest` resolves the
   package through the provider and freezes its installed version into the identity and the
   §7.2 `version` precondition, takes `ono.package.set`'s declared effects, risk and verification

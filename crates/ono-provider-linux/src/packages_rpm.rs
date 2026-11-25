@@ -39,8 +39,8 @@ use quick_xml::{Reader, XmlVersion};
 
 use crate::package_sources::{self, Source, SourcePlan};
 use crate::packages::{
-    Listed, Mutation, Plan, manager_failure, on_path, package_name, package_record, package_schema,
-    run,
+    Listed, Mutation, Plan, is_version_text, manager_failure, not_installed, not_one_package,
+    on_path, package_name, package_record, package_schema, run,
 };
 
 /// The id this provider signs its records with.
@@ -529,7 +529,11 @@ async fn installed(rpm: &Rpm, name: Option<&str>) -> Result<Vec<Listed>, ErrorVa
         "--queryformat".to_owned(),
         LISTING_FORMAT.to_owned(),
     ];
-    arguments.extend(name.map(str::to_owned));
+    if let Some(name) = name {
+        // SEC-C-1: a name is never read as one of rpm's options.
+        arguments.push("--".to_owned());
+        arguments.push(name.to_owned());
+    }
     let answer = run(&rpm.rpm, &arguments).await?;
     match answer.status {
         Some(0) => parse_listing(&answer.stdout),
@@ -822,8 +826,24 @@ fn is_older(wanted: &str, installed: &str) -> bool {
     }
 }
 
-/// The front end invocations a `package` action asks for.
+/// The front end invocations a `package` action asks for, each with `--` before the package it
+/// names — the last argument of every one — so no name is read as an option (SEC-C-1).
 fn mutation_of(
+    action: &Action,
+    rpm: &Rpm,
+    name: &str,
+    installed: Option<&str>,
+) -> Result<Mutation, ErrorValue> {
+    let mut mutation = unseparated_mutation_of(action, rpm, name, installed)?;
+    for (_, arguments) in &mut mutation.commands {
+        let at = arguments.len().saturating_sub(1);
+        arguments.insert(at, "--".to_owned());
+    }
+    Ok(mutation)
+}
+
+/// [`mutation_of`]'s invocations, the package last in each.
+fn unseparated_mutation_of(
     action: &Action,
     rpm: &Rpm,
     name: &str,
@@ -1144,10 +1164,29 @@ impl Provider for RpmPackageProvider {
         }
         let rpm = self.manager()?;
         let name = package_name(action.target())?.to_owned();
+        // SEC-C-1, SEC2-5: dnf and zypper read globs, provides and paths as selections, and
+        // every front end reads a leading `-` as an option; nothing but one package's name and
+        // version reaches them, checked before any process starts.
+        if !is_rpm_package_name(&name) {
+            return Err(not_one_package("package name", &name, "rpm"));
+        }
+        if let Some(Value::String(version)) = action.argument("version")
+            && !is_version_text(version)
+        {
+            return Err(not_one_package("version", version, "rpm"));
+        }
         // What is installed decides which direction a `--version` points, and it is the same
         // reading the outcome compares against afterwards (ADR-0560).
         let before = installed_version(&rpm, &name).await?;
         let mutation = mutation_of(action, &rpm, &name, before.as_deref())?;
+        // COR-C5: an update of a package that is not installed is refused before any front end
+        // runs, as the dpkg provider refuses it.
+        if before.is_none()
+            && action.operation() == "set"
+            && action.argument("latest") == Some(&Value::Bool(true))
+        {
+            return Err(not_installed(&name));
+        }
         if action.is_dry_run() {
             return Ok(ActionOutcome::skipped(
                 action,
@@ -1385,6 +1424,7 @@ mod tests {
             [
                 "downgrade".to_owned(),
                 "-y".to_owned(),
+                "--".to_owned(),
                 "curl-8.5.0-1.fc40".to_owned()
             ],
             "dnf refuses to `install` a version older than the one that is there"
@@ -1411,6 +1451,7 @@ mod tests {
             [
                 "install".to_owned(),
                 "-y".to_owned(),
+                "--".to_owned(),
                 "curl-8.7.0-1.fc40".to_owned()
             ]
         );
@@ -1435,11 +1476,11 @@ mod tests {
         for (frontend, expected) in [
             (
                 Frontend::RedHat(PathBuf::from("/usr/bin/dnf")),
-                vec!["upgrade", "-y", "curl"],
+                vec!["upgrade", "-y", "--", "curl"],
             ),
             (
                 Frontend::Suse(PathBuf::from("/usr/bin/zypper")),
-                vec!["--non-interactive", "update", "curl"],
+                vec!["--non-interactive", "update", "--", "curl"],
             ),
         ] {
             let rpm = Rpm {
@@ -1511,6 +1552,151 @@ mod tests {
         }
         for name in ["-curl", "", "curl!", "cu rl", "café"] {
             assert!(!is_rpm_package_name(name), "{name}");
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "a test states its preconditions directly (AGENTS.md section 16)"
+)]
+mod names_reaching_rpm {
+    //! Review findings SEC-C-1, SEC2-5 and COR-C5 for the rpm family: no name reaches rpm, dnf
+    //! or zypper that they would read as an option, a glob, a provide or a path, and an update of
+    //! a package that is not installed is refused before any front end runs. The managers are
+    //! fakes on a PATH of the test's own that write down every invocation.
+
+    use ono_provider_api::{Action, ObjectId, Provider as _};
+    use ono_value::SchemaId;
+
+    use super::*;
+
+    fn fake_managers(frontend: &str) -> (tempfile::TempDir, RpmPackageProvider) {
+        let directory = tempfile::tempdir().expect("a scratch PATH");
+        let log = directory.path().join("calls.log");
+        for name in ["rpm", frontend] {
+            ono_testkit::executable_script(
+                directory.path(),
+                name,
+                &format!(
+                    "#!/bin/sh\nprintf '%s' '{name}' >> '{log}'\nfor a in \"$@\"; do printf ' [%s]' \"$a\" >> '{log}'; done\necho >> '{log}'\necho 'package is not installed'\nexit 1\n",
+                    log = log.display()
+                ),
+            );
+        }
+        let provider = RpmPackageProvider::with_path(Some(directory.path().as_os_str().to_owned()));
+        (directory, provider)
+    }
+
+    fn calls(directory: &tempfile::TempDir) -> String {
+        std::fs::read_to_string(directory.path().join("calls.log")).unwrap_or_default()
+    }
+
+    fn action(operation: &str, name: &str, arguments: &[(&str, Value)]) -> Action {
+        arguments.iter().fold(
+            Action::new(
+                "package",
+                operation,
+                ObjectId::new(
+                    SchemaId::new("ono.package", 1),
+                    [Value::string(RPM), Value::string(name)],
+                ),
+            ),
+            |action, (option, value)| action.with(*option, value.clone()),
+        )
+    }
+
+    #[tokio::test]
+    async fn should_refuse_a_name_a_front_end_would_read_as_an_option_a_glob_or_a_provide() {
+        for frontend in ["dnf", "zypper"] {
+            for name in [
+                "--x",
+                "-oX",
+                "*",
+                "cu*",
+                "/usr/bin/curl",
+                "pkgconfig(openssl)",
+            ] {
+                for (operation, arguments) in [
+                    ("add", vec![]),
+                    ("remove", vec![]),
+                    ("set", vec![("latest", Value::Bool(true))]),
+                ] {
+                    let (directory, provider) = fake_managers(frontend);
+                    let refused = provider
+                        .act(&action(operation, name, &arguments))
+                        .await
+                        .expect_err("SEC-C-1: the name is refused, not handed on");
+                    assert_eq!(
+                        refused.code(),
+                        ErrorCode::TypeMismatch,
+                        "{frontend}: `{operation} package {name}`: {refused:?}"
+                    );
+                    assert_eq!(
+                        calls(&directory),
+                        "",
+                        "{frontend}: `{operation} package {name}`: nothing ran, not even rpm -q"
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_refuse_an_update_of_a_package_that_is_not_installed_before_the_front_end_runs()
+    {
+        for frontend in ["dnf", "zypper"] {
+            let (directory, provider) = fake_managers(frontend);
+            let refused = provider
+                .act(&action("set", "curl", &[("latest", Value::Bool(true))]))
+                .await
+                .expect_err("COR-C5: an update of a package that is not there is refused");
+            assert_eq!(refused.code(), ErrorCode::IoNotFound, "{refused:?}");
+            let calls = calls(&directory);
+            assert!(
+                calls.starts_with("rpm ") && calls.contains("[--] [curl]"),
+                "only the database was asked, with the name after `--`: {calls}"
+            );
+            assert!(!calls.contains(frontend), "{frontend} never ran: {calls}");
+        }
+    }
+
+    #[test]
+    fn should_put_the_package_after_double_dash_in_every_command_it_builds() {
+        for frontend in [
+            Frontend::RedHat(PathBuf::from("/fake/dnf")),
+            Frontend::Suse(PathBuf::from("/fake/zypper")),
+        ] {
+            let rpm = Rpm {
+                root: PathBuf::from("/"),
+                rpm: PathBuf::from("/fake/rpm"),
+                frontend: Some(frontend),
+            };
+            for (operation, arguments) in [
+                ("add", vec![]),
+                ("add", vec![("version", Value::string("8.5.0"))]),
+                ("remove", vec![]),
+                ("set", vec![("latest", Value::Bool(true))]),
+                ("set", vec![("version", Value::string("8.5.0"))]),
+                ("set", vec![("hold", Value::Bool(true))]),
+            ] {
+                let mutation = mutation_of(
+                    &action(operation, "curl", &arguments),
+                    &rpm,
+                    "curl",
+                    Some("8.6.0"),
+                )
+                .expect("a mutation");
+                for (program, built) in &mutation.commands {
+                    assert_eq!(
+                        built.iter().position(|argument| argument == "--"),
+                        Some(built.len() - 2),
+                        "{program:?}: the package is the one argument after `--`: {built:?}"
+                    );
+                }
+            }
         }
     }
 }
