@@ -1057,11 +1057,14 @@ fn should_plan_an_update_of_an_installed_package_with_its_protection_evaluated()
         .cloned()
         .unwrap_or_default();
     assert!(
-        protection
-            .iter()
-            .any(|row| row["domain"].as_str() == Some("filesystem-persistent")),
-        "v0.6 §30.2: the update's protection was evaluated over the package's files. Got \
-         {protection:?}"
+        protection.iter().any(|row| {
+            row["domain"].as_str() == Some("filesystem-persistent")
+                && row["protection"].as_str() == Some("compensatable")
+                && row["satisfied"].as_bool() == Some(false)
+        }),
+        "v0.6 §30.2, §27.4: the update's protection was evaluated over the package's files — \
+         compensatable by a transition back, which is not a rollback — not merely listed \
+         (TST-8). Got {protection:?}"
     );
     assert!(
         !directory.path().join("apt-get.log").exists(),
