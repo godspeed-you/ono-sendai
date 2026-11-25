@@ -881,8 +881,13 @@ const CHECKED_AT_KEY: &str = "integrity_checked_at";
 const CHECKED_BY_KEY: &str = "integrity_checked_by";
 /// The metadata key holding what a failed whole-file check found; present means condemned.
 const FAILED_KEY: &str = "integrity_failed";
-/// The metadata key a writer sets while it has the store open and clears when it closes cleanly.
-const WRITER_KEY: &str = "writer_open_since";
+/// The prefix of the metadata row each writer sets while it has the store open, followed by its
+/// identity, and deletes when it closes cleanly (ADR-1125, review finding R2C-2). One row per
+/// writer: one writer's clean close says nothing about another's.
+const WRITER_PREFIX: &str = "writer_open:";
+/// The single writer key of the first build of ADR-1125; a row of it has no writer to ask after,
+/// so it reads as a writer that did not close.
+const LEGACY_WRITER_KEY: &str = "writer_open_since";
 
 /// How old a passed whole-file check may grow before it is due again (ADR-1125).
 pub const WHOLE_FILE_CHECK_PERIOD: jiff::SignedDuration = jiff::SignedDuration::from_hours(7 * 24);
@@ -899,8 +904,9 @@ pub enum CheckDue {
     /// The last check that passed was run by another version of Ono, which may have written it
     /// differently since.
     OtherVersion(String),
-    /// A writer opened the store and did not close it cleanly.
-    UncleanShutdown,
+    /// A writer opened the store and did not close it cleanly: its row is there and the writer is
+    /// gone. The rows are named, so a check that passes can settle them.
+    UncleanShutdown(Vec<String>),
     /// The last check that passed is older than [`WHOLE_FILE_CHECK_PERIOD`].
     Periodic,
 }
@@ -979,7 +985,11 @@ impl LedgerStore {
     /// # Errors
     ///
     /// Returns a §34 store refusal.
-    pub fn whole_file_check_due(&self, now: Timestamp) -> Result<Option<CheckDue>, ErrorValue> {
+    pub fn whole_file_check_due(
+        &self,
+        now: Timestamp,
+        alive: &dyn Fn(&str) -> bool,
+    ) -> Result<Option<CheckDue>, ErrorValue> {
         let connection = self.locked();
         let read = |key: &str| -> Result<Option<String>, ErrorValue> {
             connection
@@ -991,8 +1001,10 @@ impl LedgerStore {
                 .optional()
                 .map_err(|error| unavailable(&self.path, &error))
         };
-        if read(WRITER_KEY)?.is_some() {
-            return Ok(Some(CheckDue::UncleanShutdown));
+        let gone =
+            writers_gone(&connection, alive).map_err(|error| unavailable(&self.path, &error))?;
+        if !gone.is_empty() {
+            return Ok(Some(CheckDue::UncleanShutdown(gone)));
         }
         let Some(checked_at) = read(CHECKED_AT_KEY)? else {
             return Ok(Some(CheckDue::NeverChecked));
@@ -1026,6 +1038,7 @@ impl LedgerStore {
         &self,
         cancel: &WholeFileCancel,
         now: Timestamp,
+        settles: &[String],
     ) -> Result<WholeFileCheck, ErrorValue> {
         if cancel.is_cancelled() {
             return Ok(WholeFileCheck::Cancelled);
@@ -1068,6 +1081,12 @@ impl LedgerStore {
                 write_metadata(&connection, CHECKED_AT_KEY, &now.to_string())
                     .and_then(|()| write_metadata(&connection, CHECKED_BY_KEY, CHECKER_VERSION))
                     .map_err(|error| unavailable(&self.path, &error))?;
+                // The writers that did not close are what this check was for, and it passed.
+                for key in settles {
+                    connection
+                        .execute("DELETE FROM metadata WHERE key = ?1", params![key])
+                        .map_err(|error| unavailable(&self.path, &error))?;
+                }
                 Ok(WholeFileCheck::Passed)
             }
             Some(detail) => {
@@ -1091,30 +1110,85 @@ impl LedgerStore {
         }
     }
 
-    /// Records that a writer has the store open, so a close that never happens makes the
-    /// whole-file check due at the next start (ADR-1125).
+    /// Records that `writer` has the store open, so a close that never happens makes the
+    /// whole-file check due at the next start of any writer (ADR-1125). `writer` identifies the
+    /// writer well enough to tell a live one from a gone one — the recorder uses its pid and its
+    /// start time.
     ///
     /// # Errors
     ///
     /// Returns a §34 store refusal.
-    pub fn mark_writer_open(&self, now: Timestamp) -> Result<(), ErrorValue> {
+    pub fn mark_writer_open(&self, writer: &str, now: Timestamp) -> Result<(), ErrorValue> {
         let connection = self.usable()?;
-        write_metadata(&connection, WRITER_KEY, &now.to_string())
-            .map_err(|error| self.unavailable(&error))
+        write_metadata(
+            &connection,
+            &format!("{WRITER_PREFIX}{writer}"),
+            &now.to_string(),
+        )
+        .map_err(|error| self.unavailable(&error))
     }
 
-    /// Records that the writer closed the store cleanly (ADR-1125).
+    /// Records that `writer` closed the store cleanly; every other writer's row stays (ADR-1125).
     ///
     /// # Errors
     ///
     /// Returns a §34 store refusal.
-    pub fn mark_writer_closed(&self) -> Result<(), ErrorValue> {
+    pub fn mark_writer_closed(&self, writer: &str) -> Result<(), ErrorValue> {
         let connection = self.usable()?;
         connection
-            .execute("DELETE FROM metadata WHERE key = ?1", params![WRITER_KEY])
+            .execute(
+                "DELETE FROM metadata WHERE key = ?1",
+                params![format!("{WRITER_PREFIX}{writer}")],
+            )
             .map(|_| ())
             .map_err(|error| self.unavailable(&error))
     }
+
+    /// Reads whether another handle has recorded a failed whole-file check since this one opened,
+    /// and condemns this handle too if so (ADR-1125, review finding R2C-2). One metadata row: the
+    /// caller asks it where a turn can spare the read, not on every read.
+    ///
+    /// # Errors
+    ///
+    /// Returns a §34 store refusal.
+    pub fn refresh_condemnation(&self) -> Result<bool, ErrorValue> {
+        if self.integrity().is_fatal() {
+            return Ok(true);
+        }
+        let mut report = IntegrityReport::default();
+        remembered_failure(&self.locked(), &self.path, &mut report);
+        if !report.is_fatal() {
+            return Ok(false);
+        }
+        self.integrity
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .findings
+            .extend(report.findings);
+        Ok(true)
+    }
+}
+
+/// The writer rows whose writer `alive` says is gone, and the legacy single key, by key.
+fn writers_gone(
+    connection: &Connection,
+    alive: &dyn Fn(&str) -> bool,
+) -> rusqlite::Result<Vec<String>> {
+    let mut statement = connection
+        .prepare("SELECT key FROM metadata WHERE key = ?1 OR (key >= ?2 AND key < ?3)")?;
+    let keys: Vec<String> = statement
+        .query_map(
+            params![LEGACY_WRITER_KEY, WRITER_PREFIX, upper_bound(WRITER_PREFIX)],
+            |row| row.get(0),
+        )?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(keys
+        .into_iter()
+        .filter(|key| {
+            key.strip_prefix(WRITER_PREFIX)
+                .is_none_or(|writer| !alive(writer))
+        })
+        .collect())
 }
 
 /// A failed whole-file check recorded by an earlier open, read back as a fatal finding (ADR-1125).

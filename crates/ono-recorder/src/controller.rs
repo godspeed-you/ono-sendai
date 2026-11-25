@@ -223,8 +223,38 @@ struct Inner {
     in_flight: std::sync::atomic::AtomicUsize,
     /// The whole-file check running off the prompt path, where one is (ADR-1125).
     check: Mutex<Option<RunningCheck>>,
-    /// When the running recorder started with a whole-file check due, until it is begun.
-    check_due_from: Mutex<Option<Timestamp>>,
+    /// The earliest instant the running recorder may begin a due whole-file check: the start
+    /// plus [`WHOLE_FILE_CHECK_GRACE`], and after every attempt the attempt plus the same, so a
+    /// check whose thread could not run is retried at a later turn rather than forgotten.
+    check_not_before: Mutex<Option<Timestamp>>,
+}
+
+/// This process as a writer of the store: its pid and its start time in clock ticks since boot,
+/// which together tell a live writer from a gone one whose pid was reused (ADR-1125, R2C-2).
+fn this_writer() -> String {
+    let pid = std::process::id();
+    let started = process_start(std::path::Path::new("/proc"), pid).unwrap_or(0);
+    format!("{pid}:{started}")
+}
+
+/// Whether the writer `writer` names is still running: the pid exists and started when it did.
+fn writer_alive(writer: &str) -> bool {
+    let Some((pid, started)) = writer.split_once(':') else {
+        return false;
+    };
+    let (Ok(pid), Ok(started)) = (pid.parse::<u32>(), started.parse::<u64>()) else {
+        return false;
+    };
+    process_start(std::path::Path::new("/proc"), pid).is_some_and(|now| now == started)
+}
+
+/// The start time of process `pid` in clock ticks since boot, field 22 of `/proc/<pid>/stat`.
+fn process_start(proc: &std::path::Path, pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(proc.join(pid.to_string()).join("stat")).ok()?;
+    // The command name is in parentheses and may hold spaces and parentheses itself; the fields
+    // after the last `)` begin at field 3.
+    let (_, rest) = stat.rsplit_once(')')?;
+    rest.split_whitespace().nth(19)?.parse().ok()
 }
 
 /// How long a started recorder waits before it begins a due whole-file check (ADR-1125).
@@ -272,7 +302,7 @@ impl Recorder {
                 }),
                 in_flight: std::sync::atomic::AtomicUsize::new(0),
                 check: Mutex::new(None),
-                check_due_from: Mutex::new(None),
+                check_not_before: Mutex::new(None),
                 options,
             }),
         }
@@ -358,17 +388,15 @@ impl Recorder {
             Err(refusal) => return Ok(self.degrade(settings, refusal)),
         };
 
-        // ADR-1125: whether the whole-file check is due is decided before this writer marks the
-        // store open, because the mark is what a later start reads as an unclean shutdown.
-        let due = match ledger.store().map(|store| {
-            let due = store.whole_file_check_due(now)?;
-            store.mark_writer_open(now)?;
-            Ok::<_, ErrorValue>(due)
-        }) {
-            None | Some(Ok(None)) => false,
-            Some(Ok(Some(_))) => true,
-            Some(Err(refusal)) => return Ok(self.degrade(settings, refusal)),
-        };
+        // ADR-1125: this writer's own row, which a later start reads as an unclean shutdown only
+        // once this process is gone without closing it. Whether a check is due is asked at the
+        // maintenance turns that follow (`begin_due_check`).
+        if let Some(Err(refusal)) = ledger
+            .store()
+            .map(|store| store.mark_writer_open(&this_writer(), now))
+        {
+            return Ok(self.degrade(settings, refusal));
+        }
 
         // §44.1's writes are the first the store takes. One that fails — a full disk, a file-size
         // limit — is a start that was refused after the store opened, and it is `failed` with the
@@ -405,9 +433,10 @@ impl Recorder {
         self.replace_ledger(ledger);
         *self
             .inner
-            .check_due_from
+            .check_not_before
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = due.then_some(now);
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            now.checked_add(WHOLE_FILE_CHECK_GRACE).ok();
 
         Ok(self.outcome(plan, None))
     }
@@ -426,7 +455,7 @@ impl Recorder {
         self.close_coverage(&ledger, now)?;
         ledger.flush()?;
         if let Some(store) = ledger.store() {
-            store.mark_writer_closed()?;
+            store.mark_writer_closed(&this_writer())?;
         }
         {
             let mut state = self.lock_state();
@@ -662,6 +691,11 @@ impl Recorder {
     ///
     /// Returns a §34 store refusal.
     pub fn maintenance(&self, now: Timestamp) -> Result<Maintenance, ErrorValue> {
+        // Another shell may have found the store damaged since this one opened it: one metadata
+        // row, read here rather than on every read (ADR-1125, review finding R2C-2).
+        if let Some(store) = self.ledger().store() {
+            let _ = store.refresh_condemnation();
+        }
         if self.absorb_condemnation() {
             return Err(self.condemnation().unwrap_or_else(|| {
                 ono_temporal_core::error::store_unavailable("the store failed its whole-file check")
@@ -769,8 +803,8 @@ impl Recorder {
     /// Waits for the whole-file check this recorder started, and answers what it found; `None`
     /// where none is running (ADR-1125).
     ///
-    /// The check runs off the prompt path and nothing in the shell waits for it; this is for a
-    /// caller that has nothing else to do, such as a test or a service stopping.
+    /// The check runs off the prompt path and nothing in the shell waits for it. This is the
+    /// integration tests' way to wait for it: it has no production caller (review finding R2C-7).
     pub fn wait_for_whole_file_check(&self) -> Option<Result<WholeFileCheck, ErrorValue>> {
         let running = self
             .inner
@@ -806,7 +840,15 @@ impl Recorder {
         let cancel = WholeFileCancel::default();
         let theirs = cancel.clone();
         let handle = std::thread::spawn(move || match ledger.store() {
-            Some(store) => store.check_whole_file(&theirs, now),
+            Some(store) => {
+                // The writers gone without closing are what this check is for; a pass settles
+                // them.
+                let settles = match store.whole_file_check_due(now, &writer_alive) {
+                    Ok(Some(ono_temporal_ledger::CheckDue::UncleanShutdown(keys))) => keys,
+                    _ => Vec::new(),
+                };
+                store.check_whole_file(&theirs, now, &settles)
+            }
             None => Ok(WholeFileCheck::Cancelled),
         });
         *slot = Some(RunningCheck { cancel, handle });
@@ -825,24 +867,20 @@ impl Recorder {
         if self.whole_file_check_running() {
             return;
         }
-        let mut due_from = self
+        let mut not_before = self
             .inner
-            .check_due_from
+            .check_not_before
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let at_start =
-            due_from.is_some_and(|from| now.duration_since(from) >= WHOLE_FILE_CHECK_GRACE);
-        // While this recorder runs its own mark is set, so beyond the start only age can make the
-        // check due.
-        let by_age = || {
-            matches!(
-                store.whole_file_check_due(now),
-                Ok(Some(ono_temporal_ledger::CheckDue::Periodic))
-            )
-        };
-        if at_start || (due_from.is_none() && by_age()) {
-            *due_from = None;
-            drop(due_from);
+        if not_before.is_some_and(|earliest| now < earliest) {
+            return;
+        }
+        // Due by the store's own record — a writer gone without closing, no pass, another
+        // version's pass, or a pass older than the period — never by this recorder's own row,
+        // which is alive (review finding R2C-1).
+        if matches!(store.whole_file_check_due(now, &writer_alive), Ok(Some(_))) {
+            *not_before = now.checked_add(WHOLE_FILE_CHECK_GRACE).ok();
+            drop(not_before);
             self.begin_whole_file_check(ledger, now);
         }
     }
@@ -871,7 +909,7 @@ impl Recorder {
         }
         *self
             .inner
-            .check_due_from
+            .check_not_before
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
     }

@@ -304,6 +304,19 @@ fn should_say_why_history_stopped_when_get_recorder_is_asked_afterwards() {
     );
 }
 
+/// Makes every writer mark in the store name a writer that is gone — what a crashed shell leaves.
+/// This test process is the writer that marked it and is still running, so the mark is moved to
+/// an identity no process has (review finding R2C-2).
+fn writer_gone(path: &std::path::Path) {
+    rusqlite::Connection::open(path)
+        .expect("the store opens for the fixture")
+        .execute(
+            "UPDATE metadata SET key = 'writer_open:4294967294:1' WHERE key LIKE 'writer_open:%'",
+            [],
+        )
+        .expect("the writer mark is moved");
+}
+
 /// The first instant a started recorder begins a whole-file check that is due (ADR-1125).
 fn after_the_grace(start: jiff::Timestamp) -> jiff::Timestamp {
     start
@@ -404,6 +417,7 @@ fn should_fail_and_stop_appending_when_the_whole_file_check_after_an_unclean_shu
         // Dropped without `stop recorder`: the writer's mark stays set.
     }
     hide_rows_from_every_index(&directory.path().join("ledger.sqlite3"));
+    writer_gone(&directory.path().join("ledger.sqlite3"));
 
     let recorder = Recorder::new(options(directory.path()));
     let later = instant("2026-08-31T12:10:00Z");
@@ -475,4 +489,77 @@ fn should_leave_the_whole_file_check_undue_when_the_recorder_stopped_cleanly() {
         recorder.wait_for_whole_file_check().is_none(),
         "nothing is due after a passed check and a clean stop"
     );
+}
+
+#[test]
+fn should_check_a_running_recorders_store_again_once_the_last_pass_is_older_than_the_period() {
+    // Review finding R2C-1: a running recorder's own writer mark made every later due-question
+    // answer "unclean shutdown", so the check that comes due by age alone never began. The
+    // recorder's own row is a live writer; age makes the check due.
+    let directory = tempfile::tempdir().expect("a scratch directory");
+    let now = instant("2026-08-31T12:00:00Z");
+    let recorder = Recorder::new(options(directory.path()));
+    recorder.start(&settings(), now).expect("a start");
+    let _ = recorder.maintenance(after_the_grace(now));
+    assert!(
+        matches!(
+            recorder.wait_for_whole_file_check(),
+            Some(Ok(ono_temporal_ledger::WholeFileCheck::Passed))
+        ),
+        "a new store is checked once"
+    );
+    let _ = recorder.maintenance(instant("2026-09-01T12:00:00Z"));
+    assert!(
+        recorder.wait_for_whole_file_check().is_none(),
+        "a day later nothing is due"
+    );
+    let _ = recorder.maintenance(instant("2026-09-08T12:01:00Z"));
+    assert!(
+        matches!(
+            recorder.wait_for_whole_file_check(),
+            Some(Ok(ono_temporal_ledger::WholeFileCheck::Passed))
+        ),
+        "eight days after the pass, a turn of the running recorder begins the check again"
+    );
+}
+
+#[test]
+fn should_fail_a_running_recorder_whose_store_another_shell_found_damaged() {
+    // Review finding R2C-2: a failed check was known to the handle that ran it and to the next
+    // open, and a recorder already running in another shell kept appending. Its maintenance turn
+    // reads the failure mark and fails it.
+    let directory = tempfile::tempdir().expect("a scratch directory");
+    let path = directory.path().join("ledger.sqlite3");
+    let now = instant("2026-08-31T12:00:00Z");
+    let recorder = Recorder::new(options(directory.path()));
+    recorder.start(&settings(), now).expect("a start");
+    for pid in 1..=8 {
+        recorder
+            .record_observation(&common::process_record(pid, "nginx", &["nginx"]), now)
+            .expect("an observation is recorded");
+    }
+    recorder.flush().expect("a flush");
+    hide_rows_from_every_index(&path);
+    let other = ono_temporal_ledger::LedgerStore::open(&path).expect("another shell opens it");
+    let outcome = other
+        .check_whole_file(&ono_temporal_ledger::WholeFileCancel::default(), now, &[])
+        .expect("its check runs");
+    assert!(matches!(
+        outcome,
+        ono_temporal_ledger::WholeFileCheck::Failed(_)
+    ));
+
+    let turn = recorder
+        .maintenance(instant("2026-08-31T12:00:05Z"))
+        .expect_err("the turn learns the store is condemned");
+    assert_eq!(turn.code(), ono_core::ErrorCode::TemporalStoreCorrupt);
+    assert_eq!(
+        recorder.status(now).health,
+        RecorderHealth::Failed,
+        "the running recorder is failed"
+    );
+    let appended = recorder
+        .record_observation(&common::process_record(99, "nginx", &["nginx"]), now)
+        .expect_err("and appends nothing more");
+    assert_eq!(appended.code(), ono_core::ErrorCode::TemporalStoreCorrupt);
 }
