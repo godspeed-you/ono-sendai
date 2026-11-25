@@ -485,6 +485,13 @@ fn asked_while_planning(units: i64) -> Option<Requests> {
     })
 }
 
+/// How often one plan may enumerate the service manager's units: once (issue #140, ADR-1081).
+const LIST_UNITS_PER_PLAN: u64 = 1;
+
+/// How many reads of its own unit one target may cost: five on this build, measured with no fixed
+/// per-plan term (ADR-1081). One more per target turns this red.
+const UNIT_READS_PER_TARGET: u64 = 5;
+
 #[test]
 fn should_read_the_unit_list_once_per_plan_however_many_targets_it_freezes() {
     // Issue #140: every target read every unit again, so a fifty-target restart cost fifty
@@ -504,11 +511,30 @@ fn should_read_the_unit_list_once_per_plan_however_many_targets_it_freezes() {
         "the unit list is enumerated as often for fifty targets as for five — once per plan. \
          Five targets asked {few:?}, fifty asked {many:?}"
     );
+    // Equal is not enough on its own — fifty enumerations each would be equal too (TST-14).
+    assert!(
+        many.list_units <= LIST_UNITS_PER_PLAN,
+        "one plan enumerates the unit list at most {LIST_UNITS_PER_PLAN} times, got {many:?}"
+    );
+    // The forty-five targets fifty has over five cost the difference, so a fixed per-plan term
+    // cancels and what is left is the per-target cost, which integer division of each total
+    // would blur (PRF-3).
+    let extra = many.unit_reads - few.unit_reads;
     assert_eq!(
-        few.unit_reads / 5,
-        many.unit_reads / 50,
-        "a target costs a constant number of unit reads, whatever else the plan freezes: \
-         five targets asked {few:?}, fifty asked {many:?}"
+        extra % 45,
+        0,
+        "every target costs the same number of unit reads: five asked {few:?}, fifty asked \
+         {many:?}"
+    );
+    let per_target = extra / 45;
+    assert!(
+        (1..=UNIT_READS_PER_TARGET).contains(&per_target),
+        "a target costs between one and {UNIT_READS_PER_TARGET} reads of its own unit, got \
+         {per_target} (five asked {few:?}, fifty asked {many:?})"
+    );
+    assert!(
+        few.unit_reads >= 5 * per_target,
+        "the fixed per-plan term is not negative: five asked {few:?}"
     );
     assert_eq!(many.jobs, 0, "v0.6 §2.1: planning a restart queued no job");
 }
