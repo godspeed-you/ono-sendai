@@ -136,3 +136,16 @@ the agent's own error value says.
   no announcement — ever arrived.
 - **Supply `store_present` from the client's own knowledge.** The client has none; only the agent
   knows whether it has a store.
+
+## Amendment (v0.6.6 remediation, review COR-R3)
+
+`store_present` was set from "a file exists at the store's path", so a store emptied by `remove
+client-key` — the header and nobody — answered `true` and "not on the list", exactly like a store
+that lists somebody else, while the agent's own startup line said "no client is authorized yet".
+The exit criterion of #182 is "an empty store" told apart from "a store that lists somebody else",
+so the condition is now *the store authorizes somebody*: `store_present` is true when the store
+names at least one client, and false (with the sentence "…where no client is authorized yet")
+when it authorizes nobody, written or not. The field keeps its name, so an older client reads it
+unchanged; the disclosure argument of the table above holds as before — it reveals whether
+anyone is authorized, never who. Encoded by
+`crates/ono-protocol/tests/refusal_details.rs::should_tell_an_emptied_store_apart_from_one_that_lists_somebody_else`.

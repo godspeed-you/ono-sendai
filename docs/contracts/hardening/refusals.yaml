@@ -119,9 +119,11 @@ refusals:
     doc: >-
       The fingerprint is in the sentence because it is what the operator types into
       `add client-key` to fix the refusal, and §53.3 permits public identity material in full.
-      `store_present` distinguishes "you are not on the list" from "there is no list". Both cross
-      the wire: the fingerprint is the refused peer's own, and whether a store exists is what the
-      message already says in words (ADR-1056).
+      `store_present` distinguishes "you are not on the list" from "there is no list": true when
+      the agent's store names at least one client, false when it authorizes nobody — never
+      written, or emptied by `remove client-key`, as the agent's startup line says. Both cross the
+      wire: the fingerprint is the refused peer's own, and whether anybody is authorized is what
+      the message already says in words (ADR-1056).
   - error: remote.capability_denied
     boundary: remote.tcp.authorization
     decided_by: ono-protocol

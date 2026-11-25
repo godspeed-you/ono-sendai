@@ -314,7 +314,11 @@ impl AuthorizedClients {
     /// refusal allows. The path is in the operator's own diagnostic and in the audit trail, which
     /// is where somebody who can fix it is reading.
     fn unlisted(&self, fingerprint: Fingerprint) -> ErrorValue {
-        let condition = if self.present {
+        // "There is a list somebody is on": a file that exists and names a client. A store
+        // emptied by `remove client-key` authorizes nobody, as a missing one does, and the
+        // agent's startup line says so; the refusal says the same (ADR-1056, review COR-R3).
+        let lists_somebody = self.present && !self.entries.is_empty();
+        let condition = if lists_somebody {
             "is authenticated and is not authorized on this host"
         } else {
             "is authenticated and is not authorized on this host, where no client is authorized yet"
@@ -325,7 +329,7 @@ impl AuthorizedClients {
         )
         .with_retryable(false)
         .with_metadata("peer_fingerprint", Value::string(&fingerprint.to_string()))
-        .with_metadata("store_present", Value::Bool(self.present))
+        .with_metadata("store_present", Value::Bool(lists_somebody))
         .with_help(format!(
             "authentication proves which key connected, never that the operator wants it here \
              (v0.4.1 section 9.1). On the agent's host, `add client-key {fingerprint}` authorizes \

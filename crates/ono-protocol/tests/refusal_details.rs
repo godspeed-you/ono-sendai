@@ -175,6 +175,40 @@ async fn should_tell_an_unauthorized_client_that_the_agent_lists_somebody_else()
 }
 
 #[tokio::test]
+async fn should_tell_an_emptied_store_apart_from_one_that_lists_somebody_else() {
+    // `remove client-key` of the last client leaves the file with its header and nobody in it.
+    // That store authorizes nobody — the agent's own startup line says "no client is authorized
+    // yet" — so the refusal says so too, exactly as for a store that was never written (review
+    // COR-R3; the exit criterion of #182 is "an empty store" against "a store that lists
+    // somebody else").
+    let home = common::scratch();
+    let path = home.write(
+        "authorized_clients",
+        "# ono authorized clients: one line per client key, strictly parsed.\n",
+    );
+    let emptied = AuthorizedClients::open(&path).expect("an emptied store reads");
+    let refused = try_connect_proving(
+        client_config("testhost"),
+        server_config().with_authorization(ServerAuthorization::Store(Arc::new(emptied))),
+        Some(other_client_key()),
+    )
+    .await
+    .err()
+    .expect("§59.1: an unlisted client is refused");
+
+    assert_eq!(
+        refused.metadata().get("store_present"),
+        Some(&Value::Bool(false)),
+        "a store that authorizes nobody is not a list somebody is on, got {refused:?}"
+    );
+    assert!(
+        refused.message().contains("no client is authorized yet"),
+        "the sentence says it as the startup line does, got {}",
+        refused.message()
+    );
+}
+
+#[tokio::test]
 async fn should_carry_exactly_the_keys_the_contract_lets_cross_the_wire() {
     // Every refusal of the census, sent by the agent's pre-negotiation refusal path with every
     // key it explains *and* one it does not, arrives with exactly its `over_the_wire` keys. A
