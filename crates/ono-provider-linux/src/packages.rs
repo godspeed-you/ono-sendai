@@ -1416,7 +1416,7 @@ mod names_reaching_apt {
     async fn should_refuse_a_name_apt_would_read_as_an_option_a_pattern_or_an_instruction() {
         for name in [
             "-oDebug::pkgProblemResolver=1",
-            "--allow-unauthenticated",
+            "--auto-remove",
             "curl-",
             "curl+",
             "*",

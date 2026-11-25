@@ -1135,7 +1135,7 @@ fn should_refuse_a_package_name_a_manager_would_read_as_an_option_or_an_instruct
         ),
     );
     for script in [
-        "add package \"--allow-unauthenticated\" | to json",
+        "add package \"--auto-remove\" | to json",
         "add package \"-oDebug::pkgProblemResolver=1\" | to json",
         "remove package \"curl-\" | to json",
         "set package \"curl-\" --latest | to json",
