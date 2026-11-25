@@ -51,6 +51,9 @@ pub struct Federation {
 enum Told {
     Listed(ono_protocol::LinkTable),
     Refused(ErrorValue),
+    /// The far side's handshake did not offer the request: decided here, from what this side
+    /// negotiated, never from text the far side wrote (review SEC-12).
+    NotOffered(ErrorValue),
     NotAsked(&'static str),
 }
 
@@ -102,6 +105,12 @@ pub async fn second_hop(
                     .push(report(link, refusal_status(&error), None, Some(&error)));
                 continue;
             }
+            Told::NotOffered(error) => {
+                federation
+                    .report
+                    .push(report(link, "not_offered", None, Some(&error)));
+                continue;
+            }
             Told::NotAsked(reason) => {
                 federation
                     .report
@@ -142,7 +151,7 @@ pub async fn second_hop(
 #[cfg(feature = "remote")]
 async fn ask(prober: &crate::spatial::links::Prober) -> Told {
     if !prober.offers_links() {
-        return Told::Refused(ErrorValue::new(
+        return Told::NotOffered(ErrorValue::new(
             ono_core::ErrorCode::RemoteProtocolMismatch,
             format!(
                 "the far side does not offer `{}`",
@@ -168,12 +177,6 @@ fn refusal_status(error: &ErrorValue) -> &'static str {
         ErrorCode::RemoteCapabilityDenied
         | ErrorCode::RemoteUnauthorized
         | ErrorCode::RemoteUnauthenticated => "not_permitted",
-        ErrorCode::RemoteProtocolMismatch
-            if error.metadata().get("capability").is_some()
-                || error.message().contains("does not offer") =>
-        {
-            "not_offered"
-        }
         _ => "unavailable",
     }
 }
@@ -319,4 +322,23 @@ fn edge(
         "back_to_this_host",
         Value::Bool(entry.fingerprint.is_some() && entry.fingerprint.as_deref() == own),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_not_take_a_far_sides_words_for_a_status_this_side_decides() {
+        // Review SEC-12: "not offered" is what this side's handshake negotiated. A far side that
+        // refuses with a sentence that merely says so is a refusal, not a missing feature.
+        let worded = ErrorValue::new(
+            ono_core::ErrorCode::RemoteProtocolMismatch,
+            "the far side does not offer `ono.link.links/1`",
+        )
+        .with_metadata("capability", Value::string("ono.link.links/1"));
+        assert_eq!(refusal_status(&worded), "unavailable");
+        let denied = ErrorValue::new(ono_core::ErrorCode::RemoteCapabilityDenied, "no");
+        assert_eq!(refusal_status(&denied), "not_permitted");
+    }
 }
