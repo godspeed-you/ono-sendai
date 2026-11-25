@@ -111,6 +111,7 @@ fn register_tiers(session: &mut Session, built: &mut CommandTable) {
     )));
     built.register(std::sync::Arc::new(crate::spatial::MapLinks::new(
         crate::spatial::PinStore::of(session),
+        session.host_sources().config_dir,
     )));
     built.register(std::sync::Arc::new(crate::spatial::Home));
     built.register(std::sync::Arc::new(crate::spatial::Back));

@@ -33,6 +33,8 @@ use ono_testkit::{Scratch, Shell};
 use serde_yaml_ng::Value;
 
 #[cfg(feature = "remote")]
+pub mod far_side;
+#[cfg(feature = "remote")]
 pub mod peers;
 
 /// The string field `field` of a record, or a panic naming the record that lacked it.

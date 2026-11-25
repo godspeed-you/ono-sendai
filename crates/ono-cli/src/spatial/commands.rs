@@ -76,6 +76,19 @@ impl CommandImpl for Look {
             let json = arguments.flag("json");
             let now = Timestamp::now();
 
+            // §19.1: the link map at a root shows a latency, measured now rather than at the
+            // handshake — on demand, bounded and reused (ADR-1095). Deeper in, no link map is
+            // drawn and nothing is probed. The probe pass is made before the spatial session is
+            // taken, so no other command waits behind a peer that answers nothing (review ARC-2).
+            let at_root = {
+                let session = spatial_session().await;
+                ono_spatial_query::resolve::space_of(session.current_place())
+                    .is_some_and(|space| space.kind == ono_spatial_core::SpaceKind::Root)
+            };
+            if at_root && crate::spatial::historical::active().is_none() {
+                crate::spatial::links::measure().await;
+            }
+
             let mut session = spatial_session().await;
             let changes = window_of(arguments.option("changes"), session.preferences());
             with_pins(&mut session, self.pins.as_ref(), now).await?;
@@ -128,15 +141,6 @@ impl CommandImpl for Look {
                 } else {
                     None
                 };
-                // §19.1: the link map at a root shows a latency, measured now rather than at the
-                // handshake — on demand, bounded and reused (ADR-1095). Deeper in, no link map
-                // is drawn and nothing is probed.
-                let here = session.current_place().clone();
-                if ono_spatial_query::resolve::space_of(&here)
-                    .is_some_and(|space| space.kind == ono_spatial_core::SpaceKind::Root)
-                {
-                    crate::spatial::links::measure().await;
-                }
                 place_view(
                     &PlaceWorld::Present(&session),
                     &neighborhood,
