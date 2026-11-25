@@ -343,26 +343,46 @@ struct SubjectRun<'a> {
 /// One map lookup per event, and no event copied: a window of fifty thousand events over as many
 /// subjects is grouped in time linear in the window (review finding PRF-5).
 fn group_by_subject(events: &[TemporalEvent]) -> Vec<SubjectRun<'_>> {
-    let mut runs: Vec<SubjectRun<'_>> = Vec::new();
-    let mut index: std::collections::HashMap<&SpatialRef, usize> = std::collections::HashMap::new();
-    for event in events {
+    group_runs(events, |event| {
         if matches!(
             event.kind,
             EventKind::RelationAdded | EventKind::RelationRemoved
         ) {
-            continue;
+            return None;
         }
-        let Some(subject) = event.subject.as_ref() else {
+        event.subject.as_ref()
+    })
+    .into_iter()
+    .map(|(subject, events)| SubjectRun { subject, events })
+    .collect()
+}
+
+/// Splits `items` into runs by `key`, each run in the order of `items` and the runs in the order
+/// their keys first appear; an item with no key is left out. One map lookup per item, so the work
+/// is linear in the items whatever the number of keys.
+fn group_runs<'a, T, K: std::hash::Hash + Eq>(
+    items: &'a [T],
+    key: impl Fn(&'a T) -> Option<K>,
+) -> Vec<(K, Vec<&'a T>)> {
+    let mut runs: Vec<(K, Vec<&'a T>)> = Vec::new();
+    let mut index: std::collections::HashMap<K, usize> = std::collections::HashMap::new();
+    for item in items {
+        let Some(found) = key(item) else {
             continue;
         };
-        match index.get(subject) {
-            Some(&at) => runs[at].events.push(event),
-            None => {
-                index.insert(subject, runs.len());
-                runs.push(SubjectRun {
-                    subject,
-                    events: vec![event],
-                });
+        match index.entry(found) {
+            std::collections::hash_map::Entry::Occupied(at) => {
+                if let Some((_, run)) = runs.get_mut(*at.get()) {
+                    run.push(item);
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                let at = runs.len();
+                // The map keeps the key it was asked by; the run keeps the item's own.
+                if let Some(own) = key(item) {
+                    runs.push((own, vec![item]));
+                    slot.insert(at);
+                }
             }
         }
     }
@@ -637,4 +657,64 @@ fn provenance_value(provenance: &Provenance) -> Value {
         Value::string(&provenance.schema().to_string()),
     );
     Value::Map(Arc::new(map))
+}
+
+#[cfg(test)]
+mod grouping {
+    use std::cell::Cell;
+
+    use super::group_runs;
+
+    /// A key that counts every comparison made of it.
+    struct Counted<'a> {
+        id: u32,
+        comparisons: &'a Cell<usize>,
+    }
+
+    impl PartialEq for Counted<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            self.comparisons.set(self.comparisons.get() + 1);
+            self.id == other.id
+        }
+    }
+
+    impl Eq for Counted<'_> {}
+
+    impl std::hash::Hash for Counted<'_> {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.id.hash(state);
+        }
+    }
+
+    #[test]
+    fn should_group_ten_thousand_items_over_five_thousand_keys_in_work_linear_in_the_items() {
+        // Review findings PRF-5, R2C-5: grouping searched every run for every event, which is
+        // twelve and a half million comparisons for ten thousand events over five thousand
+        // subjects. The work is a bound the test can fail on: at most a few comparisons per item.
+        let comparisons = Cell::new(0);
+        let items: Vec<u32> = (0..10_000).map(|index| index % 5_000).collect();
+        let runs = group_runs(&items, |item| {
+            Some(Counted {
+                id: *item,
+                comparisons: &comparisons,
+            })
+        });
+        assert_eq!(runs.len(), 5_000, "one run per key");
+        assert!(
+            runs.iter().all(|(_, run)| run.len() == 2),
+            "every item lands in its key's run"
+        );
+        assert_eq!(
+            runs.first().map(|(key, _)| key.id),
+            Some(0),
+            "runs in the order their keys first appear"
+        );
+        assert!(
+            comparisons.get() <= 2 * items.len(),
+            "grouping {} items over {} keys made {} comparisons; it must be linear in the items",
+            items.len(),
+            runs.len(),
+            comparisons.get()
+        );
+    }
 }
