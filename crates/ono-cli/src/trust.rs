@@ -203,10 +203,22 @@ pub fn peer_key_rows(sources: &crate::hosts::HostSources) -> (Vec<PeerKeyRow>, V
 /// for the listening agent's summary to compare the key it presents against (ADR-1045).
 #[must_use]
 pub fn existing_link_identity(directory: &Path) -> Option<PeerIdentity> {
+    read_link_identity(directory).ok().flatten()
+}
+
+/// The link identity in `directory`: `None` where there is none, the refusal where a file is
+/// there and cannot be read as one — which a caller comparing keys must say rather than read as
+/// agreement (review COR-R4).
+///
+/// # Errors
+///
+/// Why the identity file that exists could not be opened.
+pub fn read_link_identity(directory: &Path) -> Result<Option<PeerIdentity>, ErrorValue> {
     let path = directory.join(LINK_IDENTITY_FILE);
-    path.exists()
-        .then(|| PeerIdentity::open(&path).ok())
-        .flatten()
+    if !path.exists() {
+        return Ok(None);
+    }
+    PeerIdentity::open(&path).map(Some)
 }
 
 /// How a key was proved, when a command does not say.

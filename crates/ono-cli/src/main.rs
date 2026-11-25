@@ -486,18 +486,26 @@ fn print_startup_summary(
     // §8.2 rule 5: `--host-key` may name a key other than the one every direct link from this
     // machine presents. That is allowed (ADR-0435) and must not be silent (ADR-1045). Only an
     // existing link identity is compared; none is created for the purpose.
-    if explicit_identity
-        && let Some(link) = config_directory()
-            .and_then(|directory| ono_cli::trust::existing_link_identity(&directory))
-        && link.fingerprint() != identity.fingerprint()
-    {
-        ono_core::diagnostic!(
-            "{name}: link identity {} ({}) differs from the host key this agent presents; a \
-             peer that pinned one is refused by the other",
-            link.fingerprint(),
-            link.path()
-                .map_or_else(String::new, |path| path.display().to_string())
-        );
+    if explicit_identity && let Some(directory) = config_directory() {
+        match ono_cli::trust::read_link_identity(&directory) {
+            Ok(Some(link)) if link.fingerprint() != identity.fingerprint() => {
+                ono_core::diagnostic!(
+                    "{name}: link identity {} ({}) differs from the host key this agent \
+                     presents; a peer that pinned one is refused by the other",
+                    link.fingerprint(),
+                    link.path()
+                        .map_or_else(String::new, |path| path.display().to_string())
+                );
+            }
+            Ok(_) => {}
+            // Unreadable is not "the same": the operator is told the comparison was not made.
+            Err(refusal) => ono_core::diagnostic!(
+                "{name}: link identity at {} could not be compared with the host key this agent \
+                 presents: {}",
+                directory.join(ono_cli::trust::LINK_IDENTITY_FILE).display(),
+                refusal.message()
+            ),
+        }
     }
     ono_core::diagnostic!(
         "{name}: authorization store {}",

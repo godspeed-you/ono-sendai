@@ -265,3 +265,27 @@ fn should_report_an_exposed_identity_beside_the_others_rather_than_read_it() {
     );
     assert_no_key_material(&home, &format!("{}{}", listed.stdout(), listed.stderr()));
 }
+
+#[test]
+fn should_say_a_link_identity_it_cannot_read_could_not_be_compared() {
+    // Review COR-R4: a `link_identity.pem` that exists and cannot be read as an identity made the
+    // divergence line vanish, as if the two keys agreed. The agent says it could not compare.
+    use std::os::unix::fs::PermissionsExt as _;
+    let home = scratch();
+    let directory = home.path().join("ono");
+    std::fs::create_dir_all(&directory).expect("the configuration directory");
+    let damaged = directory.join("link_identity.pem");
+    std::fs::write(&damaged, "not a key\n").expect("a damaged identity");
+    std::fs::set_permissions(&damaged, std::fs::Permissions::from_mode(0o600))
+        .expect("private, as an identity is");
+    let elsewhere = home.path().join("agent.pem");
+
+    let summary = listening_summary(&home, &elsewhere);
+    assert!(
+        summary
+            .iter()
+            .any(|line| line.contains("could not be compared")
+                && line.contains(&damaged.display().to_string())),
+        "the agent says the link identity could not be compared, got {summary:#?}"
+    );
+}
