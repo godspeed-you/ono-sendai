@@ -66,6 +66,7 @@ mod link;
 mod links;
 mod message;
 mod refusal;
+pub use refusal::MAX_REFUSAL_MESSAGE;
 mod service;
 mod store_file;
 mod trust;

@@ -416,3 +416,19 @@ async fn should_send_a_refusal_an_older_client_still_reads() {
     assert_eq!(older.code, "remote.unauthorized");
     assert_eq!(older.message, "refused for the test");
 }
+
+#[tokio::test]
+async fn should_keep_no_more_of_a_hostile_refusal_sentence_than_its_bound() {
+    // Review SEC-5: `details` is bounded by the census; the sentence was bounded only by the
+    // frame limit, a mebibyte a client then renders. It is cut at its bound when read.
+    let sentence = "é".repeat(4096);
+    let payload = format!(r#"{{"code":"remote.unauthorized","message":"{sentence}"}}"#);
+    let refused = refused_with(payload.as_bytes()).await;
+    assert_eq!(refused.code(), ErrorCode::RemoteUnauthorized);
+    assert!(
+        refused.message().len() <= ono_protocol::MAX_REFUSAL_MESSAGE + '…'.len_utf8(),
+        "the sentence is cut at its bound, got {} bytes",
+        refused.message().len()
+    );
+    assert!(refused.message().ends_with('…'), "and says it was cut");
+}

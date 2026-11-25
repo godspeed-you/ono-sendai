@@ -66,11 +66,28 @@ pub(crate) fn details_for_the_wire(refusal: &ErrorValue) -> Map<String, Json> {
 /// Every detail the contract does not name for `code`, or that does not have the shape the
 /// contract's key has, is dropped rather than believed: what arrives here came from a peer that
 /// just refused to serve us, and it may have been written by anyone.
+/// The longest refusal sentence a client keeps from the wire, in bytes (review SEC-5): `details`
+/// is bounded by the census, and the sentence is bounded here rather than by the frame limit.
+pub const MAX_REFUSAL_MESSAGE: usize = 1024;
+
+/// `message` cut to [`MAX_REFUSAL_MESSAGE`] bytes at a character boundary, marked when cut.
+fn bounded(message: &str) -> std::borrow::Cow<'_, str> {
+    if message.len() <= MAX_REFUSAL_MESSAGE {
+        return std::borrow::Cow::Borrowed(message);
+    }
+    let mut end = MAX_REFUSAL_MESSAGE;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    std::borrow::Cow::Owned(format!("{}…", &message[..end]))
+}
+
 pub(crate) fn refusal_from_the_wire(
     code: Option<ErrorCode>,
     message: &str,
     details: &Map<String, Json>,
 ) -> ErrorValue {
+    let message = &*bounded(message);
     let Some(code) = code else {
         // A code this build cannot name is the mismatch it is; nothing governs its details.
         return ErrorValue::new(ErrorCode::RemoteProtocolMismatch, message).with_retryable(false);

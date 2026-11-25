@@ -174,7 +174,7 @@ async fn keep(
                     ono_core::SHORT_NAME,
                     held.declared.name,
                     held.declared.address,
-                    refusal.message()
+                    far_words(refusal.message())
                 );
                 mark_down(&held);
             }
@@ -279,5 +279,38 @@ fn entry(held: &Held, link: Option<&ono_remote::RemoteLink>) -> ono_protocol::Li
             .and_then(nanos),
         measured_at: measured.as_ref().map(|measured| measured.at),
         since: state.since,
+    }
+}
+
+/// How many characters of a next hop's own sentence the operator's terminal is shown.
+const FAR_WORDS: usize = 200;
+
+/// A next hop's refusal sentence as the agent prints it to its operator (review SEC-5): the far
+/// side wrote it, so its control characters — an escape that retitles the terminal, a newline that
+/// forges a line of the audit trail — are shown escaped, and it is cut short.
+fn far_words(message: &str) -> String {
+    let mut shown: String = message.chars().take(FAR_WORDS).collect();
+    if message.chars().count() > FAR_WORDS {
+        shown.push('…');
+    }
+    ono_render::sanitise(&shown)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::far_words;
+
+    #[test]
+    fn should_print_a_next_hops_words_without_its_control_characters_or_its_length() {
+        let hostile = format!(
+            "\x1b]0;owned\x07\nono-audit event=forged{}",
+            "x".repeat(4096)
+        );
+        let shown = far_words(&hostile);
+        assert!(
+            !shown.chars().any(char::is_control),
+            "no escape, bell or newline reaches the terminal, got {shown:?}"
+        );
+        assert!(shown.chars().count() < 300, "and it is cut short");
     }
 }
