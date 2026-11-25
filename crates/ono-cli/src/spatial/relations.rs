@@ -845,7 +845,14 @@ async fn expand(
         if declined.contains(label) && relation::resolve_label(object_type, label).is_empty() {
             continue;
         }
-        let (state, detail) = if declined.contains(label) {
+        let (state, detail) = if declined.contains(label)
+            && label == "hosts"
+            && object_type.is_a(SpatialType::Connection)
+        {
+            // ADR-1098: read across the links, which `map links --connections` does; that is the
+            // request path §34.3 requires the words "available on request" to have.
+            (PermissionState::Unknown, CORRELATION_REQUEST.to_owned())
+        } else if declined.contains(label) {
             (PermissionState::Unknown, "available on request".to_owned())
         } else {
             (
@@ -1092,3 +1099,8 @@ pub async fn resolve_replacement(
     };
     session.fill_replacement(id, candidate.clone(), *via)
 }
+
+/// Where a connection's `hosts` exit is answered (ADR-1098, review COR-1): v0.4.1 §34.3 — "If a
+/// relationship is described as 'available on request', there MUST actually be a request path".
+pub(crate) const CORRELATION_REQUEST: &str =
+    "available on request: `map links --connections` reads it across the links";

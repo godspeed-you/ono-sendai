@@ -1686,6 +1686,27 @@ impl CommandImpl for Follow {
             // orientation query merely declined to spend the budget on; `--resolve` is the
             // request for the rest — a relation whose class is `expensive` or `external`, which a
             // named `follow` still will not pay for by itself (§34.2, ADR-0495).
+            // ADR-1098: whether a connection reaches a linked host is read across the links —
+            // the far sides' connection tables — and `follow` crosses no link (§35.4), so no
+            // `--resolve` pays for it here. The request that does is named (v0.4.1 §34.3).
+            if specs[0].id == "connection.reaches_host"
+                && object_type.is_a(ono_spatial_core::SpatialType::Connection)
+                && !crate::spatial::links::all().is_empty()
+            {
+                return Err(ErrorValue::new(
+                    ErrorCode::SpatialUnsupported,
+                    format!(
+                        "the `{relation}` of this connection is not read by `follow`: \
+                         {}",
+                        crate::spatial::relations::CORRELATION_REQUEST
+                    ),
+                )
+                .with_help(
+                    "`map links --connections` correlates this host's connections with the \
+                     hosts this session links to and draws the edge on its evidence; `jump \
+                     <link>` stands on a linked host (spec v0.4 §14.5, §35.4; ADR-1098)",
+                ));
+            }
             let interest = crate::spatial::relations::Interest::here()
                 .along(Some(relation.clone()))
                 .complete(arguments.flag("resolve"))

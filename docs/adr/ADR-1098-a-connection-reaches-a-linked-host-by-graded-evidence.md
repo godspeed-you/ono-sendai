@@ -135,3 +135,18 @@ by the unit contract only. Acceptance case 458 runs agents in one container, whi
 boot: it proves what that honestly can — the shell's own link connection is correlated with an
 agent proven to be this machine, ambiguity between two such agents is said, and nothing is read
 unasked.
+
+**The exit's request path (review COR-1).** The decision left a connection's `hosts` exit
+"available on request" with links held, and `follow host` (or `hosts`, or the relation's id),
+with `--resolve` or without, answered `spatial.unsupported` with the generic help "`follow
+<relation> --resolve` pays for it" — which paid for nothing, since no path in `follow` reads the
+far tables. v0.4.1 §34.3: "If a relationship is described as 'available on request', there MUST
+actually be a request path." The request path is `map links --connections`, and `follow` does not
+cross a link (§35.4: the map names the far root, `jump` stands on it). So the exit's detail now
+says "available on request: `map links --connections` reads it across the links", and `follow`
+along `connection.reaches_host` from a connection, by any of its words and with or without
+`--resolve`, refuses with that sentence and help naming `map links --connections` and `jump`,
+never `--resolve`. Encoded by
+`crates/ono-cli/tests/cross_host_correlation.rs::should_name_the_request_path_that_answers_whether_a_connection_reaches_a_linked_host`.
+Traversing the edge from `follow` — correlating the one connection on demand — is not built: it
+would cross a link from a command §35.4 keeps local.

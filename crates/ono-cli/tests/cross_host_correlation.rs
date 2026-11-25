@@ -394,3 +394,48 @@ fn should_draw_no_strong_edge_while_another_links_table_is_partial() {
         .unwrap_or_else(|| panic!("the cut link is reported, got {read:#?}"));
     assert_eq!(cut_read["status"], "partial", "got {cut_read}");
 }
+
+#[test]
+fn should_name_the_request_path_that_answers_whether_a_connection_reaches_a_linked_host() {
+    // v0.4.1 §34.3: "If a relationship is described as 'available on request', there MUST
+    // actually be a request path" (review COR-1). With a link held, a connection's `hosts` exit
+    // is read across the links, which `map links --connections` does; `follow` does not cross a
+    // link (§35.4). So the exit, and `follow` by its label, its group or the relation's id —
+    // with `--resolve` or without — name that request, never a `--resolve` that pays nothing.
+    let far = Peer::start("127.0.0.63", &[]);
+    let home = client_of(&[&far]);
+    let ours = owned_connection("127.0.0.64");
+    let pid = std::process::id();
+    let port = ours.here.port();
+    let prefix = format!(
+        "link host {} --transport tcp; enter process {pid}; follow socket :{port}",
+        far.address
+    );
+    for word in ["host", "hosts", "connection.reaches_host"] {
+        for resolve in ["", " --resolve"] {
+            let run = support::ono_at_home(
+                &home,
+                &format!(
+                    "{prefix}; try {{ follow {word}{resolve} }} catch e {{ $e | select code \
+                     message help | to json }}"
+                ),
+            );
+            run.assert_success();
+            assert!(
+                run.stderr().is_empty(),
+                "the connection place is reached, got {}",
+                run.stderr()
+            );
+            let said = support::last_line(&run);
+            assert!(
+                said.contains("map links --connections"),
+                "`follow {word}{resolve}` names the request that reads it, got {said}; stderr {}",
+                run.stderr()
+            );
+            assert!(
+                !said.contains("--resolve` pays"),
+                "no `--resolve` that pays for nothing, got {said}"
+            );
+        }
+    }
+}
