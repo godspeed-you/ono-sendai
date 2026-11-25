@@ -234,6 +234,20 @@ async fn should_carry_exactly_the_keys_the_contract_lets_cross_the_wire() {
             )
             .with_metadata("private_key", Value::string("-----BEGIN PRIVATE KEY-----"));
 
+        // The agent's half, observed on the wire (review TST-4): the client below filters what
+        // it reads, so a peer reading the raw `Reject` is the one that shows what the agent
+        // let cross.
+        let written = raw_details(error.clone()).await;
+        assert_eq!(
+            written,
+            row.over_the_wire
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<String>>(),
+            "refusals.yaml `{}`: the agent writes exactly the `over_the_wire` keys",
+            row.error
+        );
+
         let (near, far) = tokio::io::duplex(64 * 1024);
         let agent = tokio::spawn(async move {
             ono_protocol::refuse(
@@ -431,4 +445,45 @@ async fn should_keep_no_more_of_a_hostile_refusal_sentence_than_its_bound() {
         refused.message().len()
     );
     assert!(refused.message().ends_with('…'), "and says it was cut");
+}
+
+/// The `details` keys of the `Reject` the agent's refusal path writes for `error`, read off the
+/// wire by a peer that says hello and then reads raw bytes.
+async fn raw_details(error: ErrorValue) -> BTreeSet<String> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let (mut near, far) = tokio::io::duplex(64 * 1024);
+    let agent = tokio::spawn(async move {
+        ono_protocol::refuse(
+            UnauthenticatedTransport::new(far),
+            &error,
+            &Limits::default(),
+        )
+        .await
+    });
+    let mut hello = BytesMut::new();
+    ono_protocol::encode(
+        &Frame::new(FrameKind::Hello, 0, b"{}".to_vec()),
+        &Limits::default(),
+        &mut hello,
+    )
+    .expect("a frame");
+    near.write_all(&hello).await.expect("hello is written");
+    near.shutdown().await.expect("the peer hangs up its side");
+    let mut wire = Vec::new();
+    within(near.read_to_end(&mut wire))
+        .await
+        .expect("the refusal is read");
+    let _ = within(agent).await;
+    let mut buffer = BytesMut::from(&wire[..]);
+    let frame = ono_protocol::decode(&mut buffer, &Limits::default())
+        .expect("a frame")
+        .expect("one whole frame");
+    assert_eq!(frame.kind(), FrameKind::Reject);
+    let document: serde_json::Value =
+        serde_json::from_slice(frame.payload()).expect("the Reject is JSON");
+    document
+        .get("details")
+        .and_then(serde_json::Value::as_object)
+        .map(|details| details.keys().cloned().collect())
+        .unwrap_or_default()
 }
