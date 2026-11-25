@@ -58,9 +58,11 @@ pub struct AgentConfig {
 
 /// Where an agent's own link table comes from (`ono.link.links/1`, v0.4 §19.3, ADR-1097).
 ///
-/// An agent that holds links answers with them, as it observed them; one that holds none is
-/// given no source and announces no link table at all, so a peer is never told "no links" by an
-/// agent that does not keep the table.
+/// An agent given a source announces the request and answers with the links the source holds,
+/// as it observed them — an empty table for an agent that holds none, which is a true answer,
+/// since it does keep the table (`ono --agent` always gives one, ADR-1097). An agent given no
+/// source keeps no table and announces no request, so a peer is never told "no links" by an agent
+/// that does not keep one.
 #[async_trait::async_trait]
 pub trait LinkTableSource: Send + Sync + std::fmt::Debug + 'static {
     /// The links this agent holds, as it observes them now.

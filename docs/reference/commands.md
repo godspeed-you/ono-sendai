@@ -4962,6 +4962,8 @@ Enumerate known hosts from the configured providers and sources.
 | `--source` | `string` | Query one named host source. |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
+**Note.** Reading the host table probes the link this session holds to each host (`ono.link.probe/1`, ADR-1096): a listing waits at most two seconds for the probes, side by side, and reuses a measurement for five, and its `reachability` column says what the latest probe found. Nothing is dialled — a host without a held link is `unknown`, and `test host` is what dials one.
+
 **Examples**
 
 ```text

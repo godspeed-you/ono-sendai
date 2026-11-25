@@ -785,7 +785,7 @@ pub const RELATIONS: &[RelationSpec] = &[
         inverse_label: "host",
         canonical_group: "hosts",
         inverse_group: "hosts",
-        confidence: ConfidenceClaim::Fixed(Confidence::Exact),
+        confidence: ConfidenceClaim::ProviderDeclared,
         cost_class: CostClass::Remote,
     },
     RelationSpec {
