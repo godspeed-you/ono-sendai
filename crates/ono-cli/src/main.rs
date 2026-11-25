@@ -516,7 +516,12 @@ fn print_startup_summary(
 fn configured_limits(options: &ono_cli::invocation::Options) -> Option<ono_protocol::Limits> {
     let reporter = Reporter::new(Presentation::choose(std::io::stderr().is_terminal(), &[]));
     let mut session = Session::new(false);
-    let problems = config::load_settings(&mut session, options, &reporter);
+    let mut problems = config::load_settings(&mut session, options, &reporter);
+    // `--no-config` leaves the files out; the environment's ceilings still hold, as they did
+    // before the files were read at all (ADR-1042, review COR-R1).
+    if options.no_config {
+        problems.extend(config::load_environment(&mut session, &reporter));
+    }
     if !problems.is_empty() {
         let name = ono_core::SHORT_NAME;
         ono_core::diagnostic!(
@@ -529,7 +534,8 @@ fn configured_limits(options: &ono_cli::invocation::Options) -> Option<ono_proto
         }
         ono_core::diagnostic!(
             "{name}: fix the setting named above, or start with `ono --no-config --agent \
-             --listen` to use the built-in ceilings deliberately"
+             --listen` to leave the configuration files out deliberately (the `ONO_LIMITS_REMOTE_*` \
+             variables still apply)"
         );
         return None;
     }

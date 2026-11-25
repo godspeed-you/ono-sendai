@@ -189,6 +189,29 @@ fn should_read_no_configuration_file_when_told_not_to() {
 }
 
 #[test]
+fn should_keep_the_environments_ceilings_when_told_to_read_no_configuration_file() {
+    // v0.6.5's listener read the `ONO_LIMITS_REMOTE_*` variables whatever `--no-config` said, and
+    // the advice the agent gives on a configuration it cannot read is `--no-config`: dropping an
+    // operator's tighter ceiling there would widen the listener with no word (review COR-R1,
+    // v0.4.1 §55.2). `--no-config` leaves the files out; the environment still applies.
+    let home = scratch();
+    configure(&home, "set config limits.remote_connections = 3\n");
+
+    let agent = agent(
+        &home,
+        &["--no-config"],
+        &[("ONO_LIMITS_REMOTE_CONNECTIONS", "1")],
+    );
+
+    assert_eq!(
+        agent.field("maximum connections"),
+        Some("1"),
+        "the environment's ceiling holds under `--no-config`, the file's does not, got:\n{}",
+        agent.said()
+    );
+}
+
+#[test]
 fn should_refuse_to_listen_when_the_configuration_file_sets_a_ceiling_out_of_range() {
     let home = scratch();
     configure(&home, "set config limits.remote_connections = 0\n");

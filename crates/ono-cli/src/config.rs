@@ -195,18 +195,29 @@ pub fn load_settings(
     // Layer 4: `ONO_RENDER_TABLE_MAX_ROWS` sets `render.table.max_rows` (ADR-0010). Skipped
     // with `--no-config`, which reads no configuration at all.
     if !options.no_config {
-        let environment = session.env().clone();
-        let mut report = |error: &ErrorValue| {
-            reporter.error(error);
-            problems.push(error.clone());
-        };
-        session
-            .settings_mut()
-            .apply_environment(&environment, &mut report);
-        // A retired name met in the environment is noticed here (ADR-0933).
-        for notice in session.settings_mut().take_notices() {
-            reporter.notice(&notice);
-        }
+        problems.extend(load_environment(session, reporter));
+    }
+    problems
+}
+
+/// Applies the environment layer alone (`ONO_*`, ADR-0010) and returns its problems.
+///
+/// A listening agent applies it even under `--no-config` (ADR-1042, amended): its ceilings were
+/// read from the environment before any file was, and dropping an operator's tighter
+/// `ONO_LIMITS_REMOTE_*` because the files are left out would widen the listener silently.
+pub fn load_environment(session: &mut Session, reporter: &Reporter) -> Vec<ErrorValue> {
+    let mut problems = Vec::new();
+    let environment = session.env().clone();
+    let mut report = |error: &ErrorValue| {
+        reporter.error(error);
+        problems.push(error.clone());
+    };
+    session
+        .settings_mut()
+        .apply_environment(&environment, &mut report);
+    // A retired name met in the environment is noticed here (ADR-0933).
+    for notice in session.settings_mut().take_notices() {
+        reporter.notice(&notice);
     }
     problems
 }
