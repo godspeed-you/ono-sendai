@@ -36,7 +36,12 @@ cannot spell (`latest` is a legal version string for some managers).
   `provider.unsupported`; `--latest false` alone — no transition — was sealed too. One function,
   `ono_provider_linux::check_set_request`, now refuses both with `type.mismatch` (E0201, a usage
   error), called by the plan before anything is sealed and by both providers before any manager
-  runs.
+  runs. *Amended (review finding R2C-4):* the name and version grammar is applied at plan time
+  too — `ono_provider_linux::check_package_arguments`, the union of the deb and rpm name grammars
+  plus the version grammar, local archives let through — so `plan set package curl --version "*"`
+  is refused with E0201 like the direct command, not sealed and refused at apply; the
+  family-specific rules (apt's exact lookup, the narrower deb grammar) stay with the provider,
+  where the family is known.
 - *Amended (review finding SEC2-6):* a `--latest` plan's first effect says that the destination
   version is the newest the repositories offer when the plan is applied, resolved then by the
   package manager and not covered by the seal — the effect's `proposed` is null, and the text

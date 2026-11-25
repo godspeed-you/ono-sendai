@@ -1212,3 +1212,37 @@ fn should_seal_no_plan_for_a_set_that_names_two_destinations_or_none() {
         "no package manager ran"
     );
 }
+
+#[cfg(feature = "change")]
+#[test]
+fn should_seal_no_plan_for_a_version_or_a_name_a_manager_would_not_read_as_one_package() {
+    // Review finding R2C-4: `plan set package curl --version "*"` and `--version "-oX"` were
+    // sealed and refused only at apply, while the direct command refused them at once — the
+    // COR-C1 shape again. The plan applies the same grammar before anything is sealed.
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+    for script in [
+        "plan set package curl --version \"*\"",
+        "plan set package curl --version \"-oX\"",
+        "plan add package \"-oX\"",
+        "plan remove package \"cu*\"",
+    ] {
+        let run = ono_planning(&directory, &bin, script);
+        assert!(
+            !run.status().is_success() && run.output().contains("Ono-Sendai-E0201"),
+            "R2C-4: `{script}` is refused as not one package before it is sealed. Got {:?}",
+            run.output()
+        );
+    }
+    let plans = ono_planning(&directory, &bin, "get plan | to json");
+    plans.assert_success();
+    assert!(
+        rows(&plans).is_empty(),
+        "no plan was sealed. Got {:?}",
+        plans.output()
+    );
+    assert!(
+        !directory.path().join("apt-get.log").exists(),
+        "no package manager ran"
+    );
+}

@@ -106,7 +106,10 @@ pub use identity::IdentityProvider;
 pub use kernel::KernelProvider;
 pub use namespaces::NamespaceProvider;
 pub use package_sources::package_source_schema;
-pub use packages::{PACKAGE_PROVIDER_ID, PackageProvider, check_set_request, package_schema};
+pub use packages::{
+    PACKAGE_PROVIDER_ID, PackageProvider, check_package_arguments, check_set_request,
+    package_schema,
+};
 pub use packages_rpm::{RPM_PROVIDER_ID, RpmPackageProvider};
 pub use process::{
     Clock, KernelPriorities, KernelSignals, Priorities, ProcessProvider, Signals, SystemClock,

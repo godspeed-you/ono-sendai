@@ -308,7 +308,7 @@ fn unavailable_reason() -> String {
 /// Whether `name` is a package name rpm would accept: alphanumerics and `+-._~^`, starting with
 /// an alphanumeric. Unlike a Debian name it may carry capitals and be one character long —
 /// `NetworkManager` and `R` are both real packages.
-fn is_rpm_package_name(name: &str) -> bool {
+pub(crate) fn is_rpm_package_name(name: &str) -> bool {
     let mut chars = name.chars();
     chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
         && chars

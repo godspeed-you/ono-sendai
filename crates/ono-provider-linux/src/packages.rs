@@ -385,6 +385,39 @@ fn check_apt_request(action: &Action, name: &str) -> Result<(), ErrorValue> {
     Ok(())
 }
 
+/// Whether a package request's name and version are one package and one version to every
+/// manager this crate drives (review finding R2C-4).
+///
+/// The plan applies it before anything is sealed, so the plan and the direct command refuse the
+/// same requests: a name that is neither a deb-control(5) nor an rpm name (anything beginning with
+/// `-`, globs, paths, provides) and a version that is not a version (`*`, `-oX`, a space). The
+/// family-specific rules — apt's exact lookup for a trailing `-`/`+` or a `.`, the narrower deb
+/// grammar on a dpkg host — are applied where the family is known, by the provider before any
+/// process starts.
+///
+/// # Errors
+///
+/// `type.mismatch` (E0201) for either.
+pub fn check_package_arguments(name: &str, version: Option<&Value>) -> Result<(), ErrorValue> {
+    // A local archive is a path the manager is handed after `--` (ADR-0957).
+    let archive = (name.starts_with('/') || name.starts_with("./") || name.starts_with("../"))
+        && (name.ends_with(".deb") || name.ends_with(".rpm"))
+        && !name.chars().any(char::is_control);
+    if !archive && !is_package_name(name) && !crate::packages_rpm::is_rpm_package_name(name) {
+        return Err(not_one_package("package name", name, "a package manager"));
+    }
+    if let Some(version) = version {
+        let text = match version {
+            Value::String(text) => text.to_string(),
+            other => other.to_string(),
+        };
+        if !is_version_text(&text) {
+            return Err(not_one_package("version", &text, "a package manager"));
+        }
+    }
+    Ok(())
+}
+
 /// Whether a `set package` asks for one transition (ADR-1084, review findings COR-C1, COR-C2).
 ///
 /// `--latest` and `--version` name two destinations for one transition, and a `set` that names

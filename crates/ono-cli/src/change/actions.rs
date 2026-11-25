@@ -453,6 +453,13 @@ pub fn resolve(
             ));
         }
     };
+    // R2C-4: a package's name and version are held to the grammar the providers hold them to,
+    // before anything is sealed, so the plan and the direct command refuse alike.
+    if contract.id().starts_with("ono.package.") {
+        for subject in &subjects {
+            ono_provider_linux::check_package_arguments(subject, bound.option("version"))?;
+        }
+    }
     // ADR-0082 §1: the object a provider is asked about is the first declared selector that was
     // written, and a `path` selector is acted on rather than resolved. Recording which one it was
     // is what lets execution build the same action the shell's own mutation path builds.
