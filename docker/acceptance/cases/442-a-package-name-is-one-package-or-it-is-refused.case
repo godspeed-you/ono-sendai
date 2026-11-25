@@ -1,0 +1,39 @@
+# Review finding SEC-C-1 (issue #291, ADR-1084 amended) — a package name reaches apt-get, dpkg-query,
+# dnf, zypper and rpm as one package after `--`, or it is refused with `type.mismatch` before any
+# process starts, the root check included: a "name" beginning with `-` is an option, apt reads
+# `curl-` as "remove curl" and `xz.` as a pattern over every package. COR-C5: `set --latest` of a
+# package that is not installed is refused before any manager runs (`io.not_found`), where apt's
+# `--only-upgrade` would skip it with status 0 and the action would report success.
+case: a package name is one package or it is refused
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  prove s1 "an option-shaped name is refused as not a package, not as needing root (SEC-C-1)" \
+    'ono -c "add package \"-oDebug::pkgProblemResolver=1\" | to json" 2>&1 | grep -q "Ono-Sendai-E0201"'
+  prove s2 "apt's remove suffix is refused (SEC-C-1)" \
+    'ono -c "set package \"dpkg-\" --latest | to json" 2>&1 | grep -q "Ono-Sendai-E0201"'
+  prove s3 "a dotted name no package has is refused rather than read as a pattern (SEC-C-1)" \
+    'ono -c "add package \"xz.\" | to json" 2>&1 | grep -q "Ono-Sendai-E0201"'
+  prove s4 "an update of a package that is not installed is refused before any manager runs (COR-C5)" \
+    'ono -c "set package no-such-package-here --latest | to json" 2>&1 | grep -q "Ono-Sendai-E0301"'
+  prove s5 "an ordinary name still reaches the privilege check (§17.2)" \
+    'ono -c "set package dpkg --latest | to json" 2>&1 | grep -q "Ono-Sendai-E0302"'
+  echo 'package names: done'
+exit: 0
+stdout-contains: PROVED s1
+stdout-contains: PROVED s2
+stdout-contains: PROVED s3
+stdout-contains: PROVED s4
+stdout-contains: PROVED s5
+stdout-contains: package names: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked

@@ -1,0 +1,39 @@
+# Review findings COR-T3 and COR-T4 (issue #148, ADR-1066 amended) — at a historical coordinate
+# `why <target>` looks for the target in the reconstruction (v0.5 §14.1). A place the history this
+# shell can reconstruct does not hold was not recorded there: §12.3's `temporal.not_recorded`, not
+# v0.4 §40's `spatial.not_found`, which says no such place exists. And a stage's own `--at` is the
+# same coordinate as `at` (§4.5): `why … --at X` and `at X; why …` answer alike.
+case: why at a past coordinate says what was not recorded
+timeout: 120
+env: NO_COLOR=1
+run: |
+  prove() {
+    local id="$1" what="$2" check="$3" out
+    if out=$(eval "$check" 2>&1); then
+      printf 'PROVED %s: %s\n' "$id" "$what"
+    else
+      printf 'FAILED %s: %s\n' "$id" "$what"
+      printf '%s\n' "$out" | head -6 | sed 's/^/        /'
+    fi
+  }
+  code() { grep -oE 'Ono-Sendai-E[0-9]+' "$1" | head -1; }
+
+  ono -c "start recorder | count; sleep 2s; at -1s; why process 1" > /tmp/w428a.txt 2>&1
+  prove n1 "a target the past did not record is not \`spatial.not_found\` (COR-T3)" \
+    '! grep -q "spatial.not_found" /tmp/w428a.txt'
+  prove n2 "it is \`temporal.not_recorded\` or an explanation (§12.3, §16.4)" \
+    'grep -q "temporal.not_recorded" /tmp/w428a.txt || grep -q "has no recorded state transition\|state_or_change" /tmp/w428a.txt'
+
+  ono -c "sleep 2s; why process 1 --at -1s" > /tmp/w428b.txt 2>&1
+  ono -c "sleep 2s; at -1s; why process 1" > /tmp/w428c.txt 2>&1
+  echo "--at: $(code /tmp/w428b.txt); at: $(code /tmp/w428c.txt)"
+  prove n3 "\`--at\` and \`at\` are one coordinate (COR-T4, §4.5)" \
+    '[ "$(code /tmp/w428b.txt)" = "$(code /tmp/w428c.txt)" ]'
+  echo 'why at a coordinate: done'
+exit: 0
+stdout-contains: PROVED n1
+stdout-contains: PROVED n2
+stdout-contains: PROVED n3
+stdout-contains: why at a coordinate: done
+stdout-not-contains: FAILED
+stdout-not-contains: panicked
