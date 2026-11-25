@@ -20,27 +20,65 @@ mod change_support;
 #[path = "support/service_manager.rs"]
 mod service_manager;
 
-use change_support::{
-    home, in_the_past, one, ono_at, ono_with, plan, requires_a_service, rows, service_generation,
-    text,
-};
-use ono_testkit::{SkipReason, skipped};
+use change_support::{home, in_the_past, one, ono_at, ono_with, plan, rows, text};
+use ono_testkit::{Run, Scratch, SkipReason, skipped};
 use service_manager::{FixtureServiceManager, Requests};
 
-/// What a host that serves no systemd unit cannot present (v0.4.1 §38.1).
-const NO_SERVICE: &str = "this host serves no systemd unit, so there is nothing to plan against";
+/// What a host without `dbus-daemon` cannot present (v0.4.1 §38.1).
+const NO_BUS: &str = "this needs `dbus-daemon`, so the fixture can serve the service manager \
+                      whose units the plan freezes";
+
+/// A scratch home and a service manager holding units of the test's own (ADR-1080).
+///
+/// The host's unit list is not a fixture: a unit that comes or goes while a suite runs makes a
+/// plan over `get service | take 3` measure the machine (issue #300, review finding TST-17).
+struct Services {
+    home: Scratch,
+    manager: FixtureServiceManager,
+}
+
+impl Services {
+    /// Five units, `fixture-0.service` … `fixture-4.service`, or `None` without `dbus-daemon`.
+    fn start() -> Option<Self> {
+        Some(Self {
+            manager: FixtureServiceManager::try_start(5)?,
+            home: home(),
+        })
+    }
+
+    /// The unit a single-target plan names.
+    const UNIT: &'static str = "fixture-0.service";
+
+    /// `script` in the home, against the fixture's service manager.
+    fn ono(&self, script: &str) -> Run {
+        change_support::ono_on_bus(self.home.path(), &self.manager.address(), script)
+    }
+
+    /// The `state`, `substate` and `since` of `name`, the generation §7.2 freezes.
+    fn generation(&self, name: &str) -> String {
+        let run = self.ono(&format!("get service {name} | to json"));
+        run.assert_success();
+        let record = one(&run);
+        format!(
+            "{}|{}|{}",
+            record["state"].as_str().unwrap_or("unknown"),
+            record["substate"].as_str().unwrap_or("unknown"),
+            record["since"].as_str().unwrap_or("unknown"),
+        )
+    }
+}
 
 #[test]
 fn should_leave_the_service_untouched_when_a_restart_is_planned() {
-    let home = home();
-    let Some(service) = requires_a_service(home.path()) else {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    let Some(services) = Services::start() else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
     };
-    let before = service_generation(home.path(), &service);
-    let run = ono_at(home.path(), &format!("plan restart service {service}"));
+    let service = Services::UNIT;
+    let before = services.generation(service);
+    let run = services.ono(&format!("plan restart service {service}"));
     run.assert_success();
-    let after = service_generation(home.path(), &service);
+    let after = services.generation(service);
     assert_eq!(
         before, after,
         "v0.6 §2.1 and §55.1 case 1: creating a plan MUST NOT mutate the target system, so the \
@@ -51,12 +89,12 @@ fn should_leave_the_service_untouched_when_a_restart_is_planned() {
 
 #[test]
 fn should_say_that_nothing_ran_when_a_plan_is_shown() {
-    let home = home();
-    let Some(service) = requires_a_service(home.path()) else {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    let Some(services) = Services::start() else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
     };
-    let run = ono_at(home.path(), &format!("plan restart service {service}"));
+    let service = Services::UNIT;
+    let run = services.ono(&format!("plan restart service {service}"));
     run.assert_success();
     assert!(
         run.stdout().contains("PLAN NOT EXECUTED"),
@@ -68,15 +106,12 @@ fn should_say_that_nothing_ran_when_a_plan_is_shown() {
 
 #[test]
 fn should_answer_with_a_sealed_plan_when_a_mutation_is_planned() {
-    let home = home();
-    let Some(service) = requires_a_service(home.path()) else {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    let Some(services) = Services::start() else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
     };
-    let run = ono_at(
-        home.path(),
-        &format!("plan restart service {service} | to json"),
-    );
+    let service = Services::UNIT;
+    let run = services.ono(&format!("plan restart service {service} | to json"));
     run.assert_success();
     let record = one(&run);
     assert_eq!(
@@ -234,15 +269,11 @@ fn should_refuse_a_query_as_a_mutation() {
 
 #[test]
 fn should_produce_one_plan_when_a_pipeline_supplies_the_targets() {
-    let home = home();
-    if requires_a_service(home.path()).is_none() {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    let Some(services) = Services::start() else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
-    }
-    let run = ono_at(
-        home.path(),
-        "get service | take 3 | plan restart service | to json",
-    );
+    };
+    let run = services.ono("get service | take 3 | plan restart service | to json");
     run.assert_success();
     let rows = rows(&run);
     assert_eq!(
@@ -255,15 +286,11 @@ fn should_produce_one_plan_when_a_pipeline_supplies_the_targets() {
 
 #[test]
 fn should_freeze_exactly_the_objects_the_pipeline_resolved() {
-    let home = home();
-    if requires_a_service(home.path()).is_none() {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    let Some(services) = Services::start() else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
-    }
-    let run = ono_at(
-        home.path(),
-        "get service | take 3 | plan restart service | to json",
-    );
+    };
+    let run = services.ono("get service | take 3 | plan restart service | to json");
     run.assert_success();
     let record = one(&run);
     let targets = record["targets"]
@@ -280,15 +307,12 @@ fn should_freeze_exactly_the_objects_the_pipeline_resolved() {
 
 #[test]
 fn should_produce_one_plan_per_object_when_it_is_asked_for() {
-    let home = home();
-    if requires_a_service(home.path()).is_none() {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    let Some(services) = Services::start() else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
-    }
-    let run = ono_at(
-        home.path(),
-        "get service | take 3 | plan --one-per-object restart service | to json",
-    );
+    };
+    let run =
+        services.ono("get service | take 3 | plan --one-per-object restart service | to json");
     run.assert_success();
     let rows = rows(&run);
     assert_eq!(
@@ -330,18 +354,15 @@ fn should_refuse_a_block_that_declares_a_function() {
 
 #[test]
 fn should_split_a_block_into_actions_and_verification_contracts() {
-    let home = home();
-    let Some(service) = requires_a_service(home.path()) else {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    let Some(services) = Services::start() else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
     };
-    let run = ono_at(
-        home.path(),
-        &format!(
-            "plan {{\n    restart service {service}\n    verify service {service} substate == \
+    let service = Services::UNIT;
+    let run = services.ono(&format!(
+        "plan {{\n    restart service {service}\n    verify service {service} substate == \
              running\n}} | to json"
-        ),
-    );
+    ));
     run.assert_success();
     let record = one(&run);
     let actions = record["actions"].as_sequence().map_or(0, Vec::len);
@@ -417,15 +438,12 @@ fn should_refuse_unbounded_parallelism() {
 
 #[test]
 fn should_record_the_strategy_in_the_sealed_plan() {
-    let home = home();
-    if requires_a_service(home.path()).is_none() {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    let Some(services) = Services::start() else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
-    }
-    let run = ono_at(
-        home.path(),
-        "get service | take 3 | plan --strategy 'batch 2' restart service | to json",
-    );
+    };
+    let run =
+        services.ono("get service | take 3 | plan --strategy 'batch 2' restart service | to json");
     run.assert_success();
     let record = one(&run);
     assert_eq!(

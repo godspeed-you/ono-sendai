@@ -72,12 +72,7 @@ impl Bulk {
 
     /// `script` in the plan's home, against the fixture's service manager.
     fn ono(&self, script: &str) -> Run {
-        ono_with(
-            self.home.path(),
-            "DBUS_SYSTEM_BUS_ADDRESS",
-            &self.manager.address(),
-            script,
-        )
+        change_support::ono_on_bus(self.home.path(), &self.manager.address(), script)
     }
 }
 

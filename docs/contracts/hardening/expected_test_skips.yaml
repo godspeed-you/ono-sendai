@@ -384,35 +384,35 @@ declared:
     category: external_tool_unavailable
     prerequisite: "`dbus-daemon`, so the fixture can serve a service manager whose requests the test counts at the D-Bus boundary (ADR-1080, ADR-1081)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_leave_the_service_untouched_when_a_restart_is_planned"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve the service manager whose units the plan freezes (ADR-1080)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_answer_with_a_sealed_plan_when_a_mutation_is_planned"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve the service manager whose units the plan freezes (ADR-1080)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_say_that_nothing_ran_when_a_plan_is_shown"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve the service manager whose units the plan freezes (ADR-1080)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_produce_one_plan_when_a_pipeline_supplies_the_targets"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve the service manager whose units the plan freezes (ADR-1080)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_freeze_exactly_the_objects_the_pipeline_resolved"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve the service manager whose units the plan freezes (ADR-1080)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_produce_one_plan_per_object_when_it_is_asked_for"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve the service manager whose units the plan freezes (ADR-1080)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_split_a_block_into_actions_and_verification_contracts"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve the service manager whose units the plan freezes (ADR-1080)"
   - id: "crates/ono-cli/tests/change_planning.rs::should_record_the_strategy_in_the_sealed_plan"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has an object to freeze"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve the service manager whose units the plan freezes (ADR-1080)"
   - id: "crates/ono-cli/tests/change_topology.rs::should_name_the_mounts_beneath_a_directory_and_its_size_when_a_recursive_removal_is_planned"
     category: fixture_not_applicable
     prerequisite: "a filesystem mounted beneath /dev (devpts, a /dev/shm tmpfs, mqueue), which every ordinary Linux host and container has"
   - id: "crates/ono-cli/tests/change_topology.rs::should_walk_past_the_direct_target_or_name_a_boundary_when_a_restart_is_planned"
-    category: fixture_not_applicable
-    prerequisite: "the host serves at least one systemd unit, so `plan restart service` has a place in the v0.4 topology to walk from"
+    category: external_tool_unavailable
+    prerequisite: "`dbus-daemon`, so the fixture can serve a service manager whose units have a topology to walk (ADR-1080)"
   - id: "crates/ono-cli/tests/change_revalidate.rs::should_freeze_the_installed_version_when_a_package_mutation_is_planned"
     category: fixture_not_applicable
     prerequisite: "a package manager on the host that lists at least one installed package, so a package plan has a version to freeze"
