@@ -260,11 +260,11 @@ fn entry(held: &Held, link: Option<&ono_remote::RemoteLink>) -> ono_protocol::Li
     ono_protocol::LinkEntry {
         name: held.declared.name.clone(),
         host: held.declared.address.clone(),
-        transport: "tcp".to_owned(),
+        transport: ono_protocol::LinkTransport::Tcp,
         state: if alive.is_some() {
-            "connected".to_owned()
+            ono_protocol::LinkState::Connected
         } else {
-            "disconnected".to_owned()
+            ono_protocol::LinkState::Disconnected
         },
         fingerprint: alive.and_then(|link| {
             link.negotiated()
@@ -277,7 +277,7 @@ fn entry(held: &Held, link: Option<&ono_remote::RemoteLink>) -> ono_protocol::Li
             .as_ref()
             .and_then(|measured| measured.latency)
             .and_then(nanos),
-        measured_at: measured.as_ref().map(|measured| measured.at.to_string()),
-        since: state.since.map(|since| since.to_string()),
+        measured_at: measured.as_ref().map(|measured| measured.at),
+        since: state.since,
     }
 }

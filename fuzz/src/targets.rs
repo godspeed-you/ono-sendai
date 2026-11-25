@@ -230,9 +230,15 @@ fn remote_protocol(data: &[u8]) {
             );
             for entry in &table.links {
                 assert!(
-                    [&entry.name, &entry.host, &entry.transport, &entry.state]
-                        .iter()
-                        .all(|text| text.len() <= ono_protocol::MAX_LINK_FIELD_BYTES),
+                    [
+                        Some(&entry.name),
+                        Some(&entry.host),
+                        entry.fingerprint.as_ref(),
+                        entry.boot_id.as_ref(),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .all(|text| text.len() <= ono_protocol::MAX_LINK_FIELD_BYTES),
                     "a link table field over the bound was accepted"
                 );
             }

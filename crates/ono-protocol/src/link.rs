@@ -677,9 +677,10 @@ impl Link {
     /// Sent only when the handshake negotiated the request; otherwise the refusal is local. The
     /// agent checks the connection may observe before it answers, and a refusal arrives as its
     /// structured error — never as an empty table. A table larger than
-    /// [`MAX_LINK_TABLE_ENTRIES`](crate::MAX_LINK_TABLE_ENTRIES) or with a field longer than
-    /// [`MAX_LINK_FIELD_BYTES`](crate::MAX_LINK_FIELD_BYTES) is refused when it is decoded, and
-    /// fails the link as a protocol mismatch, as any malformed frame does.
+    /// [`MAX_LINK_TABLE_ENTRIES`](crate::MAX_LINK_TABLE_ENTRIES), with a field longer than
+    /// [`MAX_LINK_FIELD_BYTES`](crate::MAX_LINK_FIELD_BYTES) or a state or transport this build
+    /// does not know is refused when it is decoded: this request fails as a protocol mismatch,
+    /// and the link and its other streams are unharmed.
     ///
     /// # Errors
     ///
@@ -1155,6 +1156,12 @@ fn spawn_reader<R>(
             };
             let message = match decode_message(frame.kind(), frame.payload(), &schemas, &limits) {
                 Ok(message) => message,
+                // A link table this side must not believe — over its bounds, an unknown state —
+                // arrived whole in a frame that was read whole: it fails the request it answers,
+                // not the link every other stream rides on (reviews COR-4, SEC-4).
+                Err(error) if frame.kind() == FrameKind::LinkTable => {
+                    Message::Failure(ErrorValue::from(error))
+                }
                 Err(error) => {
                     inner.fail(&ErrorValue::from(error));
                     return;

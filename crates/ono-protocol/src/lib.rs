@@ -90,7 +90,9 @@ pub use limits::{
     MAX_CREDIT, MAX_FRAME_PAYLOAD, MAX_PENDING_HANDSHAKES, MAX_STREAMS, MAX_VALUE_DEPTH,
 };
 pub use link::{ClientConfig, Link, OpenStream, Prober, RemoteMessage, RemoteStream};
-pub use links::{LinkEntry, LinkTable, MAX_LINK_FIELD_BYTES, MAX_LINK_TABLE_ENTRIES};
+pub use links::{
+    LinkEntry, LinkState, LinkTable, LinkTransport, MAX_LINK_FIELD_BYTES, MAX_LINK_TABLE_ENTRIES,
+};
 pub use message::{ActRequest, AdaptRequest, Message, RemoteQuery, decode_message, encode_message};
 pub use service::{
     RemoteService, ServerAuthorization, ServerConfig, StreamResponder, handshake_timeout_refusal,

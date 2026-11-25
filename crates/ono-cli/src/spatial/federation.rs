@@ -117,11 +117,7 @@ pub async fn second_hop(
             &link.name,
             ono_spatial_core::BootIdentity::unknown_boot(&link.name),
         );
-        let observed = table
-            .observed_at
-            .as_deref()
-            .and_then(|at| at.parse::<Timestamp>().ok())
-            .unwrap_or(now);
+        let observed = table.observed_at.unwrap_or(now);
         for entry in &table.links {
             let (target, joins) = place_of(entry, link, hop1, center, own, &mut drawn);
             if let Some(place) = joins {
@@ -256,7 +252,8 @@ fn place_of(
     ono_spatial_core::space::learn(&scope);
     let root = space::root().spatial_id_in(Some(&scope));
     drawn.insert(key, root.clone());
-    let place = HorizonPlace::new(root.clone(), 2, None).in_state(Some(entry.state.clone()));
+    let place =
+        HorizonPlace::new(root.clone(), 2, None).in_state(Some(entry.state.as_str().to_owned()));
     (root, Some(place))
 }
 
@@ -276,7 +273,7 @@ fn edge(
     let relation = ono_spatial_core::relation::spec("host.linked_to")
         .map(ono_spatial_core::RelationSpec::relation_type)
         .unwrap_or_else(|| unreachable!("`host.linked_to` is declared in relations.yaml"));
-    let claimed = if entry.state == "connected" {
+    let claimed = if entry.state == ono_protocol::LinkState::Connected {
         "exact"
     } else {
         "user_declared"
@@ -311,8 +308,8 @@ fn edge(
     .with_attribute("verified", Value::Bool(false))
     .with_attribute("far_name", Value::string(&entry.name))
     .with_attribute("far_host", Value::string(&entry.host))
-    .with_attribute("transport", Value::string(&entry.transport))
-    .with_attribute("state", Value::string(&entry.state))
+    .with_attribute("transport", Value::string(entry.transport.as_str()))
+    .with_attribute("state", Value::string(entry.state.as_str()))
     .with_attribute("fingerprint", text(entry.fingerprint.as_ref()))
     .with_attribute("boot_id", text(entry.boot_id.as_ref()))
     .with_attribute("round_trip", nanos(entry.round_trip_ns))

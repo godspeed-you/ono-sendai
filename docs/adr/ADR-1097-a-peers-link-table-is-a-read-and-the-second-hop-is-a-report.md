@@ -139,3 +139,26 @@ section — "not permitted to see its links" is printed as that.
   verified topology; the far side's claim is kept, beside this session's.
 - **Merge far hosts by boot id or address.** Every local peer shares a kernel and `127.0.0.1`; a
   key a peer proved is identity, the rest is context.
+
+## Amendment (v0.6.6 remediation, reviews ARC-6, COR-4, SEC-4)
+
+**A closed wire format.** `LinkEntry.state` and `.transport` were free strings and the three
+times free text, so whatever a far agent wrote flowed into `ono.spatial-map/1` as a place state.
+They are now closed enums (`LinkState`: `connected`, `disconnected`; `LinkTransport`: `tcp`,
+`ssh`, `local`) and typed timestamps (RFC 3339 on the wire, as before), so the decoder refuses a
+value this build does not define. The JSON an honest agent writes is unchanged, so agents of this
+release interoperate; the change is that a table with an unknown value is now refused.
+
+**A table the client refuses fails the request, not the link.** A held link's table carries what
+its next hops said — a boot id, a fingerprint — and an honest middle agent passed a 300-byte boot
+id on, which the client refused as a protocol mismatch that failed its *whole link*, the one the
+user's interactive session rides on. Now `LinkTable::of`, which every agent builds its table with,
+leaves out an optional field over `MAX_LINK_FIELD_BYTES` (unknown, never cut into something else)
+and an entry whose name or host is over it (the table marked truncated); and on the client a link
+table that fails to decode — over a bound, an unknown state — arrives whole in a frame read whole,
+so it fails the request it answers with `remote.protocol_mismatch` and the link and its other
+streams are unharmed. Tests: `crates/ono-protocol/tests/link_table.rs::
+should_send_a_table_whose_next_hop_reported_an_over_long_field_without_it`,
+`::should_refuse_an_oversized_table_as_a_mismatch_and_keep_the_link`,
+`::should_refuse_a_field_longer_than_the_bound_as_a_mismatch_and_keep_the_link`,
+`::should_refuse_a_link_state_or_transport_this_build_does_not_define`.
