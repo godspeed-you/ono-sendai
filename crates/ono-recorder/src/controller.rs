@@ -365,11 +365,20 @@ impl Recorder {
             Some(Err(refusal)) => return Ok(self.degrade(settings, now, refusal)),
         };
 
-        let declared = self.declare_continuity(&ledger, now)?;
-        if let Some(plan) = plan.as_ref() {
-            self.record_gaps(&ledger, &plan.gaps, now)?;
-        }
-        self.open_coverage(&ledger, now)?;
+        // §44.1's writes are the first the store takes. One that fails — a full disk, a file-size
+        // limit — is a start that was refused after the store opened, and it is `failed` with the
+        // reason like a store that would not open, never a quiet `stopped` (issue #142, COR-T2).
+        let written = self.declare_continuity(&ledger, now).and_then(|declared| {
+            if let Some(plan) = plan.as_ref() {
+                self.record_gaps(&ledger, &plan.gaps, now)?;
+            }
+            self.open_coverage(&ledger, now)?;
+            Ok(declared)
+        });
+        let declared = match written {
+            Ok(declared) => declared,
+            Err(refusal) => return Ok(self.degrade(settings, now, refusal)),
+        };
 
         {
             let mut state = self.lock_state();
