@@ -77,6 +77,7 @@ pub use authorization::{
     ActionGrant, AuthorizationContext, AuthorizedClient, AuthorizedClients, PeerAuthorization,
     refusal_guidance, unauthenticated_refusal, update_store, write_store,
 };
+pub use connection::{MAX_UNCREDITED_FRAMES, WRITE_DEADLINE};
 pub use error::ProtocolError;
 pub use features::{FEATURES, LINKS_CAPABILITY, PROBE_CAPABILITY, is_feature};
 pub use frame::{FRAME_HEADER_LEN, FRAME_VERSION, Frame, FrameKind, decode, encode};

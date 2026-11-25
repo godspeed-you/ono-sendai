@@ -23,11 +23,30 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 
 /// What a test can do to the frames a client sends.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Tap {
     dropped: Arc<Mutex<HashSet<FrameKind>>>,
     seen: Arc<Mutex<Vec<FrameKind>>>,
-    inject: Option<mpsc::UnboundedSender<Frame>>,
+    inject: Option<mpsc::UnboundedSender<Option<Frame>>>,
+    /// While true, nothing the agent writes is read: a client that stopped reading.
+    holding: Arc<tokio::sync::watch::Sender<bool>>,
+    /// Bytes the agent wrote that reached the client.
+    delivered: Arc<std::sync::atomic::AtomicUsize>,
+    /// Set once the agent's sending direction has ended.
+    closed: Arc<tokio::sync::watch::Sender<bool>>,
+}
+
+impl Default for Tap {
+    fn default() -> Self {
+        Self {
+            dropped: Arc::default(),
+            seen: Arc::default(),
+            inject: None,
+            holding: Arc::new(tokio::sync::watch::channel(false).0),
+            delivered: Arc::default(),
+            closed: Arc::new(tokio::sync::watch::channel(false).0),
+        }
+    }
 }
 
 impl Tap {
@@ -55,10 +74,43 @@ impl Tap {
             .clone()
     }
 
+    /// Stops reading what the agent writes, as a client that stopped reading would.
+    pub fn hold_answers(&self) {
+        self.holding.send_replace(true);
+    }
+
+    /// Reads what the agent writes again.
+    pub fn release_answers(&self) {
+        self.holding.send_replace(false);
+    }
+
+    /// How many bytes the agent wrote reached the client so far.
+    pub fn delivered(&self) -> usize {
+        self.delivered.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Resolves once the agent's sending direction has ended: it let the socket go.
+    pub async fn agent_closed(&self) {
+        let mut closed = self.closed.subscribe();
+        while !*closed.borrow_and_update() {
+            if closed.changed().await.is_err() {
+                return;
+            }
+        }
+    }
+
+    /// Ends the client's sending direction: the agent reads end of input.
+    pub fn hang_up(&self) {
+        // Through the same queue as injected frames, so every frame injected before it is sent.
+        if let Some(inject) = &self.inject {
+            let _ = inject.send(None);
+        }
+    }
+
     /// Puts `frame` on the wire to the agent, as if the client had sent it.
     pub fn inject(&self, frame: Frame) {
         if let Some(inject) = &self.inject {
-            let _ = inject.send(frame);
+            let _ = inject.send(Some(frame));
         }
     }
 }
@@ -90,9 +142,21 @@ pub async fn connect_proving<S: RemoteService>(
     service: S,
     proves: Option<ono_protocol::HostKey>,
 ) -> Result<Tapped, ErrorValue> {
+    connect_through(client, server, service, proves, 64 * 1024).await
+}
+
+/// The same, with `buffer` bytes of room on each side of the tap: a small buffer is a client
+/// whose socket fills as soon as it stops reading.
+pub async fn connect_through<S: RemoteService>(
+    client: ClientConfig,
+    server: ServerConfig,
+    service: S,
+    proves: Option<ono_protocol::HostKey>,
+    buffer: usize,
+) -> Result<Tapped, ErrorValue> {
     let (client_near, client_far) = tokio::io::duplex(64 * 1024);
-    let (server_near, server_far) = tokio::io::duplex(64 * 1024);
-    let (inject, mut injected) = mpsc::unbounded_channel::<Frame>();
+    let (server_near, server_far) = tokio::io::duplex(buffer);
+    let (inject, mut injected) = mpsc::unbounded_channel::<Option<Frame>>();
     let tap = Tap {
         inject: Some(inject),
         ..Tap::default()
@@ -105,9 +169,31 @@ pub async fn connect_proving<S: RemoteService>(
 
     let (mut to_server_read, mut to_server) = tokio::io::split(server_far);
     let (mut from_client, mut to_client) = tokio::io::split(client_far);
-    // Agent → client: unchanged.
+    // Agent → client: unchanged, unless the test holds the answers back.
+    let reading = tap.clone();
     tokio::spawn(async move {
-        let _ = tokio::io::copy(&mut to_server_read, &mut to_client).await;
+        let mut holding = reading.holding.subscribe();
+        let mut chunk = vec![0u8; 16 * 1024];
+        loop {
+            while *holding.borrow_and_update() {
+                if holding.changed().await.is_err() {
+                    return;
+                }
+            }
+            let Ok(read) = to_server_read.read(&mut chunk).await else {
+                break;
+            };
+            if read == 0 {
+                break;
+            }
+            reading
+                .delivered
+                .fetch_add(read, std::sync::atomic::Ordering::SeqCst);
+            if to_client.write_all(&chunk[..read]).await.is_err() {
+                break;
+            }
+        }
+        reading.closed.send_replace(true);
         let _ = to_client.shutdown().await;
     });
     // Client → agent: frame by frame, so a kind can be dropped and a frame injected.
@@ -144,6 +230,7 @@ pub async fn connect_proving<S: RemoteService>(
                     }
                 }
                 Some(frame) = injected.recv() => {
+                    let Some(frame) = frame else { break };
                     if write(&mut to_server, &frame, &limits).await.is_err() {
                         return;
                     }

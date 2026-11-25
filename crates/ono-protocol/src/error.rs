@@ -70,6 +70,13 @@ pub enum ProtocolError {
         /// The largest number of concurrent streams the link allows.
         limit: usize,
     },
+    /// The peer asked for more answers no credit governs — probes, streams refused — than may
+    /// wait unread at once: it is not reading what it asks for (ADR-1115).
+    #[error("the peer left {limit} answers it asked for unread, which is the limit")]
+    UnreadAnswers {
+        /// How many such answers may wait to be written at once.
+        limit: usize,
+    },
 }
 
 impl From<ProtocolError> for ErrorValue {
@@ -78,7 +85,8 @@ impl From<ProtocolError> for ErrorValue {
             ProtocolError::FrameTooLarge { .. }
             | ProtocolError::ValueTooDeep { .. }
             | ProtocolError::CreditExceeded { .. }
-            | ProtocolError::TooManyStreams { .. } => {
+            | ProtocolError::TooManyStreams { .. }
+            | ProtocolError::UnreadAnswers { .. } => {
                 "the remote is exceeding a bound this link enforces; the link is not usable while \
                  it does"
             }
