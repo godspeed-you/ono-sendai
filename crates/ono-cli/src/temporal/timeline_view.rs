@@ -857,8 +857,8 @@ mod tests {
 
     use super::*;
     use ono_temporal_core::{
-        ClockDomain, EventKind, EventQuery, EventSeed, EventTimes, LedgerRead as _,
-        LedgerWrite as _, QueryOrder, TemporalEvent, TimeRange,
+        ClockDomain, EventKind, EventQuery, EventSeed, EventTimes, LedgerWrite as _, QueryOrder,
+        TemporalEvent, TimeRange,
     };
 
     /// One event of the session's own, `seconds` after the epoch of the fixture.
@@ -909,7 +909,7 @@ mod tests {
             let first = event(1);
             state
                 .ledger()
-                .append(&[first.clone()], &[])
+                .append(std::slice::from_ref(&first), &[])
                 .expect("an append");
             let reference = state.references().reference(ledger.as_ref(), &first);
             let second = event(2);
