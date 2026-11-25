@@ -439,3 +439,31 @@ fn should_name_the_request_path_that_answers_whether_a_connection_reaches_a_link
         }
     }
 }
+
+#[test]
+fn should_refuse_a_map_depth_or_a_correlation_it_cannot_draw_with_words_that_fit() {
+    // Review COR-9: `--depth 0` is not a third hop, and `--connections` inside a link is not a
+    // target that was not found.
+    let home = scratch();
+    let shallow = support::ono_at_home(
+        &home,
+        "try { map links --depth 0 } catch e { $e | select code message help | to json }",
+    );
+    shallow.assert_success();
+    let said = support::last_line(&shallow);
+    assert!(
+        said.contains("is 1 or 2") && !said.contains("third hop"),
+        "a depth below one is told what the depths are, got {said}"
+    );
+    let inside = support::ono_at_home(
+        &home,
+        "link host testbox --transport local; jump testbox; try { map links --connections } \
+         catch e { $e | select code message | to json }",
+    );
+    inside.assert_success();
+    let said = support::last_line(&inside);
+    assert!(
+        said.contains("spatial.unsupported") || said.contains("Ono-Sendai-E1009"),
+        "a correlation asked for inside a link is unsupported there, got {said}"
+    );
+}

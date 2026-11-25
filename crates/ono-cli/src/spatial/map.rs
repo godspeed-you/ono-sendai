@@ -990,6 +990,9 @@ impl CommandImpl for MapLinks {
                     usize::try_from(*depth).unwrap_or(1)
                 }
                 Some(other) => {
+                    // The words fit the value (review COR-9): below one there is no smaller map
+                    // of links, above two a hop nobody asks for.
+                    let deeper = matches!(other, Value::Int(depth) if *depth > 2);
                     return Err(ErrorValue::new(
                         ErrorCode::TypeMismatch,
                         format!(
@@ -1002,10 +1005,13 @@ impl CommandImpl for MapLinks {
                         "limit",
                         Value::Int(crate::spatial::federation::MAX_DEPTH as i128),
                     )
-                    .with_help(
+                    .with_help(if deeper {
                         "a linked host tells about the links it holds; it asks nobody further on \
-                         your behalf, so a third hop is never drawn (ADR-1097)",
-                    ));
+                         your behalf, so a third hop is never drawn (ADR-1097)"
+                    } else {
+                        "`1` (the default) draws this host and the links it holds; `2` also each \
+                         linked host's own links (ADR-1097)"
+                    }));
                 }
             };
             let request = MapRequest::new().all(arguments.flag("all")).depth(depth);
@@ -1016,10 +1022,11 @@ impl CommandImpl for MapLinks {
             if arguments.flag("connections") && spatial_session().await.current_scope().is_remote()
             {
                 return Err(ErrorValue::new(
-                    ErrorCode::ResolveTargetNotFound,
+                    ErrorCode::SpatialUnsupported,
                     "`map links --connections` correlates this host's own connections; \
                      run it on the local host, not inside a link",
-                ));
+                )
+                .with_help("`home` returns to the local host (spec v0.4 §19.2, ADR-1098)"));
             }
 
             // §19.3 draws the local host beside the linked ones, so the map is centred on this
