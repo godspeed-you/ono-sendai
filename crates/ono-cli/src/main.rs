@@ -119,6 +119,22 @@ fn main() -> ExitCode {
             let mut declared = Vec::new();
             for link in &agent_options.links {
                 match ono_cli::agent_links::Declared::parse(link) {
+                    // A held link's table entry and its measurements are keyed by its name, so
+                    // one name for two links would be one entry reporting two hosts (review COR-7).
+                    Ok(link)
+                        if declared
+                            .iter()
+                            .any(|held: &ono_cli::agent_links::Declared| {
+                                held.name == link.name
+                            }) =>
+                    {
+                        ono_core::diagnostic!(
+                            "{}: --link names `{}` twice; each held link needs a name of its own",
+                            ono_core::SHORT_NAME,
+                            link.name
+                        );
+                        return ExitCode::from(ExitStatus::USAGE);
+                    }
                     Ok(link) => declared.push(link),
                     Err(usage) => {
                         ono_core::diagnostic!("{}: {usage}", ono_core::SHORT_NAME);
@@ -135,6 +151,16 @@ fn main() -> ExitCode {
                 );
                 return ExitCode::from(ExitStatus::USAGE);
             }
+            // Before any link is held: an agent that refuses its configuration must not already
+            // have dialled anybody (§2.3, ADR-1042, review ARC-12).
+            let limits = if agent_options.listen.is_some() {
+                let Some(limits) = configured_limits(&options) else {
+                    return ExitCode::from(ExitStatus::FAILURE);
+                };
+                Some(limits)
+            } else {
+                None
+            };
             let held = if declared.is_empty() {
                 ono_cli::agent_links::HeldLinks::none()
             } else {
@@ -161,9 +187,10 @@ fn main() -> ExitCode {
                 // `provider_capability` field `docs/contracts/commands/` already declares. A peer
                 // never says which capability it needs; this side resolves it (§65.2).
                 let config = with_action_capabilities(config);
-                // Before the store and the socket: a ceiling the agent cannot apply as written
-                // must stop it before it is reachable (§2.3, §55.2, ADR-1042).
-                let Some(limits) = configured_limits(&options) else {
+                // Read above, before the store, the socket and every held link: a ceiling the
+                // agent cannot apply as written stops it before it is reachable (§2.3, §55.2,
+                // ADR-1042).
+                let Some(limits) = limits else {
                     return ExitCode::from(ExitStatus::FAILURE);
                 };
                 return runtime.block_on(serve_authenticated(

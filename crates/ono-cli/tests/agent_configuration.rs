@@ -304,3 +304,67 @@ fn should_describe_the_remote_ceilings_as_enforced_by_the_listening_agent() {
         );
     }
 }
+
+/// Runs `ono --agent --listen 127.0.0.1:0 <after…>` in `home` to its end, and what it said.
+fn agent_to_its_end(home: &Scratch, after: &[&str]) -> (std::process::ExitStatus, String) {
+    // Bounded: an agent that wrongly accepts what it is given would listen for ever.
+    let output = Command::new("timeout")
+        .args(["-s", "KILL", "20"])
+        .arg(binary())
+        .args(["--agent", "--listen", "127.0.0.1:0"])
+        .args(after)
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env_remove("ONO_CONFIG")
+        .env_remove("ONO_CONFIG_DIR")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("the agent runs");
+    (
+        output.status,
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn should_refuse_two_held_links_of_one_name_as_a_usage_error() {
+    // Review COR-7: a name is what a held link's table entry and its measurements are keyed by;
+    // two links under one name would be one entry reporting two hosts.
+    let home = scratch();
+    let (status, said) = agent_to_its_end(
+        &home,
+        &["--link", "a=127.0.0.1:1", "--link", "a=127.0.0.1:2"],
+    );
+    assert_eq!(
+        status.code(),
+        Some(2),
+        "a usage error, got {status:?}: {said}"
+    );
+    assert!(
+        said.contains("`a`"),
+        "the refusal names the name given twice, got {said}"
+    );
+}
+
+#[test]
+fn should_dial_no_held_link_before_its_configuration_is_known_to_be_usable() {
+    // Review ARC-12: an agent that refuses its configuration must not already have dialled the
+    // links it was told to hold. The next hop here is a listener the test owns.
+    let next_hop = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+    next_hop.set_nonblocking(true).expect("non-blocking");
+    let port = next_hop.local_addr().expect("bound").port();
+    let home = scratch();
+    configure(&home, "set config limits.remote_connections = 0\n");
+
+    let (status, said) = agent_to_its_end(&home, &["--link", &format!("hop=127.0.0.1:{port}")]);
+    assert!(
+        !status.success(),
+        "the configuration is refused, got {said}"
+    );
+    assert!(
+        matches!(next_hop.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "nothing was dialled: {said}"
+    );
+}
