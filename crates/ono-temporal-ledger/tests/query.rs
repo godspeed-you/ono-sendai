@@ -366,7 +366,10 @@ fn should_count_a_window_without_decoding_an_event_when_a_bound_is_decided() {
     };
     rusqlite::Connection::open(&path)
         .expect("the store opens for the fixture")
-        .execute("UPDATE events SET body = ?1", rusqlite::params![vec![0xff_u8; 32]])
+        .execute(
+            "UPDATE events SET body = ?1",
+            rusqlite::params![vec![0xff_u8; 32]],
+        )
         .expect("every payload is unreadable");
     let store = ono_temporal_ledger::LedgerStore::open(&path).expect("the store opens");
     let window = EventQuery {
