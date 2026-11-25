@@ -230,6 +230,12 @@ fn should_report_a_failed_start_and_the_store_when_the_store_opened_and_would_no
              so. Got {:?}",
             run.output()
         );
+        assert!(
+            !run.output().contains("could not be opened"),
+            "R2C-10: the store opened and a write failed; the answer says that, not that it \
+             could not be opened. Got {:?}",
+            run.output()
+        );
     }
 }
 

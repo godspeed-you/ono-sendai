@@ -71,7 +71,7 @@ pub fn retained_event(
     if let Some(unavailable) = super::recorder::persistence_failure(now) {
         let help = format!(
             "no event in this session's own ledger answers to `{}`, and the persistent store it \
-             may be retained in could not be opened: {}",
+             may be retained in is not in use: {}",
             reference.trim(),
             unavailable.help().unwrap_or("the store did not say why")
         );

@@ -229,6 +229,18 @@ struct Inner {
     check_not_before: Mutex<Option<Timestamp>>,
 }
 
+/// A refusal of the start's first writes, saying that the store opened and then refused them —
+/// not that it could not be opened (review finding R2C-10).
+fn first_write_refused(refusal: ErrorValue) -> ErrorValue {
+    let said = refusal
+        .help()
+        .unwrap_or("the store did not say why")
+        .to_owned();
+    refusal.with_help(format!(
+        "the store opened, and the recorder's first write into it was refused: {said}"
+    ))
+}
+
 /// This process as a writer of the store: its pid and its start time in clock ticks since boot,
 /// which together tell a live writer from a gone one whose pid was reused (ADR-1125, R2C-2).
 fn this_writer() -> String {
@@ -395,7 +407,7 @@ impl Recorder {
             .store()
             .map(|store| store.mark_writer_open(&this_writer(), now))
         {
-            return Ok(self.degrade(settings, refusal));
+            return Ok(self.degrade(settings, first_write_refused(refusal)));
         }
 
         // §44.1's writes are the first the store takes. One that fails — a full disk, a file-size
@@ -410,7 +422,7 @@ impl Recorder {
         });
         let declared = match written {
             Ok(declared) => declared,
-            Err(refusal) => return Ok(self.degrade(settings, refusal)),
+            Err(refusal) => return Ok(self.degrade(settings, first_write_refused(refusal))),
         };
 
         {
