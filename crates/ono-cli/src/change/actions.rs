@@ -409,6 +409,16 @@ pub fn resolve(
         return Err(error::action_not_plannable(&statement.source, &detail));
     };
     let bound = contract.bind(resolved.arguments)?;
+    // A `set package` that names two destinations, or none, is refused before anything is
+    // planned or sealed, by the check the provider applies to the direct command (ADR-1084,
+    // review findings COR-C1, COR-C2).
+    if contract.id() == "ono.package.set" {
+        ono_provider_linux::check_set_request(
+            bound.option("version"),
+            bound.option("latest"),
+            bound.option("hold"),
+        )?;
+    }
     // Planned from a job, the operation's relative paths mean the job's directory (ADR-0957).
     let bound = match directory {
         Some(directory) => bound.anchored(directory),
@@ -716,7 +726,14 @@ pub fn fragment_for(
             // that names its own selector overrides that — `copy file <source> to <destination>`
             // creates the destination and reads the source.
             let mut acted = action;
-            for spec in operation.declared.effects() {
+            // `--latest` names no version: the package manager picks the destination when the
+            // plan is applied, so the seal cannot cover it, and the plan says so in the effect it
+            // is about (ADR-1084, review finding SEC2-6).
+            let unsealed_destination = operation.command == "ono.package.set"
+                && arguments.iter().any(|(name, value)| {
+                    name.as_ref() == "latest" && matches!(value, Value::Bool(true))
+                });
+            for (position, spec) in operation.declared.effects().iter().enumerate() {
                 let object = spec
                     .object_selector()
                     .and_then(|selector| {
@@ -726,12 +743,22 @@ pub fn fragment_for(
                             .and_then(|(_, value)| value.as_str().ok().map(str::to_owned))
                     })
                     .unwrap_or_else(|| target.label().to_owned());
+                let explanation = if unsealed_destination && position == 0 {
+                    format!(
+                        "{}; the destination version is the newest the repositories offer when \
+                         the plan is applied, resolved then by the package manager and not \
+                         covered by the seal",
+                        spec.explanation()
+                    )
+                } else {
+                    spec.explanation().to_owned()
+                };
                 let mut effect = ProposedEffect::new(
                     id.clone(),
                     spec.domain(),
                     spec.kind(),
                     spec.confidence(),
-                    spec.explanation(),
+                    explanation,
                 )
                 .on(object)
                 .citing(operation.command);

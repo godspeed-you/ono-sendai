@@ -938,20 +938,17 @@ fn unseparated_mutation_of(
             })
         }
         "set" => {
+            crate::packages::check_set_request(
+                action.argument("version"),
+                action.argument("latest"),
+                action.argument("hold"),
+            )?;
             let mut commands = Vec::new();
             let mut described = Vec::new();
             let mut versioned = false;
             // v0.6 §3.1's `update package` (ADR-1084): the front end's own upgrade, which moves
             // an installed package to the newest version and installs nothing that is not there.
             if flag("latest") == Some(true) {
-                if text("version").is_some() {
-                    return unsupported(
-                        "`--latest` and `--version` name two destinations for one transition"
-                            .to_owned(),
-                        "write `--latest` to move to the newest version, or `--version` to name \
-                         one",
-                    );
-                }
                 commands.push(match frontend {
                     Frontend::RedHat(program) => (
                         program.clone(),
@@ -1504,8 +1501,9 @@ mod tests {
         };
         let action = set_latest().with("version", Value::string("9.0"));
         assert!(
-            mutation_of(&action, &rpm, "curl", Some("8.6.0-8.fc40")).is_err(),
-            "ADR-1084: one transition has one destination"
+            mutation_of(&action, &rpm, "curl", Some("8.6.0-8.fc40"))
+                .is_err_and(|error| error.code() == ErrorCode::TypeMismatch),
+            "ADR-1084: one transition has one destination, refused as a usage error (COR-C2)"
         );
     }
 

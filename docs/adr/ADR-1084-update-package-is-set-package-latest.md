@@ -29,7 +29,18 @@ cannot spell (`latest` is a legal version string for some managers).
 
 - `ono.package.set` gains the flag `--latest`: move an *installed* package to the newest version
   its repositories offer. It never installs a package that is not installed, and it is refused
-  together with `--version` (one destination per transition).
+  together with `--version` (one destination per transition). *Amended (review findings COR-C1,
+  COR-C2):* the refusal lived only in the providers' `Mutation::of`, which planning never calls,
+  so `plan set package curl --latest --version 9.0` was sealed (HIGH risk, a `version == 9.0`
+  check beside `latest: true`) and refused at apply, after the risk was acknowledged, as
+  `provider.unsupported`; `--latest false` alone — no transition — was sealed too. One function,
+  `ono_provider_linux::check_set_request`, now refuses both with `type.mismatch` (E0201, a usage
+  error), called by the plan before anything is sealed and by both providers before any manager
+  runs.
+- *Amended (review finding SEC2-6):* a `--latest` plan's first effect says that the destination
+  version is the newest the repositories offer when the plan is applied, resolved then by the
+  package manager and not covered by the seal — the effect's `proposed` is null, and the text
+  now says why.
 - The providers run the manager's own upgrade-only form: `apt-get install --only-upgrade -y
   --no-remove -- <name>` (dpkg), `dnf upgrade -y -- <name>` (dnf/yum), `zypper --non-interactive
   update -- <name>` (zypper). As every package mutation, it runs only as root and answers `io.permission_denied`

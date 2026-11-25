@@ -365,6 +365,40 @@ fn check_apt_request(action: &Action, name: &str) -> Result<(), ErrorValue> {
     Ok(())
 }
 
+/// Whether a `set package` asks for one transition (ADR-1084, review findings COR-C1, COR-C2).
+///
+/// `--latest` and `--version` name two destinations for one transition, and a `set` that names
+/// neither a destination nor a hold — `--latest false` alone — asks for nothing. Both are a usage
+/// error, refused with `type.mismatch` (E0201) wherever the request is made: by the plan before it
+/// is sealed, and by the provider before any manager runs. One function, so the plan and the
+/// direct command cannot disagree about what a transition is.
+///
+/// # Errors
+///
+/// `type.mismatch` for either.
+pub fn check_set_request(
+    version: Option<&Value>,
+    latest: Option<&Value>,
+    hold: Option<&Value>,
+) -> Result<(), ErrorValue> {
+    let latest = matches!(latest, Some(Value::Bool(true)));
+    if latest && version.is_some() {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            "`--latest` and `--version` name two destinations for one transition",
+        )
+        .with_help("write `--latest` to move to the newest version, or `--version` to name one"));
+    }
+    if !latest && version.is_none() && !matches!(hold, Some(Value::Bool(_))) {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            "`set package` names no transition: neither a version, `--latest` nor a hold",
+        )
+        .with_help("write `--version 1.24.0`, `--latest` or `--hold true`"));
+    }
+    Ok(())
+}
+
 /// The refusal of `set --latest` for a package that is not installed (review finding COR-C5).
 ///
 /// `apt-get install --only-upgrade` answers "skipping, it is not installed" with status 0, and an
@@ -868,6 +902,11 @@ impl Mutation {
                 })
             }
             "set" => {
+                check_set_request(
+                    action.argument("version"),
+                    action.argument("latest"),
+                    action.argument("hold"),
+                )?;
                 let mut commands = Vec::new();
                 let mut described = Vec::new();
                 let mut versioned = false;
@@ -875,14 +914,6 @@ impl Mutation {
                 // offer, for a package that is installed. `--only-upgrade` is apt-get's own way
                 // of never installing one that is not.
                 if flag("latest") == Some(true) {
-                    if text("version").is_some() {
-                        return unsupported(
-                            "`--latest` and `--version` name two destinations for one transition"
-                                .to_owned(),
-                            "write `--latest` to move to the newest version, or `--version` to \
-                             name one",
-                        );
-                    }
                     commands.push((
                         apt_get()?,
                         vec![
@@ -1261,8 +1292,9 @@ mod tests {
             "curl",
         );
         assert!(
-            refused.is_err_and(|error| error.message().contains("--latest")),
-            "ADR-1084: one transition has one destination"
+            refused.is_err_and(|error| error.message().contains("--latest")
+                && error.code() == ErrorCode::TypeMismatch),
+            "ADR-1084: one transition has one destination, refused as a usage error (COR-C2)"
         );
     }
 

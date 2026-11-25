@@ -1067,6 +1067,14 @@ fn should_plan_an_update_of_an_installed_package_with_its_protection_evaluated()
         !directory.path().join("apt-get.log").exists(),
         "v0.6 §2.1: planning an update ran no package manager command"
     );
+    // Review finding SEC2-6: the destination is not in the plan, and the plan says so.
+    assert!(
+        serde_yaml_ng::to_string(plan)
+            .unwrap_or_default()
+            .contains("not covered by the seal"),
+        "ADR-1084: an update's effect says its destination is resolved at apply time and is not \
+         sealed. Got {plan:?}"
+    );
 }
 
 #[cfg(feature = "change")]
@@ -1107,9 +1115,11 @@ fn should_refuse_an_update_and_a_named_version_together() {
     let run = ono_with_path(&bin, "set package curl --latest --version 9.0 | to json");
 
     assert!(
-        !run.status().is_success() && run.output().contains("--latest"),
-        "ADR-1084: one transition has one destination, and the refusal names the conflict. Got \
-         {:?}",
+        !run.status().is_success()
+            && run.output().contains("--latest")
+            && run.output().contains("Ono-Sendai-E0201"),
+        "ADR-1084: one transition has one destination, and the refusal is a usage error naming \
+         the conflict (COR-C2: not provider.unsupported). Got {:?}",
         run.output()
     );
     assert!(
@@ -1164,4 +1174,38 @@ fn should_refuse_a_package_name_a_manager_would_read_as_an_option_or_an_instruct
             "`{script}`: apt-get never ran"
         );
     }
+}
+
+#[cfg(feature = "change")]
+#[test]
+fn should_seal_no_plan_for_a_set_that_names_two_destinations_or_none() {
+    // Review findings COR-C1, COR-C2: `plan set package curl --latest --version 9.0` was sealed as
+    // a HIGH-risk plan with a `version == 9.0` check beside `latest: true`, and `--latest false`
+    // — no transition at all — was sealed too; the refusal ADR-1084 promises came from the
+    // provider at apply, after the risk was acknowledged, as provider.unsupported. Both are usage
+    // errors (type.mismatch) refused before anything is sealed, and no package manager runs.
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+    for script in [
+        "plan set package curl --latest --version 9.0",
+        "plan set package curl --latest false",
+    ] {
+        let run = ono_planning(&directory, &bin, script);
+        assert!(
+            !run.status().is_success() && run.output().contains("Ono-Sendai-E0201"),
+            "`{script}` is refused as a usage error. Got {:?}",
+            run.output()
+        );
+    }
+    let plans = ono_planning(&directory, &bin, "get plan | to json");
+    plans.assert_success();
+    assert!(
+        rows(&plans).is_empty(),
+        "no plan was sealed. Got {:?}",
+        plans.output()
+    );
+    assert!(
+        !directory.path().join("apt-get.log").exists(),
+        "no package manager ran"
+    );
 }
