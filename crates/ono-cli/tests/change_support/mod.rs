@@ -108,6 +108,12 @@ pub fn ono_at(home: &Path, script: &str) -> Run {
         .run()
 }
 
+/// The shell of `home`, reaching the service manager a fixture serves at `address` rather than
+/// the host's (ADR-1080).
+pub fn ono_on_bus(home: &Path, address: &str, script: &str) -> Run {
+    ono_with(home, "DBUS_SYSTEM_BUS_ADDRESS", address, script)
+}
+
 /// The same shell with one `ONO_*` setting written, as ADR-0010 spells a setting in the
 /// environment.
 pub fn ono_with(home: &Path, key: &str, value: &str, script: &str) -> Run {
@@ -168,63 +174,6 @@ pub fn plan(home: &Path, mutation: &str) -> String {
     run.assert_success();
     let record = one(&run);
     text(&record, "id")[..4].to_owned()
-}
-
-/// The name of a service this host actually serves, or `None` where none does.
-///
-/// The suites that need a real object ask for one rather than naming `nginx`: §55.1's case is
-/// about a service that exists, and a container without a service manager has none.
-pub fn any_service(home: &Path) -> Option<String> {
-    let run = ono_at(home, "get service | take 1 | to json");
-    if !run.status().is_success() {
-        return None;
-    }
-    let text = run.stdout().trim().to_owned();
-    let document: Value = serde_yaml_ng::from_str(&text).ok()?;
-    let rows = document.as_sequence()?;
-    rows.first()?["name"].as_str().map(str::to_owned)
-}
-
-/// A service this host serves, or `None` after asserting what a host without one owes.
-///
-/// A test with no object to plan against is not a test that asserts nothing: §4.3 freezes the
-/// objects that match *now*, so a plan naming a unit no service manager serves must refuse rather
-/// than invent one, and that refusal is worth holding the shell to on exactly the hosts that
-/// cannot run the rest of the case. This is deliberately not a skip — nothing here is announced
-/// as unrun, because on both branches a contract was checked (v0.4.1 §38.2).
-pub fn requires_a_service(home: &Path) -> Option<String> {
-    if let Some(service) = any_service(home) {
-        return Some(service);
-    }
-    let run = ono_at(home, "plan restart service a-unit-no-host-serves");
-    assert!(
-        !run.status().is_success(),
-        "v0.6 §4.3: a selector that matched nothing produced no plan, so `plan restart service`          over a unit this host does not serve must refuse. Got {:?}",
-        run.output()
-    );
-    assert!(
-        run.output().contains("change.target_unresolved")
-            || run.output().contains("provider.unavailable"),
-        "v0.6 §4.3: the refusal names the selector that resolved to nothing, or the provider          that could not answer at all. Got {:?}",
-        run.output()
-    );
-    None
-}
-
-/// The `state`, `substate` and `since` of one service, which is the generation §7.2 freezes.
-///
-/// The three together are what changes when a unit is restarted, so a test that wants to prove
-/// nothing happened compares them and not a single field a restart might leave alone.
-pub fn service_generation(home: &Path, name: &str) -> String {
-    let run = ono_at(home, &format!("get service {name} | to json"));
-    run.assert_success();
-    let record = one(&run);
-    format!(
-        "{}|{}|{}",
-        record["state"].as_str().unwrap_or("unknown"),
-        record["substate"].as_str().unwrap_or("unknown"),
-        record["since"].as_str().unwrap_or("unknown"),
-    )
 }
 
 /// A shell standing in the past, and the script that put it there.

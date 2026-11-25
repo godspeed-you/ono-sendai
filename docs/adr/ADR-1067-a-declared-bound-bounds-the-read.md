@@ -29,8 +29,16 @@ answer, it is a wrong one: a subject whose later events were not read would repo
    window that holds more is refused with `resource.item_limit` (E1101, v0.4.1 §21.4), whose
    metadata names the stage (`changes`), the limit, the consumption that crossed it and the
    window, and whose help says to narrow `--since`/`--until` or name a target. 50,000 is an hour
-   of the whole host at the fixture's rate (11.6 events a second) with headroom, and decoded it
-   stays in the tens of megabytes.
+   of the whole host at the fixture's rate (11.6 events a second) with headroom. *Corrected after
+   review (PRF-5, COR-T6):* decoded, a window at the bound is not "tens of megabytes" — ADR-1068
+   measured 130 MB resident at 100k events with the refusal decoding 50,001 events (1,151 ms) to
+   find out. A window is now decided at index cost first: `LedgerRead::count_events` counts at
+   most `max_events + 1` index entries (`SELECT COUNT(*) FROM (SELECT 1 … LIMIT ?)` in the store,
+   no payload read), and only a window inside the bound is read and decoded. Grouping the window
+   by subject is a map lookup per event over borrowed events (it searched every run for every
+   event and copied each event into its run). The refusal carries the metadata keys every
+   `resource.item_limit` refusal carries — `stage`, `ceiling` (`values`), `limit`, `consumed`,
+   `setting` (null: no setting raises this bound) — plus the window.
 2. **The answer bound is reported, not hidden.** `changes` returns at most `limit + 1` changes;
    the extra one says the limit cut the answer — the idiom `timeline` already uses at the ledger
    (`limit + 1` → `truncated`). The `changes` command prints the first `limit` and says on the
@@ -46,8 +54,8 @@ temporal`, `crates/ono-temporal-reconstruct` and `crates/ono-recorder`:
 |---|---|---|
 | `changes::changes` | the whole window | **fixed** (above) |
 | `temporal::session::carry_over` | the whole ledger being replaced | fixed in #147's increment (ADR-1068) |
-| `search::find_place_at` (`find place` at a historical coordinate, §14.4) | every event of the scope up to the coordinate | **left**: it is a label search with no index on labels and its answer is complete by contract; a bounded read would make it silently partial. Its work is bounded by retention (`temporal.retention.max_age`, `max_size`). Recorded as a finding. |
-| `Reconstructor::reconstruct` | events from the nearest trusted checkpoint, `until: None` | **left**: replay must see every event since the checkpoint to be exact, and the checkpoint cadence (§31.9, 5 min) bounds it; reading past the coordinate (`until: None`) is wasted work but not unbounded growth with the store. Recorded as a finding. |
+| `search::find_place_at` (`find place` at a historical coordinate, §14.4) | every event of the scope up to the coordinate (`until: at`, no `from`, no limit) | **left**: it is a label search with no index on labels and its answer is complete by contract; a bounded read would make it silently partial. *Corrected after review (PRF-6):* its work is bounded by nothing but retention — `temporal.retention.max_age` (24 h) and `max_size` (512 MiB) by default — so it reads up to the whole store. Recorded as a finding. |
+| `Reconstructor::reconstruct` (every historical `look`, `near`, `enter`, `map`, `why <target>` at a coordinate) | *Corrected after review (PRF-6):* from the nearest trusted checkpoint **to now** (`until: None`), not to the coordinate — `at -23h` reads 23 hours of events; with no trusted checkpoint (`since` is never set by `historical.rs` or `providers.rs`) from the **start of the scope's history** | **left, and not bounded by the checkpoint cadence as first written here.** The read past the coordinate is not waste: §9.2's "next observed" — the first reading of each field after `T`, which decides whether the value at `T` is known — is drawn from it (`apply_future`). A look-ahead cut at a count or a time changes answers (a field whose next reading lies beyond the cut becomes unknown), a per-object look-ahead is one query per reconstructed object, and the store has no `checkpoint_after` to stop at. Not a contained fix; recorded as a finding with this evidence. |
 | `Recorder::recorded_gaps` (`Recorder::gaps`) | every `coverage.ended` marker | **left**: no command reaches it; only tests call `gaps()`. |
 
 `timeline` (`limit + 1`), `find event` (`--limit`, default 500) and `why`
@@ -57,7 +65,11 @@ temporal`, `crates/ono-temporal-reconstruct` and `crates/ono-recorder`:
 
 - A window holding more than 50,000 events is refused by `changes`, by `look`'s change section
   (§13.5) and by the full-screen timeline's return-to-now summary, all of which call the one
-  engine (§13.5 forbids a second). Before, they read the whole window and answered.
+  engine (§13.5 forbids a second). Before, they read the whole window and answered. *Corrected
+  after review (COR-T7):* `look --changes <window>` propagated the refusal and failed the whole
+  `look`; its change section is now `state: unknown` with the refusal as the section's new
+  optional `reason` (`ono.change-summary/1`, a nullable field added — compatible), and the rest of
+  the view answers.
 - `look`'s change section and the return-to-now summary receive `limit + 1` changes when the
   limit cuts, and do not yet say so; they are §13.5's summaries rather than the answer `changes`
   promises, and their rendering is spatial code outside this increment. Recorded as a finding.

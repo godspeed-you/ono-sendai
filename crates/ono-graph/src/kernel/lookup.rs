@@ -218,3 +218,46 @@ fn node_of(record: Option<Arc<RecordValue>>, what: &str) -> Result<Node, ErrorVa
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+
+    #[test]
+    fn should_answer_one_reading_of_a_process_control_groups_for_one_observation() {
+        // Review findings PRF-3, COR-C7, TST-14: issue #140's exit criterion is the unit list
+        // *and the process table* once per plan. A service's members are found by reading every
+        // process's `cgroup`, and one observation reads each once: asked again — by the next of
+        // fifty targets — it answers the reading it made, even where the file has changed since,
+        // and the next observation reads afresh. The process table is a fixture here, the one
+        // root this function is given.
+        let proc = ono_testkit::scratch();
+        let cgroup = proc.path().join("42").join("cgroup");
+        std::fs::create_dir_all(cgroup.parent().expect("a pid directory")).expect("the pid");
+        std::fs::write(&cgroup, "0::/system.slice/first.service\n").expect("a cgroup file");
+
+        let observation = SharedSnapshots::default();
+        let first = observation.cgroups(proc.path(), 42).expect("a reading");
+        std::fs::write(&cgroup, "0::/system.slice/second.service\n").expect("the file changes");
+        let again = observation.cgroups(proc.path(), 42).expect("a reading");
+        assert_eq!(first, vec!["/system.slice/first.service".to_owned()]);
+        assert_eq!(
+            again, first,
+            "one observation reads a process's control groups once, however often it is asked"
+        );
+
+        let next = SharedSnapshots::default()
+            .cgroups(proc.path(), 42)
+            .expect("a reading");
+        assert_eq!(
+            next,
+            vec!["/system.slice/second.service".to_owned()],
+            "the next observation reads the process table afresh"
+        );
+    }
+}

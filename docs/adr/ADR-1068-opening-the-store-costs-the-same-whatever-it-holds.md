@@ -6,6 +6,7 @@
 - Issues: #147
 - Decided by: agent (autonomous)
 - Supersedes: ADR-0633 decision 1 (`PRAGMA integrity_check` at every open)
+- Amended by: ADR-1125 (the whole-file check runs at defined checkpoints, off the prompt)
 
 ## Context
 
@@ -51,14 +52,22 @@ Where the time went, on the 100k store (Python `sqlite3`, warm): `PRAGMA integri
    anyway. Damage elsewhere is met by the read that reaches it: a `CORRUPT`/`NOTADB` answer on any
    read is now `temporal.store_corrupt` naming the store, where it used to be
    `temporal.store_unavailable`. §31.7's obligations still hold — refused, identified, the shell
-   working, guidance offered — at the read rather than at the open. A file-length check against
+   working, guidance offered — at the read rather than at the open. *Amended by ADR-1125:* a
+   read never finds a table and its indexes that disagree (a missing or stale index entry silently
+   skips rows), so as written this decision detected that damage never; ADR-1125 runs the whole-file
+   check off the prompt at defined checkpoints and condemns a store that fails it. A file-length check against
    the header was tried and dropped: in WAL mode a healthy file is routinely shorter than its page
    count until a checkpoint, and it refused healthy stores.
 2. **No count on the open path.** `LedgerStore::latest()` (`MAX(presentation_nanos)`, one index
    step) gives `downtime::restart` the last observed instant; `get recorder`/`start recorder`
    count the store once rather than twice (the recorder's figures are the session's when the
    session reads the recorder's ledger); `changes` reads `Ledger::max_age()`, the policy alone;
-   the retention sweep asks whether an event exists (`EXISTS`) rather than how many.
+   the retention sweep asks whether an event exists (`EXISTS`) rather than how many. *Corrected after
+   review (PRF-4):* as first written this was false for a recording shell — `Recorder::start`
+   answered `status: self.status(now)`, which counts the store, and the implicit start of
+   `temporal.recording.enabled` threw that status away. `StartOutcome` now carries the state
+   without the retention figures (`running`, `since`, `health`, `store`), and only a caller that
+   prints a status (`start recorder`, `get recorder`) asks `Recorder::status`, once.
 3. **A running recorder's store is never swapped out by configuration**, and `carry_over` moves
    only what the session wrote — events since the session started observing, at most what the
    destination holds, newest first — and reports a failure instead of dropping it
@@ -94,7 +103,7 @@ throughout, before and after. A recording-enabled shell (`ONO_TEMPORAL_RECORDING
   events (it reads `limit + 1`) and is 192 ms at 100,000. These are misses on this hardware,
   stated rather than hidden; the reference machine of the issue is several times faster.
 - Damage deeper in a store is reported when a read reaches it, not at open; a store with a
-  damaged page off the checked paths opens. `crates/ono-temporal-ledger/tests/corruption.rs`
+  damaged page off the checked paths opens. Index/table disagreement is not met by any read; ADR-1125 says when it is found. `crates/ono-temporal-ledger/tests/corruption.rs`
   `should_name_the_store_as_corrupt_when_a_read_meets_damage_the_open_did_not_read` pins that; the
   six earlier corruption tests are unchanged and pass.
 - **No harness row.** The repository pins whole-process startup with the §49 fixture linked at the
@@ -102,6 +111,23 @@ throughout, before and after. A recording-enabled shell (`ONO_TEMPORAL_RECORDING
   into the shared, hard-linked fixture — and, the fixture being dated in the past, the recorder's
   retention would sweep it. The measurement above is the evidence; its scripts are in the commit
   body.
+
+### Re-measured after review (ADR-1125, PRF-4, PRF-5)
+
+Release build of `implementation-v066-fix-core`, the same method as above (stores the shell built,
+`hyperfine -N --warmup 3 --runs 20`, medians), same i7-6600U, shared with another workstream
+building throughout (load average 4.9–7.5, so run-to-run noise is tens of milliseconds).
+
+- `ono --no-config -c 'start recorder'` with the whole-file check (ADR-1125) not due / due: 1k
+  48 / 48 ms, 20k 70 / 54 ms, 100k 79 / 71 ms at load ~5; later, at load ~6.5, the build before
+  PRF-4 and the final build side by side: 100k 212 / 231 ms and 220 / 186 ms. The open does not
+  grow with the store; `start recorder` still counts the store for the status it prints.
+- A recording-enabled shell (`ONO_TEMPORAL_RECORDING_ENABLED=true ono -c 'timeline --since 5m |
+  count'`) over the 100k store, which no longer counts the store at its implicit start (PRF-4):
+  mean 254 / 294 ms before, 122 / 123 ms after (user time 101 → 59 ms).
+- `changes --since 6h` over the 100k store, refused at the 50,000-event bound (PRF-5): 2.38–3.61 s
+  and 129 MB peak RSS before, 0.30–0.42 s and 15 MB after — decided at index cost, nothing decoded.
+  An accepted 20k-event window: 0.99–1.58 s before, 0.92–1.29 s after, 64 MB either way.
 
 ## Alternatives considered
 

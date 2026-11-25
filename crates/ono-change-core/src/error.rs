@@ -847,12 +847,16 @@ pub fn coverage_insufficient(
                 plan.short()
             ),
         )
-        .with_help(
+        .with_help(format!(
             "v0.6 §17.2: `require` refuses to apply when a required mutation domain cannot reach \
-             the plan's protection class. The uncovered domains are in the metadata. Nothing was \
-             changed"
-                .to_owned(),
-        ),
+             the plan's protection class. Uncovered: {} (also in the metadata). Nothing was \
+             changed",
+            if shortfall.is_empty() {
+                "no domain named".to_owned()
+            } else {
+                shortfall.join(", ")
+            }
+        )),
         plan,
     )
     .with_metadata("reached", Value::string(reached.as_str()))
@@ -1225,6 +1229,12 @@ mod tests {
             metadata.get("reached"),
             Some(&Value::string("partially-protected")),
             "§10.3: the plan-level summary must never hide the matrix"
+        );
+        assert!(
+            refused
+                .help()
+                .is_some_and(|help| help.contains("application-persistent")),
+            "the refusal a reader sees names the domain nothing covers: {refused:?}"
         );
     }
 

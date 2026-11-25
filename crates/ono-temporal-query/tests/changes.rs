@@ -424,19 +424,21 @@ fn should_keep_a_field_only_one_side_answered_when_the_other_is_silent() {
 #[derive(Debug)]
 struct CountingLedger {
     inner: SessionLedger,
-    largest_read: std::sync::atomic::AtomicUsize,
+    /// Every event `events` handed over, summed across calls (review finding TST-15).
+    decoded: std::sync::atomic::AtomicUsize,
 }
 
 impl CountingLedger {
     fn holding(events: &[ono_temporal_core::TemporalEvent]) -> Self {
         Self {
             inner: ledger(events),
-            largest_read: std::sync::atomic::AtomicUsize::new(0),
+            decoded: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
-    fn largest_read(&self) -> usize {
-        self.largest_read.load(std::sync::atomic::Ordering::Relaxed)
+    /// How many events were handed over — decoded — across every read.
+    fn decoded(&self) -> usize {
+        self.decoded.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -446,9 +448,17 @@ impl ono_temporal_core::LedgerRead for CountingLedger {
         query: &ono_temporal_core::EventQuery,
     ) -> Result<Vec<ono_temporal_core::TemporalEvent>, ono_value::ErrorValue> {
         let read = self.inner.events(query)?;
-        self.largest_read
-            .fetch_max(read.len(), std::sync::atomic::Ordering::Relaxed);
+        self.decoded
+            .fetch_add(read.len(), std::sync::atomic::Ordering::Relaxed);
         Ok(read)
+    }
+
+    // An index count: the store's own answers how many without decoding one, and so does this.
+    fn count_events(
+        &self,
+        query: &ono_temporal_core::EventQuery,
+    ) -> Result<usize, ono_value::ErrorValue> {
+        self.inner.count_events(query)
     }
 
     fn event(
@@ -542,9 +552,83 @@ fn should_read_no_more_than_its_bound_when_the_window_holds_more_events() {
         "the refusal is a resource bound, by its code: {refused:?}"
     );
     assert!(
-        held.largest_read() <= 21,
+        held.decoded() <= 21,
         "the ledger handed over {} events for a bound of 20 — the bound did not reach the read",
-        held.largest_read()
+        held.decoded()
+    );
+}
+
+#[test]
+fn should_decode_no_event_when_the_window_is_refused() {
+    // Review finding PRF-5: the refusal of a window over the bound decoded `max_events + 1`
+    // events to find out — at 100k events 1.15 s and 130 MB for an error. It is decided at index
+    // cost, and a refused window decodes none.
+    let held = CountingLedger::holding(&busy_window(200));
+    let mut bounded = request();
+    bounded.max_events = 20;
+
+    let refused = changes(&held, &bounded, instant("2026-08-31T12:30:00Z"))
+        .expect_err("a window holding more events than the bound is refused");
+
+    assert_eq!(refused.code(), ono_core::ErrorCode::ResourceItemLimit);
+    assert_eq!(held.decoded(), 0, "a refused window decodes no event body");
+    for key in ["stage", "ceiling", "limit", "consumed", "setting"] {
+        assert!(
+            refused
+                .field("metadata")
+                .is_some_and(|metadata| format!("{metadata:?}").contains(&format!("\"{key}\""))),
+            "COR-T6: the refusal carries `{key}`, as every resource.item_limit refusal does: \
+             {refused:?}"
+        );
+    }
+}
+
+#[test]
+fn should_compare_ten_thousand_events_over_five_thousand_subjects_whole() {
+    // Review finding PRF-5: grouping the window by subject searched every run for every event.
+    // Ten thousand events over five thousand subjects — two each, an appearance and a change —
+    // fold into one change per subject, in order.
+    let mut events = Vec::new();
+    for index in 0..5_000_i64 {
+        let worker = subject(SpatialType::Process, &format!("worker-{index}"));
+        let at = instant("2026-08-31T12:01:00Z")
+            .checked_add(jiff::Span::new().milliseconds(index))
+            .expect("the instant stays in range");
+        events.push(event(
+            EventKind::ObjectAppeared,
+            &at.to_string(),
+            "linux.procfs",
+            Some(worker.clone()),
+        ));
+        let later = at
+            .checked_add(jiff::Span::new().seconds(10))
+            .expect("the instant stays in range");
+        events.push(changed(
+            &later.to_string(),
+            "linux.procfs",
+            worker,
+            "state",
+            Some("running"),
+            Some("sleeping"),
+        ));
+    }
+    let held = CountingLedger::holding(&events);
+    let mut whole = request();
+    whole.limit = 10_000;
+
+    let found = changes(&held, &whole, instant("2026-08-31T12:30:00Z")).expect("compared");
+
+    assert_eq!(found.len(), 5_000, "one change per subject (§13.2)");
+    assert!(
+        found
+            .iter()
+            .all(|change| change.class == ChangeClass::Added),
+        "a subject that appeared in the window is added, whatever changed after"
+    );
+    assert_eq!(
+        held.decoded(),
+        10_000,
+        "each event is decoded once, by one read"
     );
 }
 

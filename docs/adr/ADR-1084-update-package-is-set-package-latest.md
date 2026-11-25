@@ -29,12 +29,55 @@ cannot spell (`latest` is a legal version string for some managers).
 
 - `ono.package.set` gains the flag `--latest`: move an *installed* package to the newest version
   its repositories offer. It never installs a package that is not installed, and it is refused
-  together with `--version` (one destination per transition).
+  together with `--version` (one destination per transition). *Amended (review findings COR-C1,
+  COR-C2):* the refusal lived only in the providers' `Mutation::of`, which planning never calls,
+  so `plan set package curl --latest --version 9.0` was sealed (HIGH risk, a `version == 9.0`
+  check beside `latest: true`) and refused at apply, after the risk was acknowledged, as
+  `provider.unsupported`; `--latest false` alone — no transition — was sealed too. One function,
+  `ono_provider_linux::check_set_request`, now refuses both with `type.mismatch` (E0201, a usage
+  error), called by the plan before anything is sealed and by both providers before any manager
+  runs. *Amended (review finding R2C-4):* the name and version grammar is applied at plan time
+  too — `ono_provider_linux::check_package_arguments`, the union of the deb and rpm name grammars
+  plus the version grammar, local archives let through — so `plan set package curl --version "*"`
+  is refused with E0201 like the direct command, not sealed and refused at apply; the
+  family-specific rules (apt's exact lookup, the narrower deb grammar) stay with the provider,
+  where the family is known.
+- *Amended (review finding SEC2-6):* a `--latest` plan's first effect says that the destination
+  version is the newest the repositories offer when the plan is applied, resolved then by the
+  package manager and not covered by the seal — the effect's `proposed` is null, and the text
+  now says why.
 - The providers run the manager's own upgrade-only form: `apt-get install --only-upgrade -y
-  <name>` (dpkg), `dnf upgrade -y <name>` (dnf/yum), `zypper --non-interactive update <name>`
-  (zypper). As every package mutation, it runs only as root and answers `io.permission_denied`
+  --no-remove -- <name>` (dpkg), `dnf upgrade -y -- <name>` (dnf/yum), `zypper --non-interactive
+  update -- <name>` (zypper). As every package mutation, it runs only as root and answers `io.permission_denied`
   otherwise, before any manager is started (ADR-0115 §5); `changed` is the installed version before
   against after.
+- *Amended (review findings SEC-C-1, SEC2-5, COR-C5).* Every name and version reaches a manager
+  as exactly one package, for every package operation, both providers, and every way a name
+  arrives (a piped record's identity, a creating verb's selector, `resolve`'s pass-through):
+  `act` checks it before any process starts — the root check and `rpm -q`/`dpkg-query` included —
+  and refuses with `type.mismatch` (E0201). dpkg/apt: deb-control(5)'s grammar (so nothing that
+  begins with `-`). A trailing `-` or `+` (apt's "remove" and "install") and a `.` (apt's regular
+  expression) are instructions to apt only where no package of exactly that name exists, so such a
+  name passes where dpkg has it installed or the package database knows it exactly — `apt-cache
+  pkgnames -- <name>`, read-only, after `--`, an exact line — and is refused otherwise, before any
+  mutation, with a message saying the database knows no package of exactly that name: `g++` and
+  `python3.11` work wherever the repositories carry them, `curl-` and `xz.` are refused. Every
+  apt-get and apt-mark mutation also carries `-o APT::Cmd::Pattern-Only=true` before `--`, which
+  turns off apt's regex and glob fallback (verified on apt 2.8.4: `apt-get -s -o
+  APT::Cmd::Pattern-Only=true install xz.` finds no package where without it 386 would be
+  installed; libapt-pkg also sets it for `apt(8)` itself by default). An apt that does not know the
+  key ignores it as it ignores every unknown `-o` key (verified: an invented `-o Foo::Bar=1` does
+  not fail the command); the exact lookup is the defence for such an apt. Which apt release first
+  honours the key is not recorded in the changelog shipped here and was not established. A local
+  archive (`/…/x.deb`, `./x.deb`) is let through for `add`.
+  rpm: rpm's name grammar (no globs, provides or paths — dnf and zypper read `*`, `cu*`,
+  `/usr/bin/curl`, `pkgconfig(x)` as selections). A version is letters, digits and `.+~:-_^`.
+  Every built command puts `--` before the package (`apt-get install -y --no-remove -o APT::Cmd::Pattern-Only=true -- curl`,
+  `apt-mark hold -o APT::Cmd::Pattern-Only=true -- curl`, `dpkg-query -W -f … -- curl`, `dnf upgrade -y -- curl`,
+  `zypper --non-interactive update -- curl`, `rpm -q --queryformat … -- curl`), and apt's installs
+  carry `--no-remove`. `set --latest` of a package that is not installed is refused with
+  `io.not_found` before any manager runs, in both providers — `apt-get install --only-upgrade`
+  skips a missing package with status 0, which the action reported as success.
 - Planning is the established path, unchanged: `plan set package openssl --latest` resolves the
   package through the provider and freezes its installed version into the identity and the
   §7.2 `version` precondition, takes `ono.package.set`'s declared effects, risk and verification
@@ -51,6 +94,10 @@ cannot spell (`latest` is a legal version string for some managers).
 - `change.yaml`'s example becomes `plan set package openssl --latest`, and its conformance
   exemption is removed: the example runs in the conformance suite's scratch shell on any host
   whose package manager has `openssl` installed (this run's host and the CI image both do).
+  *Corrected after review (COR-C3, TST-9, ARC-14):* that made the suite read the host's package
+  database and fail on a host without dpkg/rpm/zypper and `openssl`; the harness inherits only
+  `PATH` and has no fake-manager seam, so the example is exempted again with that reason, and
+  `containers_packages.rs` (fake managers on a PATH of its own) and case 441 are its proof.
   `--protection require` is not part of the example: no first-party provider maps a package's
   files to a persistence domain yet, so `require` refuses such a plan with
   `recovery.coverage_insufficient` (E1807) — which is the honest answer, and which

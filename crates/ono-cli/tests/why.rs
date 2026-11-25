@@ -210,6 +210,21 @@ fn should_explain_the_named_target_when_two_targets_are_asked_about() {
         !subject(&init).is_null() && !subject(&sleeper).is_null(),
         "v0.5 §16.4: an explanation names its subject. Got {init:?} and {sleeper:?}"
     );
+    // Review finding COR-T8: each subject is the spatial identity of the target that was named —
+    // the one `enter` reaches — not merely a different one.
+    for (selector, answer) in [
+        ("process 1".to_owned(), &init),
+        (format!("process {}", child.pid()), &sleeper),
+    ] {
+        let place = recording_shell(&home, &format!("enter {selector}\nlook | to json"));
+        let entered = last_json_rows(&place);
+        assert_eq!(
+            subject(answer),
+            field(&entered[0], "id"),
+            "v0.5 §16.3: `why {selector}` explains the place `enter {selector}` reaches. Got \
+             {answer:?}"
+        );
+    }
     assert_ne!(
         subject(&init),
         subject(&sleeper),
@@ -243,5 +258,71 @@ fn should_refuse_a_target_that_does_not_resolve_rather_than_explain_the_current_
         !run.output().contains("ono.causal-explanation"),
         "nothing is explained for a target that does not exist. Got {:?}",
         run.output()
+    );
+}
+
+#[test]
+fn should_refuse_a_target_the_past_did_not_record_as_not_recorded_rather_than_not_found() {
+    // Review finding COR-T3: at a historical coordinate `why <target>` looks for the target in the
+    // reconstruction (§14.1), and a place that is not in it was not recorded there — which is
+    // §12.3's `temporal.not_recorded`, with what each source can reach — not v0.4 §40's
+    // `spatial.not_found`, which says there is no such place. `process 1` exists; a child this
+    // test owns was observed alive and is then gone.
+    let home = ono_testkit::scratch();
+    let child = support::SleepChild::spawn();
+    let pid = child.pid();
+    let run = recording_shell(
+        &home,
+        &format!(
+            "enter process {pid}\nup\nstop process {pid}\nsleep 2s\nat -1s\n\
+             why process 1 | to json\nwhy process {pid} | to json"
+        ),
+    );
+    drop(child);
+    assert!(
+        !run.output().contains("spatial.not_found"),
+        "COR-T3: a target the past did not record is not a place that does not exist. Got {:?}",
+        run.output()
+    );
+    assert!(
+        run.output().contains("temporal.not_recorded")
+            || run.output().contains("ono.causal-explanation"),
+        "COR-T3: either the reconstruction held the target and it is explained, or it is \
+         refused as not recorded. Got {:?}",
+        run.output()
+    );
+    // Review finding R2C-3: the refusal's help is read by a person; an escaped newline is not.
+    assert!(
+        !run.stderr().contains("\\u{"),
+        "the refusal's help carries no escaped control character. Got {:?}",
+        run.stderr()
+    );
+}
+
+#[test]
+fn should_answer_the_same_when_the_coordinate_is_the_stages_own_or_the_sessions() {
+    // Review finding COR-T4: `why` took its coordinate from the session and ignored the stage's
+    // own `--at`, which v0.5 §4.5 makes the same engine as `at` context: `why process 1 --at -1s`
+    // answered about the present while `at -1s; why process 1` answered about one second ago.
+    let home = ono_testkit::scratch();
+    let staged = recording_shell(&home, "sleep 2s\nwhy process 1 --at -1s | to json");
+    let session = recording_shell(&home, "sleep 2s\nat -1s\nwhy process 1 | to json");
+    let outcome = |run: &Run| {
+        if run.status().is_success() {
+            format!("{:?}", field(&rows(run)[0], "subject"))
+        } else {
+            run.stderr()
+                .split_whitespace()
+                .find(|word| word.starts_with("Ono-Sendai-E"))
+                .unwrap_or("no code")
+                .to_owned()
+        }
+    };
+    assert_eq!(
+        outcome(&staged),
+        outcome(&session),
+        "v0.5 §4.5: `--at` and `at` are one coordinate. `--at` said {:?}; `at` said {:?}",
+        staged.output(),
+        session.output()
     );
 }

@@ -1057,15 +1057,26 @@ fn should_plan_an_update_of_an_installed_package_with_its_protection_evaluated()
         .cloned()
         .unwrap_or_default();
     assert!(
-        protection
-            .iter()
-            .any(|row| row["domain"].as_str() == Some("filesystem-persistent")),
-        "v0.6 §30.2: the update's protection was evaluated over the package's files. Got \
-         {protection:?}"
+        protection.iter().any(|row| {
+            row["domain"].as_str() == Some("filesystem-persistent")
+                && row["protection"].as_str() == Some("compensatable")
+                && row["satisfied"].as_bool() == Some(false)
+        }),
+        "v0.6 §30.2, §27.4: the update's protection was evaluated over the package's files — \
+         compensatable by a transition back, which is not a rollback — not merely listed \
+         (TST-8). Got {protection:?}"
     );
     assert!(
         !directory.path().join("apt-get.log").exists(),
         "v0.6 §2.1: planning an update ran no package manager command"
+    );
+    // Review finding SEC2-6: the destination is not in the plan, and the plan says so.
+    assert!(
+        serde_yaml_ng::to_string(plan)
+            .unwrap_or_default()
+            .contains("not covered by the seal"),
+        "ADR-1084: an update's effect says its destination is resolved at apply time and is not \
+         sealed. Got {plan:?}"
     );
 }
 
@@ -1107,13 +1118,131 @@ fn should_refuse_an_update_and_a_named_version_together() {
     let run = ono_with_path(&bin, "set package curl --latest --version 9.0 | to json");
 
     assert!(
-        !run.status().is_success() && run.output().contains("--latest"),
-        "ADR-1084: one transition has one destination, and the refusal names the conflict. Got \
-         {:?}",
+        !run.status().is_success()
+            && run.output().contains("--latest")
+            && run.output().contains("Ono-Sendai-E0201"),
+        "ADR-1084: one transition has one destination, and the refusal is a usage error naming \
+         the conflict (COR-C2: not provider.unsupported). Got {:?}",
         run.output()
     );
     assert!(
         !directory.path().join("apt-get.log").exists(),
         "nothing was asked of the package manager"
+    );
+}
+
+#[test]
+fn should_refuse_a_package_name_a_manager_would_read_as_an_option_or_an_instruction() {
+    // Review finding SEC-C-1 (ADR-1084, amended): a name reached apt-get, dpkg-query, dnf, zypper
+    // and rpm as written and without `--`, so a "name" beginning with `-` was read as an option
+    // and apt read `curl-` as "remove curl" and `xz.` as a pattern over every package. Every such
+    // name is refused with type.mismatch before any manager runs — the database query included.
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+    let log = directory.path().join("dpkg-query.log");
+    executable(
+        &bin.join("dpkg-query"),
+        &format!(
+            "#!/bin/sh\necho \"$*\" >> '{}'\nprintf 'curl\\t8.5.0-2\\tinstall ok installed\\n'\nexit 0\n",
+            log.display()
+        ),
+    );
+    for script in [
+        "add package \"--auto-remove\" | to json",
+        "add package \"-oDebug::pkgProblemResolver=1\" | to json",
+        "remove package \"curl-\" | to json",
+        "set package \"curl-\" --latest | to json",
+        "add package \"xz.\" | to json",
+    ] {
+        let run = ono_with_path(&bin, script);
+        assert!(
+            !run.status().is_success() && run.output().contains("Ono-Sendai-E0201"),
+            "SEC-C-1: `{script}` is refused as not one package. Got {:?}",
+            run.output()
+        );
+        // Resolving a selector may ask the database about the name — after `--`, as a name.
+        let asked = std::fs::read_to_string(&log).unwrap_or_default();
+        let name = script
+            .split('"')
+            .nth(1)
+            .expect("the script quotes the name");
+        for (at, _) in asked.match_indices(name) {
+            assert!(
+                asked[..at].ends_with("-- "),
+                "`{script}`: dpkg-query is handed the name only after `--`: {asked:?}"
+            );
+        }
+        assert!(
+            !directory.path().join("apt-get.log").exists(),
+            "`{script}`: apt-get never ran"
+        );
+    }
+}
+
+#[cfg(feature = "change")]
+#[test]
+fn should_seal_no_plan_for_a_set_that_names_two_destinations_or_none() {
+    // Review findings COR-C1, COR-C2: `plan set package curl --latest --version 9.0` was sealed as
+    // a HIGH-risk plan with a `version == 9.0` check beside `latest: true`, and `--latest false`
+    // — no transition at all — was sealed too; the refusal ADR-1084 promises came from the
+    // provider at apply, after the risk was acknowledged, as provider.unsupported. Both are usage
+    // errors (type.mismatch) refused before anything is sealed, and no package manager runs.
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+    for script in [
+        "plan set package curl --latest --version 9.0",
+        "plan set package curl --latest false",
+    ] {
+        let run = ono_planning(&directory, &bin, script);
+        assert!(
+            !run.status().is_success() && run.output().contains("Ono-Sendai-E0201"),
+            "`{script}` is refused as a usage error. Got {:?}",
+            run.output()
+        );
+    }
+    let plans = ono_planning(&directory, &bin, "get plan | to json");
+    plans.assert_success();
+    assert!(
+        rows(&plans).is_empty(),
+        "no plan was sealed. Got {:?}",
+        plans.output()
+    );
+    assert!(
+        !directory.path().join("apt-get.log").exists(),
+        "no package manager ran"
+    );
+}
+
+#[cfg(feature = "change")]
+#[test]
+fn should_seal_no_plan_for_a_version_or_a_name_a_manager_would_not_read_as_one_package() {
+    // Review finding R2C-4: `plan set package curl --version "*"` and `--version "-oX"` were
+    // sealed and refused only at apply, while the direct command refused them at once — the
+    // COR-C1 shape again. The plan applies the same grammar before anything is sealed.
+    let directory = scratch();
+    let bin = logging_managers(&directory);
+    for script in [
+        "plan set package curl --version \"*\"",
+        "plan set package curl --version \"-oX\"",
+        "plan add package \"-oX\"",
+        "plan remove package \"cu*\"",
+    ] {
+        let run = ono_planning(&directory, &bin, script);
+        assert!(
+            !run.status().is_success() && run.output().contains("Ono-Sendai-E0201"),
+            "R2C-4: `{script}` is refused as not one package before it is sealed. Got {:?}",
+            run.output()
+        );
+    }
+    let plans = ono_planning(&directory, &bin, "get plan | to json");
+    plans.assert_success();
+    assert!(
+        rows(&plans).is_empty(),
+        "no plan was sealed. Got {:?}",
+        plans.output()
+    );
+    assert!(
+        !directory.path().join("apt-get.log").exists(),
+        "no package manager ran"
     );
 }

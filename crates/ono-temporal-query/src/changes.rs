@@ -39,8 +39,9 @@ pub const DEFAULT_LIMIT: usize = 500;
 /// the latest `after` of each field (§13.4) — so a comparison over part of a window is not a
 /// smaller answer but a wrong one. The bound is therefore on the read, and a window that holds
 /// more is refused rather than compared in part. Fifty thousand is an hour of the whole host at
-/// §49's fixture rate (11.6 events a second) with room to spare, and decoded it stays in tens of
-/// megabytes rather than in the size of the store.
+/// §49's fixture rate (11.6 events a second) with room to spare. A window at the bound decoded
+/// whole costs about 130 MB of resident memory (ADR-1068's measurement at 100k events) — bounded,
+/// not small; a window over it is refused at index cost, before any event is decoded.
 pub const MAX_WINDOW_EVENTS: usize = 50_000;
 
 /// What a caller asks `changes` for (§13.1).
@@ -174,14 +175,20 @@ pub fn changes(
 ) -> Result<Vec<TemporalChange>, ErrorValue> {
     let until = request.until.unwrap_or(coordinate).max(request.since);
     let window = TimeRange::between(request.since, until);
-    let mut events = ledger.events(&EventQuery {
+    let query = EventQuery {
         scope: Some(request.scope.clone()),
         subjects: request.subjects.clone(),
         kinds: Vec::new(),
         range: window,
         limit: Some(request.max_events.saturating_add(1)),
         order: QueryOrder::Ascending,
-    })?;
+    };
+    // Decided at index cost before a body is decoded: a refused window costs a count of at most
+    // `max_events + 1` index entries, not that many decoded events (review finding PRF-5).
+    if ledger.count_events(&query)? > request.max_events {
+        return Err(window_too_large(request, until));
+    }
+    let mut events = ledger.events(&query)?;
     if events.len() > request.max_events {
         return Err(window_too_large(request, until));
     }
@@ -234,8 +241,13 @@ fn window_too_large(request: &ChangesRequest, until: Timestamp) -> ErrorValue {
          (issue #150)",
     )
     .with_metadata("stage", Value::string("changes"))
+    // The keys every other `resource.item_limit` refusal carries (`budget::Exceeded`), so a reader
+    // of one reads them all the same way (review finding COR-T6).
+    .with_metadata("ceiling", Value::string("values"))
     .with_metadata("limit", Value::Int(bound))
     .with_metadata("consumed", Value::Int(bound.saturating_add(1)))
+    // No setting raises this bound; the key is there, and says so (§35.3: unknown is null).
+    .with_metadata("setting", Value::Null)
     .with_metadata("since", Value::Timestamp(request.since))
     .with_metadata("until", Value::Timestamp(until))
 }
@@ -319,31 +331,59 @@ pub fn summarise(changes: &[TemporalChange]) -> ChangeSummary {
     summary
 }
 
-/// The events of one subject, in presentation order.
-struct SubjectRun {
-    subject: SpatialRef,
-    events: Vec<TemporalEvent>,
+/// The events of one subject, in presentation order, borrowed from the window that was read.
+struct SubjectRun<'a> {
+    subject: &'a SpatialRef,
+    events: Vec<&'a TemporalEvent>,
 }
 
-/// Splits `events` by the subject they are about, keeping each run in presentation order.
-fn group_by_subject(events: &[TemporalEvent]) -> Vec<SubjectRun> {
-    let mut runs: Vec<SubjectRun> = Vec::new();
-    for event in events {
+/// Splits `events` by the subject they are about, keeping each run in presentation order and
+/// the runs in the order their subjects first appear.
+///
+/// One map lookup per event, and no event copied: a window of fifty thousand events over as many
+/// subjects is grouped in time linear in the window (review finding PRF-5).
+fn group_by_subject(events: &[TemporalEvent]) -> Vec<SubjectRun<'_>> {
+    group_runs(events, |event| {
         if matches!(
             event.kind,
             EventKind::RelationAdded | EventKind::RelationRemoved
         ) {
-            continue;
+            return None;
         }
-        let Some(subject) = event.subject.as_ref() else {
+        event.subject.as_ref()
+    })
+    .into_iter()
+    .map(|(subject, events)| SubjectRun { subject, events })
+    .collect()
+}
+
+/// Splits `items` into runs by `key`, each run in the order of `items` and the runs in the order
+/// their keys first appear; an item with no key is left out. One map lookup per item, so the work
+/// is linear in the items whatever the number of keys.
+fn group_runs<'a, T, K: std::hash::Hash + Eq>(
+    items: &'a [T],
+    key: impl Fn(&'a T) -> Option<K>,
+) -> Vec<(K, Vec<&'a T>)> {
+    let mut runs: Vec<(K, Vec<&'a T>)> = Vec::new();
+    let mut index: std::collections::HashMap<K, usize> = std::collections::HashMap::new();
+    for item in items {
+        let Some(found) = key(item) else {
             continue;
         };
-        match runs.iter_mut().find(|run| &run.subject == subject) {
-            Some(run) => run.events.push(event.clone()),
-            None => runs.push(SubjectRun {
-                subject: subject.clone(),
-                events: vec![event.clone()],
-            }),
+        match index.entry(found) {
+            std::collections::hash_map::Entry::Occupied(at) => {
+                if let Some((_, run)) = runs.get_mut(*at.get()) {
+                    run.push(item);
+                }
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                let at = runs.len();
+                // The map keeps the key it was asked by; the run keeps the item's own.
+                if let Some(own) = key(item) {
+                    runs.push((own, vec![item]));
+                    slot.insert(at);
+                }
+            }
         }
     }
     runs
@@ -356,7 +396,7 @@ fn group_by_subject(events: &[TemporalEvent]) -> Vec<SubjectRun> {
 /// it. A subject that appeared and went away inside the window reads as `removed`, because that
 /// is what a reader standing at `--until` sees.
 fn object_change(
-    run: &SubjectRun,
+    run: &SubjectRun<'_>,
     request: &ChangesRequest,
     until: Timestamp,
     coverage: &CoverageSummary,
@@ -406,7 +446,7 @@ fn object_change(
 /// The earlier side is the first in-window observation's own `before`. Where the source gave
 /// none, nothing observed that side, so the field comes back unknown with a null before — §13.4
 /// forbids fabricating one, and §6.2 forbids reading the null as anything but unknown.
-fn fold_fields(events: &[TemporalEvent]) -> Vec<FieldChange> {
+fn fold_fields(events: &[&TemporalEvent]) -> Vec<FieldChange> {
     let mut folded: Vec<FieldChange> = Vec::new();
     for event in events {
         for change in &event.changed_fields {
@@ -617,4 +657,64 @@ fn provenance_value(provenance: &Provenance) -> Value {
         Value::string(&provenance.schema().to_string()),
     );
     Value::Map(Arc::new(map))
+}
+
+#[cfg(test)]
+mod grouping {
+    use std::cell::Cell;
+
+    use super::group_runs;
+
+    /// A key that counts every comparison made of it.
+    struct Counted<'a> {
+        id: u32,
+        comparisons: &'a Cell<usize>,
+    }
+
+    impl PartialEq for Counted<'_> {
+        fn eq(&self, other: &Self) -> bool {
+            self.comparisons.set(self.comparisons.get() + 1);
+            self.id == other.id
+        }
+    }
+
+    impl Eq for Counted<'_> {}
+
+    impl std::hash::Hash for Counted<'_> {
+        fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+            self.id.hash(state);
+        }
+    }
+
+    #[test]
+    fn should_group_ten_thousand_items_over_five_thousand_keys_in_work_linear_in_the_items() {
+        // Review findings PRF-5, R2C-5: grouping searched every run for every event, which is
+        // twelve and a half million comparisons for ten thousand events over five thousand
+        // subjects. The work is a bound the test can fail on: at most a few comparisons per item.
+        let comparisons = Cell::new(0);
+        let items: Vec<u32> = (0..10_000).map(|index| index % 5_000).collect();
+        let runs = group_runs(&items, |item| {
+            Some(Counted {
+                id: *item,
+                comparisons: &comparisons,
+            })
+        });
+        assert_eq!(runs.len(), 5_000, "one run per key");
+        assert!(
+            runs.iter().all(|(_, run)| run.len() == 2),
+            "every item lands in its key's run"
+        );
+        assert_eq!(
+            runs.first().map(|(key, _)| key.id),
+            Some(0),
+            "runs in the order their keys first appear"
+        );
+        assert!(
+            comparisons.get() <= 2 * items.len(),
+            "grouping {} items over {} keys made {} comparisons; it must be linear in the items",
+            items.len(),
+            runs.len(),
+            comparisons.get()
+        );
+    }
 }

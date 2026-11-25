@@ -391,7 +391,7 @@ impl View {
         }) else {
             return self.nothing_selected();
         };
-        let explained = self.explanation_of(&reference).await;
+        let explained = Self::explanation_of(&reference).await;
         match explained {
             Ok(explanation) => Flow::Overlay(ono_temporal_render::causal_explanation(
                 &explanation,
@@ -406,22 +406,17 @@ impl View {
     }
 
     /// Asks the canonical causal engine about one event (§16.1, §16.3, §32.3).
-    async fn explanation_of(&self, reference: &str) -> Result<RecordValue, ErrorValue> {
+    async fn explanation_of(reference: &str) -> Result<RecordValue, ErrorValue> {
         use ono_temporal_query::causal::{CausalContext, CausalEngine, WhyOptions, WhyRequest};
 
         let now = Timestamp::now();
-        let mut state = crate::temporal::session::temporal_session().await;
+        let state = crate::temporal::session::temporal_session().await;
         let anchor = state.context().instant().unwrap_or(now);
         let ledger = state.ledger_handle();
-        let event = state
-            .references()
-            .resolve(reference, ledger.as_ref())?
-            .ok_or_else(|| {
-                ono_temporal_core::error::invalid_time(
-                    reference,
-                    "no event with that reference is retained",
-                )
-            })?;
+        // One resolver for every reader of a reference (issue #142, review finding ARC-1): an
+        // event this session showed and the ledger has since dropped is out of retention, and a
+        // store that could not be used says so — neither is "no event with that reference".
+        let event = crate::temporal::coordinate::retained_event(&state, reference, now)?;
         let request = WhyRequest::event(&event.event_id);
         // §33's `temporal.why.max_candidates` bounds the question, so it bounds the read as well
         // as the engine — the same discipline the `why` command keeps.
@@ -851,4 +846,103 @@ fn terminal_refused(error: std::io::Error) -> ErrorValue {
         format!("this terminal cannot show the full-screen timeline: {error}"),
     )
     .with_help("`timeline` writes the same window as text and needs no terminal (v0.5 §11.5)")
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+    use ono_temporal_core::{
+        ClockDomain, EventKind, EventQuery, EventSeed, EventTimes, LedgerWrite as _, QueryOrder,
+        TemporalEvent, TimeRange,
+    };
+
+    /// One event of the session's own, `seconds` after the epoch of the fixture.
+    fn event(seconds: i64) -> TemporalEvent {
+        let at = Timestamp::from_second(1_790_000_000 + seconds).expect("an instant in range");
+        EventSeed {
+            kind: EventKind::ObjectObserved,
+            subtype: None,
+            scope: crate::spatial::local_scope(),
+            subject: None,
+            related: Vec::new(),
+            times: EventTimes {
+                source_time: None,
+                observed_at: at,
+                ingested_at: at,
+                source_sequence: None,
+                monotonic_nanos: None,
+                clock_uncertainty: None,
+                domain: ClockDomain::new("testbox", None),
+            },
+            before: None,
+            after: None,
+            changed_fields: Vec::new(),
+            evidence: Vec::new(),
+            causal_parents: Vec::new(),
+            payload: None,
+            provenance: ono_value::Provenance::local(
+                "ono.session",
+                ono_value::SchemaId::new("ono.temporal-event", 1),
+            ),
+        }
+        .seal()
+    }
+
+    #[tokio::test]
+    async fn should_refuse_a_shown_reference_as_out_of_retention_when_the_ledger_dropped_its_event()
+    {
+        // Review finding ARC-1: the full-screen timeline's `why` resolved a reference with the
+        // resolver #142 replaced, and an event the session had shown and the bounded ledger had
+        // since dropped read as "no event with that reference is retained". It is §34 E1303.
+        let _turn = crate::temporal::session::TURN.lock().await;
+        let reference = {
+            let mut state = crate::temporal::session::temporal_session().await;
+            state
+                .set_ledger(ono_temporal_ledger::Ledger::session_with_capacity(1))
+                .expect("a fresh session ledger");
+            let ledger = state.ledger_handle();
+            let first = event(1);
+            state
+                .ledger()
+                .append(std::slice::from_ref(&first), &[])
+                .expect("an append");
+            let reference = state.references().reference(ledger.as_ref(), &first);
+            let second = event(2);
+            state.ledger().append(&[second], &[]).expect("an append");
+            assert_eq!(
+                ledger
+                    .events(&EventQuery {
+                        scope: None,
+                        subjects: Vec::new(),
+                        kinds: Vec::new(),
+                        range: TimeRange::all(),
+                        limit: None,
+                        order: QueryOrder::Ascending,
+                    })
+                    .expect("the ledger answers")
+                    .len(),
+                1,
+                "the bounded ledger dropped the first event"
+            );
+            reference.to_string()
+        };
+
+        let refused = View::explanation_of(&reference)
+            .await
+            .expect_err("a dropped event is not explained");
+        {
+            let mut state = crate::temporal::session::temporal_session().await;
+            let _ = state.set_ledger(ono_temporal_ledger::Ledger::default());
+        }
+        assert_eq!(
+            refused.code(),
+            ono_core::ErrorCode::TemporalOutOfRetention,
+            "§34 E1303 for a reference the session showed: {refused:?}"
+        );
+    }
 }

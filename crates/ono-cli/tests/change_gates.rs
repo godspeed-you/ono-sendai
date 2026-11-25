@@ -72,12 +72,7 @@ impl Bulk {
 
     /// `script` in the plan's home, against the fixture's service manager.
     fn ono(&self, script: &str) -> Run {
-        ono_with(
-            self.home.path(),
-            "DBUS_SYSTEM_BUS_ADDRESS",
-            &self.manager.address(),
-            script,
-        )
+        change_support::ono_on_bus(self.home.path(), &self.manager.address(), script)
     }
 }
 
@@ -189,6 +184,23 @@ fn should_get_past_the_gate_when_the_risk_is_acknowledged() {
         !run.output().contains("change.risk_not_accepted"),
         "v0.6 §19.4: `--accept-risk` is the acknowledgement, and a plan carrying it is not \
          refused for the class it acknowledged. Got {:?}",
+        run.output()
+    );
+    // Review findings COR-C6, TST-7: the absence of one refusal is not an outcome. Past the risk
+    // gate the apply meets the next one — a restart needs privilege this unprivileged test does
+    // not hold (§43.3, §43.4) — and stops there: it exits non-zero with that refusal, and the
+    // fixture's service manager was asked for no job. A gate that stopped refusing for the risk
+    // class would still be caught (the first assertion); one that let the plan run unprivileged
+    // would be caught by the job count.
+    assert!(
+        !run.status().is_success() && run.output().contains("change.privilege_required"),
+        "v0.6 §43.3: past the risk gate, the privilege the restarts need is what refuses. Got {:?}",
+        run.output()
+    );
+    assert_eq!(
+        bulk.manager.requests().jobs,
+        0,
+        "v0.6 §43.4: nothing was changed — no restart job reached the fixture. Got {:?}",
         run.output()
     );
 }

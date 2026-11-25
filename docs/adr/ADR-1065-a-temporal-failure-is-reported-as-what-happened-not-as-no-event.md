@@ -68,11 +68,20 @@ next; `inspect event` raised `temporal.ambiguous_event` for that, `at event` sai
   `temporal::session::tests::should_apply_the_configuration_when_the_state_was_busy_as_it_arrived`
   — the only one below the binary, because whether the state is held at the instant
   configuration arrives cannot be arranged from outside the process.
-- The refused-start diagnostic (decision 4) has no end-to-end test: configuration files may not
-  run commands (ADR-0010), so the only refusal `Recorder::start` raises, E1314, needs two starts
-  with different settings, which the startup path never makes; and a store that opens and then
-  refuses §44.1's first writes could not be produced deterministically (a read-only store file
-  is written through its write-ahead log).
+- *Corrected after review (COR-T2, TST-6).* The sentence that stood here — a store that opens
+  and then refuses §44.1's first writes "could not be produced deterministically" — was wrong: a
+  file-size limit below the size the store and its log already have, with `SIGXFSZ` ignored
+  (`trap '' XFSZ; ulimit -f 100`), makes every write fail with `EFBIG` after the open succeeded.
+  It reproduced #142's symptom on this ADR's build: `health: stopped` (§44.1's writes returned
+  the refusal with `?`, leaving the state untouched) and E1301 "no event with that reference is
+  retained" for an event the store holds. A refused write during the start is now a degraded
+  start like an unopenable store — `failed`, the refusal kept as the diagnostic and answered by
+  `at`/`inspect`/`why event` (`temporal.store_unavailable`); and the refusal of a start the
+  configuration asked for is shown only for a recorder that is not running and is cleared by
+  `stop recorder`. Pinned in `crates/ono-cli/tests/event_reference_truth.rs`
+  (`should_report_a_failed_start_and_the_store_when_the_store_opened_and_would_not_take_a_write`,
+  `should_not_keep_a_refused_configured_start_on_a_running_or_a_stopped_recorder` — E1314 through
+  `set config` in a recording shell, which re-applies the configuration).
 
 ### Neighbouring paths read for the same shape
 

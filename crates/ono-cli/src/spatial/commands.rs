@@ -506,8 +506,15 @@ fn change_summary(
                 "the `ono.change-summary/1` contract is not in this build",
             )
         })?;
+    let mut reason = Value::Null;
     let (state, source, entries) = match &answered {
         RecentChanges::Unwatched => ("unsupported", Value::Null, Vec::new()),
+        // The window held more than one comparison may read (review finding COR-T7): the
+        // section cannot say what changed, and says why, while the rest of `look` answers.
+        RecentChanges::TooLarge(refusal) => {
+            reason = Value::string(&refusal.render_terse());
+            ("unknown", Value::Null, Vec::new())
+        }
         RecentChanges::Found { changes, covered } if changes.is_empty() => {
             if *covered {
                 ("empty", Value::string("ono.temporal-ledger"), Vec::new())
@@ -531,6 +538,7 @@ fn change_summary(
     .set("state", Value::string(state))?
     .set("source", source)?
     .set("entries", Value::list(entries))?
+    .set("reason", reason)?
     .build();
     Ok(Value::Record(Arc::new(record)))
 }
@@ -551,6 +559,28 @@ enum RecentChanges {
         /// Whether the window is covered end to end (§8.2, §8.5).
         covered: bool,
     },
+    /// The window holds more events than one comparison may read (`resource.item_limit`,
+    /// ADR-1067): the section is `unknown`, with the refusal as its reason.
+    TooLarge(ErrorValue),
+}
+
+impl RecentChanges {
+    /// What the change engine answered, or the section's own word for a window it may not read.
+    fn of(
+        answered: Result<Vec<TemporalChange>, ErrorValue>,
+        covered: impl FnOnce() -> Result<bool, ErrorValue>,
+    ) -> Result<Self, ErrorValue> {
+        match answered {
+            Ok(changes) => Ok(Self::Found {
+                changes,
+                covered: covered()?,
+            }),
+            Err(refusal) if refusal.code() == ErrorCode::ResourceItemLimit => {
+                Ok(Self::TooLarge(refusal))
+            }
+            Err(refusal) => Err(refusal),
+        }
+    }
 }
 
 /// What changed around the current place in the last `window`, from the ledger (v0.5 §13.5).
@@ -577,10 +607,10 @@ fn recent_changes(
     let coverage = evidence.coverage(&scope, ono_temporal_core::TimeRange::between(since, now))?;
     let here = session.current_place().clone();
     let request = ChangesRequest::new(scope, since).about(subjects_around(session, &here));
-    Ok(RecentChanges::Found {
-        changes: ono_temporal_query::changes::changes(evidence.ledger().as_ref(), &request, now)?,
-        covered: coverage.headline() == ono_temporal_core::HeadlineCoverage::Complete,
-    })
+    RecentChanges::of(
+        ono_temporal_query::changes::changes(evidence.ledger().as_ref(), &request, now),
+        || Ok(coverage.headline() == ono_temporal_core::HeadlineCoverage::Complete),
+    )
 }
 
 /// The place and the objects directly around it — §24.3's "changes relevant to the current place".
@@ -641,15 +671,13 @@ fn historical_look(
             let answered = match crate::spatial::historical::evidence() {
                 Some(evidence) => {
                     let request = ChangesRequest::new(world.scope().clone(), since);
-                    RecentChanges::Found {
-                        changes: ono_temporal_query::changes::changes(
-                            active.ledger(),
-                            &request,
-                            world.at(),
-                        )?,
-                        covered: evidence.coverage(world.scope(), range)?.headline()
-                            == ono_temporal_core::HeadlineCoverage::Complete,
-                    }
+                    RecentChanges::of(
+                        ono_temporal_query::changes::changes(active.ledger(), &request, world.at()),
+                        || {
+                            Ok(evidence.coverage(world.scope(), range)?.headline()
+                                == ono_temporal_core::HeadlineCoverage::Complete)
+                        },
+                    )?
                 }
                 None => RecentChanges::Unwatched,
             };
@@ -1235,6 +1263,24 @@ pub async fn resolved_place(
     selector: &str,
     now: Timestamp,
 ) -> Result<ono_spatial_core::SpatialId, ErrorValue> {
+    let historical = crate::spatial::historical::active();
+    resolved_place_at(providers, session, here, selector, historical, now).await
+}
+
+/// [`resolved_place`] at `historical` — a stage's own `--at` — rather than at the session's
+/// coordinate; `None` is the present (v0.5 §4.5, review finding COR-T4).
+///
+/// # Errors
+///
+/// As [`resolved_place`].
+pub async fn resolved_place_at(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    here: &ono_spatial_core::SpatialId,
+    selector: &str,
+    historical: Option<crate::spatial::historical::Active>,
+    now: Timestamp,
+) -> Result<ono_spatial_core::SpatialId, ErrorValue> {
     // §27.1 step 4 is the *current host's* index: standing on a linked host, `enter process/1`
     // is a question about that host, and answering it with the local pid 1 the index still holds
     // is the accidental local/remote merge §43.7 forbids.
@@ -1244,7 +1290,7 @@ pub async fn resolved_place(
     // v0.5 §14.1: at a historical coordinate a selector names a place that was there, resolved
     // against the reconstructed index. No provider is asked — a provider answers about now, and
     // an answer from one would be the present reached through a past selector (§14.3, §55.2).
-    if let Some(active) = crate::spatial::historical::active() {
+    if let Some(active) = historical {
         let world = active.world(session.current_scope())?;
         let found = world.resolve(selector, &context).require(selector)?;
         return Ok(found.spatial_id().clone());
@@ -2107,6 +2153,47 @@ mod tests {
                 .as_deref(),
             Some("systemd-resolved.service"),
             "§27.1: the place entered is the service, not the mount that resembles its name"
+        );
+    }
+}
+
+#[cfg(test)]
+mod change_section {
+    #![allow(
+        clippy::expect_used,
+        reason = "a test states its preconditions directly (AGENTS.md section 16)"
+    )]
+
+    use super::*;
+
+    #[test]
+    fn should_say_the_window_was_too_large_rather_than_fail_the_whole_look() {
+        // Review finding COR-T7: `look --changes <window>` propagated the change engine's
+        // `resource.item_limit` with `?`, so a large window failed the whole `look`. The section
+        // is `unknown` and says why; the view around it answers.
+        let refusal = ErrorValue::new(
+            ErrorCode::ResourceItemLimit,
+            "the window holds more than 50000 events",
+        );
+        let section = RecentChanges::of(Err(refusal), || Ok(true))
+            .expect("an item limit is the section's answer, not the view's failure");
+        let rendered = change_summary(Some((ono_value::Duration::from_nanoseconds(1), section)))
+            .expect("the section renders");
+        let Value::Record(record) = rendered else {
+            panic!("a change summary record, got {rendered:?}");
+        };
+        assert_eq!(record.get("state"), Some(&Value::string("unknown")));
+        assert!(
+            matches!(record.get("reason"), Some(Value::String(reason)) if reason.contains("50000")),
+            "the section says why it cannot answer: {record:?}"
+        );
+        assert!(
+            RecentChanges::of(
+                Err(ErrorValue::new(ErrorCode::TemporalStoreCorrupt, "damaged")),
+                || Ok(true)
+            )
+            .is_err(),
+            "any other refusal is the view's, as before"
         );
     }
 }

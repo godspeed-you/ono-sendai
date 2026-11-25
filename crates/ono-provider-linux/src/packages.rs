@@ -312,6 +312,159 @@ pub(crate) fn is_package_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '-' | '.'))
 }
 
+/// Whether apt could read `name` as something other than the package of that name: a trailing `-`
+/// ("remove") or `+` ("install") and a `.` (a regular expression) are instructions to apt only
+/// where no package of exactly that name exists (`g++` and `python3.11` are packages). Such a name
+/// is let through once the package database knows it exactly ([`exactly_known`]).
+pub(crate) fn needs_exact_lookup(name: &str) -> bool {
+    name.ends_with(['-', '+']) || name.contains('.')
+}
+
+/// Whether apt's package database knows a package of exactly `name` (review finding SEC-C-1).
+///
+/// `apt-cache pkgnames -- <name>` lists the names that begin with `name`, read-only and without
+/// pattern matching; an exact line is the answer. `name` has passed [`is_package_name`] before it
+/// gets here, and travels after `--`, so the lookup cannot be read as an option either.
+async fn exactly_known(dpkg: &Dpkg, name: &str) -> Result<bool, ErrorValue> {
+    let Some(apt_cache) = &dpkg.apt_cache else {
+        return Ok(false);
+    };
+    let answer = run(
+        apt_cache,
+        &["pkgnames".to_owned(), "--".to_owned(), name.to_owned()],
+    )
+    .await?;
+    Ok(answer.status == Some(0)
+        && String::from_utf8_lossy(&answer.stdout)
+            .lines()
+            .any(|line| line.trim() == name))
+}
+
+/// Whether `version` is a version string and nothing else — a package manager is handed it
+/// appended to a name, and a glob or a space there would be a different request (SEC-C-1).
+pub(crate) fn is_version_text(version: &str) -> bool {
+    let mut chars = version.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '~' | ':' | '-' | '_' | '^')
+        })
+}
+
+/// The refusal of a name or a version a package manager would read as something other than the
+/// one package the action is about — an option, a pattern, an instruction (SEC-C-1, ADR-1084).
+///
+/// Raised before any process starts, for every way a name arrives: a piped record's identity,
+/// the selector a creating verb was given, a name `resolve` passed through.
+pub(crate) fn not_one_package(what: &str, text: &str, family: &str) -> ErrorValue {
+    let shown: String = text.chars().take(64).collect();
+    ErrorValue::new(
+        ErrorCode::TypeMismatch,
+        format!("{shown:?} is not a {what} {family} reads as one package"),
+    )
+    .with_help(
+        "a package is named by its name alone — letters, digits and the punctuation its \
+         manager allows — and Ono hands it to the manager only after `--`; patterns, options \
+         and globs are refused rather than passed on",
+    )
+}
+
+/// Refuses an action's name and version before anything runs, where either is not one package.
+fn check_apt_request(action: &Action, name: &str) -> Result<(), ErrorValue> {
+    let archive = action.operation() == "add"
+        && name.starts_with('/')
+        && name.ends_with(".deb")
+        && !name.chars().any(char::is_control);
+    if !archive && !is_package_name(name) {
+        return Err(not_one_package("package name", name, "apt"));
+    }
+    if let Some(Value::String(version)) = action.argument("version")
+        && !is_version_text(version)
+    {
+        return Err(not_one_package("version", version, "apt"));
+    }
+    Ok(())
+}
+
+/// Whether a package request's name and version are one package and one version to every
+/// manager this crate drives (review finding R2C-4).
+///
+/// The plan applies it before anything is sealed, so the plan and the direct command refuse the
+/// same requests: a name that is neither a deb-control(5) nor an rpm name (anything beginning with
+/// `-`, globs, paths, provides) and a version that is not a version (`*`, `-oX`, a space). The
+/// family-specific rules — apt's exact lookup for a trailing `-`/`+` or a `.`, the narrower deb
+/// grammar on a dpkg host — are applied where the family is known, by the provider before any
+/// process starts.
+///
+/// # Errors
+///
+/// `type.mismatch` (E0201) for either.
+pub fn check_package_arguments(name: &str, version: Option<&Value>) -> Result<(), ErrorValue> {
+    // A local archive is a path the manager is handed after `--` (ADR-0957).
+    let archive = (name.starts_with('/') || name.starts_with("./") || name.starts_with("../"))
+        && (name.ends_with(".deb") || name.ends_with(".rpm"))
+        && !name.chars().any(char::is_control);
+    if !archive && !is_package_name(name) && !crate::packages_rpm::is_rpm_package_name(name) {
+        return Err(not_one_package("package name", name, "a package manager"));
+    }
+    if let Some(version) = version {
+        let text = match version {
+            Value::String(text) => text.to_string(),
+            other => other.to_string(),
+        };
+        if !is_version_text(&text) {
+            return Err(not_one_package("version", &text, "a package manager"));
+        }
+    }
+    Ok(())
+}
+
+/// Whether a `set package` asks for one transition (ADR-1084, review findings COR-C1, COR-C2).
+///
+/// `--latest` and `--version` name two destinations for one transition, and a `set` that names
+/// neither a destination nor a hold — `--latest false` alone — asks for nothing. Both are a usage
+/// error, refused with `type.mismatch` (E0201) wherever the request is made: by the plan before it
+/// is sealed, and by the provider before any manager runs. One function, so the plan and the
+/// direct command cannot disagree about what a transition is.
+///
+/// # Errors
+///
+/// `type.mismatch` for either.
+pub fn check_set_request(
+    version: Option<&Value>,
+    latest: Option<&Value>,
+    hold: Option<&Value>,
+) -> Result<(), ErrorValue> {
+    let latest = matches!(latest, Some(Value::Bool(true)));
+    if latest && version.is_some() {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            "`--latest` and `--version` name two destinations for one transition",
+        )
+        .with_help("write `--latest` to move to the newest version, or `--version` to name one"));
+    }
+    if !latest && version.is_none() && !matches!(hold, Some(Value::Bool(_))) {
+        return Err(ErrorValue::new(
+            ErrorCode::TypeMismatch,
+            "`set package` names no transition: neither a version, `--latest` nor a hold",
+        )
+        .with_help("write `--version 1.24.0`, `--latest` or `--hold true`"));
+    }
+    Ok(())
+}
+
+/// The refusal of `set --latest` for a package that is not installed (review finding COR-C5).
+///
+/// `apt-get install --only-upgrade` answers "skipping, it is not installed" with status 0, and an
+/// action that reported that as success would say a package had moved to its newest version that
+/// is not there at all.
+pub(crate) fn not_installed(name: &str) -> ErrorValue {
+    ErrorValue::new(
+        ErrorCode::IoNotFound,
+        format!("`{name}` is not installed, so there is no version to move to the newest"),
+    )
+    .with_help("`add package <name>` installs it; `--latest` moves an installed package")
+}
+
 /// Reads the listing `dpkg-query -W -f` printed.
 ///
 /// # Errors
@@ -547,7 +700,12 @@ pub(crate) async fn list_sources(dpkg: &Dpkg) -> Result<Vec<Source>, ErrorValue>
 /// dpkg-query exits 1 when one of the names it was given is unknown, and still prints the
 /// others; that is the ordinary answer to "is this installed?", not a failure.
 pub(crate) async fn installed(dpkg: &Dpkg, names: &[String]) -> Result<Vec<Listed>, ErrorValue> {
-    let mut arguments = vec!["-W".to_owned(), "-f".to_owned(), LISTING_FORMAT.to_owned()];
+    let mut arguments = vec![
+        "-W".to_owned(),
+        "-f".to_owned(),
+        LISTING_FORMAT.to_owned(),
+        "--".to_owned(),
+    ];
     arguments.extend(names.iter().cloned());
     let answer = run(&dpkg.dpkg_query, &arguments).await?;
     match answer.status {
@@ -732,8 +890,29 @@ pub(crate) struct Mutation {
     pub(crate) versioned: bool,
 }
 
+/// The apt option that turns off apt's reading of a package argument as a regular expression or
+/// a glob when no package has that name (`xz.` is every package with `xz` in its name otherwise):
+/// patterns only, and only the `?pattern` syntax (review finding SEC-C-1). Honoured by this host's
+/// apt 2.8.4; an apt that does not know the key ignores it, as it ignores every unknown `-o` key,
+/// and [`exactly_known`] is the defence for that apt.
+pub(crate) const APT_PATTERN_ONLY: [&str; 2] = ["-o", "APT::Cmd::Pattern-Only=true"];
+
 impl Mutation {
+    /// The invocations an action asks for, each with [`APT_PATTERN_ONLY`] before its `--`.
     fn of(action: &Action, dpkg: &Dpkg, name: &str) -> Result<Self, ErrorValue> {
+        let mut mutation = Self::unguarded(action, dpkg, name)?;
+        for (_, arguments) in &mut mutation.commands {
+            if let Some(at) = arguments.iter().position(|argument| argument == "--") {
+                for (offset, option) in APT_PATTERN_ONLY.iter().enumerate() {
+                    arguments.insert(at + offset, (*option).to_owned());
+                }
+            }
+        }
+        Ok(mutation)
+    }
+
+    /// [`Mutation::of`]'s invocations, before the pattern guard.
+    fn unguarded(action: &Action, dpkg: &Dpkg, name: &str) -> Result<Self, ErrorValue> {
         let unsupported = |message: String, help: &str| {
             Err(ErrorValue::new(ErrorCode::ProviderUnsupported, message).with_help(help))
         };
@@ -764,7 +943,13 @@ impl Mutation {
                 Ok(Self {
                     commands: vec![(
                         apt_get()?,
-                        vec!["install".to_owned(), "-y".to_owned(), spec.clone()],
+                        vec![
+                            "install".to_owned(),
+                            "-y".to_owned(),
+                            "--no-remove".to_owned(),
+                            "--".to_owned(),
+                            spec.clone(),
+                        ],
                     )],
                     described: format!("install `{spec}`"),
                     versioned: true,
@@ -779,13 +964,23 @@ impl Mutation {
                 Ok(Self {
                     commands: vec![(
                         apt_get()?,
-                        vec![verb.to_owned(), "-y".to_owned(), name.to_owned()],
+                        vec![
+                            verb.to_owned(),
+                            "-y".to_owned(),
+                            "--".to_owned(),
+                            name.to_owned(),
+                        ],
                     )],
                     described: format!("{verb} `{name}`"),
                     versioned: true,
                 })
             }
             "set" => {
+                check_set_request(
+                    action.argument("version"),
+                    action.argument("latest"),
+                    action.argument("hold"),
+                )?;
                 let mut commands = Vec::new();
                 let mut described = Vec::new();
                 let mut versioned = false;
@@ -793,20 +988,14 @@ impl Mutation {
                 // offer, for a package that is installed. `--only-upgrade` is apt-get's own way
                 // of never installing one that is not.
                 if flag("latest") == Some(true) {
-                    if text("version").is_some() {
-                        return unsupported(
-                            "`--latest` and `--version` name two destinations for one transition"
-                                .to_owned(),
-                            "write `--latest` to move to the newest version, or `--version` to \
-                             name one",
-                        );
-                    }
                     commands.push((
                         apt_get()?,
                         vec![
                             "install".to_owned(),
                             "--only-upgrade".to_owned(),
                             "-y".to_owned(),
+                            "--no-remove".to_owned(),
+                            "--".to_owned(),
                             name.to_owned(),
                         ],
                     ));
@@ -821,6 +1010,8 @@ impl Mutation {
                         vec![
                             "install".to_owned(),
                             "-y".to_owned(),
+                            "--no-remove".to_owned(),
+                            "--".to_owned(),
                             format!("{name}={version}"),
                         ],
                     ));
@@ -835,7 +1026,10 @@ impl Mutation {
                         );
                     };
                     let mark = if hold { "hold" } else { "unhold" };
-                    commands.push((apt_mark, vec![mark.to_owned(), name.to_owned()]));
+                    commands.push((
+                        apt_mark,
+                        vec![mark.to_owned(), "--".to_owned(), name.to_owned()],
+                    ));
                     described.push(format!("{mark} `{name}`"));
                 }
                 if commands.is_empty() {
@@ -1033,7 +1227,45 @@ impl Provider for PackageProvider {
         }
         let dpkg = self.manager()?;
         let name = local_package(action, package_name(action.target())?);
+        // SEC-C-1: nothing reaches a package manager that it would read as an option, a pattern
+        // or an instruction — checked before any process starts, the root check included.
+        check_apt_request(action, &name)?;
         let mutation = Mutation::of(action, &dpkg, &name)?;
+        let archive = name.starts_with('/');
+        let before = if archive {
+            None
+        } else {
+            installed_version(&dpkg, &name).await?
+        };
+        // A trailing `-`/`+` or a `.` is apt's instruction or pattern only where no package of
+        // exactly that name exists: an installed one, or one the package database knows exactly,
+        // is that package; anything else is refused before any manager changes anything (SEC-C-1).
+        if !archive
+            && before.is_none()
+            && needs_exact_lookup(&name)
+            && !exactly_known(&dpkg, &name).await?
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!(
+                    "the package database knows no package called exactly `{name}`, and apt would \
+                     read the name as an instruction or a pattern"
+                ),
+            )
+            .with_help(
+                "a trailing `-` means \"remove\" and `+` \"install\" to apt, and a `.` a \
+                 pattern, wherever no package has exactly that name; name the package as \
+                 `apt-cache pkgnames` lists it",
+            ));
+        }
+        if !archive && before.is_none() {
+            // COR-C5: an update of a package that is not there is refused, not "skipped" by apt
+            // with status 0 and reported as success.
+            if action.operation() == "set" && action.argument("latest") == Some(&Value::Bool(true))
+            {
+                return Err(not_installed(&name));
+            }
+        }
         if action.is_dry_run() {
             return Ok(ActionOutcome::skipped(
                 action,
@@ -1059,7 +1291,6 @@ impl Provider for PackageProvider {
                 ),
             ));
         }
-        let before = installed_version(&dpkg, &name).await?;
         for (program, arguments) in &mutation.commands {
             // The manager runs where the action's paths mean something: a job's directory
             // (ADR-0957), the process's otherwise.
@@ -1127,6 +1358,10 @@ mod tests {
                     "install".to_owned(),
                     "--only-upgrade".to_owned(),
                     "-y".to_owned(),
+                    "--no-remove".to_owned(),
+                    "-o".to_owned(),
+                    "APT::Cmd::Pattern-Only=true".to_owned(),
+                    "--".to_owned(),
                     "curl".to_owned()
                 ]
             )],
@@ -1149,8 +1384,9 @@ mod tests {
             "curl",
         );
         assert!(
-            refused.is_err_and(|error| error.message().contains("--latest")),
-            "ADR-1084: one transition has one destination"
+            refused.is_err_and(|error| error.message().contains("--latest")
+                && error.code() == ErrorCode::TypeMismatch),
+            "ADR-1084: one transition has one destination, refused as a usage error (COR-C2)"
         );
     }
 
@@ -1237,5 +1473,279 @@ mod local_packages {
         );
         assert_eq!(local_package(&action, "openssl"), "openssl");
         assert_eq!(local_package(&action, "/srv/foo.deb"), "/srv/foo.deb");
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "a test states its preconditions directly (AGENTS.md section 16)"
+)]
+mod names_reaching_apt {
+    //! Review findings SEC-C-1 and COR-C5: nothing reaches apt-get, apt-mark or dpkg-query that
+    //! they would read as an option, a pattern or an instruction, and an update of a package that
+    //! is not installed is refused before any manager runs. The managers are fakes on a PATH of
+    //! the test's own, which write down every invocation; no real package manager runs.
+
+    use super::*;
+    use ono_provider_api::{Action, ObjectId};
+
+    /// The names the fake package database knows: `apt-cache pkgnames -- <prefix>` lists those
+    /// that begin with the prefix, as apt-cache does.
+    const KNOWN: &str = "g++ g++-13 python3.11 python3.11-venv curl";
+
+    /// A PATH holding a `dpkg-query` that lists `listed`, an `apt-cache` that knows [`KNOWN`] and
+    /// fakes of apt-get and apt-mark, all writing their arguments to `calls.log`.
+    fn fake_managers(listed: &str) -> (tempfile::TempDir, PackageProvider) {
+        let directory = tempfile::tempdir().expect("a scratch PATH");
+        let log = directory.path().join("calls.log");
+        let body = |name: &str, answer: &str| {
+            format!(
+                "#!/bin/sh\nprintf '%s' '{name}' >> '{log}'\nfor a in \"$@\"; do printf ' [%s]' \"$a\" >> '{log}'; done\necho >> '{log}'\n{answer}\n",
+                log = log.display()
+            )
+        };
+        let listing = if listed.is_empty() {
+            "exit 1".to_owned()
+        } else {
+            format!("printf '{listed}\\n'; exit 0")
+        };
+        let pkgnames = format!(
+            "for n in {KNOWN}; do case \"$n\" in \"$3\"*) echo \"$n\";; esac; done; exit 0"
+        );
+        for (name, answer) in [
+            ("dpkg-query", listing.as_str()),
+            ("apt-cache", pkgnames.as_str()),
+            ("apt-get", "exit 0"),
+            ("apt-mark", "exit 0"),
+        ] {
+            ono_testkit::executable_script(directory.path(), name, &body(name, answer));
+        }
+        let provider = PackageProvider::with_path(Some(directory.path().as_os_str().to_owned()));
+        (directory, provider)
+    }
+
+    fn calls(directory: &tempfile::TempDir) -> String {
+        std::fs::read_to_string(directory.path().join("calls.log")).unwrap_or_default()
+    }
+
+    fn action(operation: &str, name: &str, arguments: &[(&str, Value)]) -> Action {
+        arguments.iter().fold(
+            Action::new(
+                "package",
+                operation,
+                ObjectId::new(
+                    SchemaId::new("ono.package", 1),
+                    [Value::string(DPKG), Value::string(name)],
+                ),
+            ),
+            |action, (option, value)| action.with(*option, value.clone()),
+        )
+    }
+
+    #[tokio::test]
+    async fn should_refuse_a_name_apt_would_read_as_an_option_a_pattern_or_an_instruction() {
+        for name in [
+            "-oDebug::pkgProblemResolver=1",
+            "--auto-remove",
+            "*",
+            "/usr/bin/curl",
+            "pkgconfig(openssl)",
+        ] {
+            for (operation, arguments) in [
+                ("add", vec![]),
+                ("remove", vec![]),
+                ("set", vec![("latest", Value::Bool(true))]),
+                ("set", vec![("hold", Value::Bool(true))]),
+            ] {
+                let (directory, provider) = fake_managers("");
+                let refused = provider
+                    .act(&action(operation, name, &arguments))
+                    .await
+                    .expect_err("SEC-C-1: the name is refused, not handed on");
+                assert_eq!(
+                    refused.code(),
+                    ErrorCode::TypeMismatch,
+                    "`{operation} package {name}`: {refused:?}"
+                );
+                assert_eq!(
+                    calls(&directory),
+                    "",
+                    "`{operation} package {name}`: no manager ran, not even a lookup"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_refuse_a_suffixed_or_dotted_name_the_package_database_does_not_know() {
+        // Review finding SEC-C-1: apt reads `curl-` as "remove curl", `curl+` as "install curl"
+        // and `xz.` as a pattern over every package — wherever no package has exactly that name.
+        // The package database is asked, read-only and after `--`; unknown, the name is refused
+        // and no mutation starts.
+        for name in ["curl-", "curl+", "xz.", "python3.12"] {
+            for (operation, arguments) in [
+                ("add", vec![]),
+                ("remove", vec![]),
+                ("set", vec![("hold", Value::Bool(true))]),
+            ] {
+                let (directory, provider) = fake_managers("");
+                let refused = provider
+                    .act(&action(operation, name, &arguments))
+                    .await
+                    .expect_err("an instruction or a pattern is refused");
+                assert_eq!(
+                    refused.code(),
+                    ErrorCode::TypeMismatch,
+                    "`{operation} package {name}`: {refused:?}"
+                );
+                assert!(
+                    refused
+                        .message()
+                        .contains("knows no package called exactly"),
+                    "the refusal says what was looked for: {refused:?}"
+                );
+                let asked = calls(&directory);
+                assert!(
+                    asked.contains(&format!("apt-cache [pkgnames] [--] [{name}]")),
+                    "the database was asked for exactly that name, after `--`: {asked}"
+                );
+                assert!(
+                    !asked.contains("apt-get") && !asked.contains("apt-mark"),
+                    "no mutation started: {asked}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_take_a_suffixed_or_dotted_name_the_package_database_knows_as_that_package() {
+        // `g++` ends in `+` and `python3.11` holds a `.`, and both are packages: a name the
+        // database knows exactly is literal to apt, and stopping `add package g++` would be a
+        // regression against v0.6.5.
+        for name in ["g++", "python3.11"] {
+            let (directory, provider) = fake_managers("");
+            let outcome = provider
+                .act(&action("add", name, &[]).as_dry_run())
+                .await
+                .expect("a package the database knows is one package");
+            assert_eq!(
+                outcome.status(),
+                ono_value::ActionStatus::Skipped,
+                "`add package {name}` is a dry run here: {outcome:?}"
+            );
+            assert!(
+                !calls(&directory).contains("apt-get"),
+                "a dry run starts no mutation: {}",
+                calls(&directory)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn should_refuse_a_version_that_is_not_a_version() {
+        let (directory, provider) = fake_managers("");
+        let refused = provider
+            .act(&action(
+                "set",
+                "curl",
+                &[("version", Value::string("8.* foo"))],
+            ))
+            .await
+            .expect_err("SEC-C-1: a glob in a version is a different request");
+        assert_eq!(refused.code(), ErrorCode::TypeMismatch, "{refused:?}");
+        assert_eq!(calls(&directory), "");
+    }
+
+    #[tokio::test]
+    async fn should_refuse_an_update_of_a_package_that_is_not_installed_before_apt_runs() {
+        // COR-C5: `apt-get install --only-upgrade` skips a missing package with status 0.
+        let (directory, provider) = fake_managers("");
+        let refused = provider
+            .act(&action("set", "curl", &[("latest", Value::Bool(true))]))
+            .await
+            .expect_err("an update of a package that is not there is refused");
+        assert_eq!(refused.code(), ErrorCode::IoNotFound, "{refused:?}");
+        assert!(
+            !calls(&directory).contains("apt-get"),
+            "no manager ran: {}",
+            calls(&directory)
+        );
+        assert!(
+            calls(&directory).contains("dpkg-query") && calls(&directory).contains("[--] [curl]"),
+            "the database was asked, with the name after `--`: {}",
+            calls(&directory)
+        );
+    }
+
+    #[tokio::test]
+    async fn should_let_an_installed_dotted_name_through_as_a_name() {
+        let (_directory, provider) = fake_managers("python3.11\\t3.11.2-6\\tinstall ok installed");
+        let outcome = provider
+            .act(&action("set", "python3.11", &[("latest", Value::Bool(true))]).as_dry_run())
+            .await
+            .expect("an installed name is one package");
+        assert_eq!(
+            outcome.status(),
+            ono_value::ActionStatus::Skipped,
+            "{outcome:?}"
+        );
+    }
+
+    #[test]
+    fn should_put_the_package_after_double_dash_in_every_command_it_builds() {
+        let dpkg = Dpkg {
+            dpkg_query: PathBuf::from("/fake/dpkg-query"),
+            apt_cache: None,
+            apt_get: Some(PathBuf::from("/fake/apt-get")),
+            apt_mark: Some(PathBuf::from("/fake/apt-mark")),
+            apt_config: None,
+        };
+        for (name, operation, arguments) in [
+            ("curl", "add", vec![]),
+            ("g++", "add", vec![]),
+            (
+                "python3.11",
+                "add",
+                vec![("version", Value::string("3.11.2-6"))],
+            ),
+            ("curl", "remove", vec![]),
+            ("curl", "remove", vec![("purge", Value::Bool(true))]),
+            ("g++", "set", vec![("latest", Value::Bool(true))]),
+            ("curl", "set", vec![("version", Value::string("8.5.0"))]),
+            ("curl", "set", vec![("hold", Value::Bool(true))]),
+        ] {
+            let mutation = Mutation::of(&action(operation, name, &arguments), &dpkg, name)
+                .expect("a mutation");
+            for (program, built) in &mutation.commands {
+                let at = built
+                    .iter()
+                    .position(|argument| argument == "--")
+                    .unwrap_or_else(|| panic!("{program:?} {built:?} has no `--`"));
+                assert_eq!(
+                    at,
+                    built.len() - 2,
+                    "the package is the one argument after `--`: {built:?}"
+                );
+                assert!(
+                    built
+                        .last()
+                        .is_some_and(|operand| operand.starts_with(name)),
+                    "the operand is the package: {built:?}"
+                );
+                assert_eq!(
+                    built[at - 2..at],
+                    ["-o".to_owned(), "APT::Cmd::Pattern-Only=true".to_owned()],
+                    "apt reads the operand as a name, never as a regex or a glob: {built:?}"
+                );
+                if program.ends_with("apt-get") && built[0] == "install" {
+                    assert!(
+                        built.iter().any(|argument| argument == "--no-remove"),
+                        "an install never removes anything: {built:?}"
+                    );
+                }
+            }
+        }
     }
 }

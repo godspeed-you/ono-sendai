@@ -2141,6 +2141,7 @@ dependencies = [
  "ono-temporal-reconstruct",
  "ono-testkit",
  "ono-value",
+ "rusqlite",
  "tempfile",
  "tokio",
 ]

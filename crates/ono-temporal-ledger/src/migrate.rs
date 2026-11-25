@@ -256,6 +256,29 @@ CREATE INDEX events_by_time_place ON events (presentation_nanos, scope_path);
 ";
 
 /// Every migration, in order.
+/// The tables and indexes the migrations create — the ledger's own schema (review finding SEC2-4).
+///
+/// Read from the migration SQL itself, so there is one list and it cannot drift from what a store
+/// at [`STORE_VERSION`] holds. Anything else in a store's catalogue was put there by somebody else.
+pub(crate) fn own_schema() -> (Vec<&'static str>, Vec<&'static str>) {
+    let mut tables = Vec::new();
+    let mut indexes = Vec::new();
+    for step in STEPS {
+        let mut words = step.sql.split_whitespace().peekable();
+        while let Some(word) = words.next() {
+            if word != "CREATE" {
+                continue;
+            }
+            match (words.next(), words.next()) {
+                (Some("TABLE"), Some(name)) => tables.push(name),
+                (Some("INDEX"), Some(name)) => indexes.push(name),
+                _ => {}
+            }
+        }
+    }
+    (tables, indexes)
+}
+
 pub(crate) const STEPS: &[Step] = &[
     Step {
         version: 1,

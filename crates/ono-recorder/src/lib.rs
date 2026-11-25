@@ -79,7 +79,7 @@ pub use aggregate::{
 pub use checkpoint::{CheckpointReason, CheckpointSchedule, is_significant};
 pub use controller::{
     CheckpointCapture, CheckpointOutcome, Maintenance, PendingCheckpoint, Recorder,
-    RecorderOptions, STALL_INTERVALS, StartOutcome,
+    RecorderOptions, STALL_INTERVALS, StartOutcome, WHOLE_FILE_CHECK_GRACE,
 };
 pub use downtime::RestartPlan;
 pub use ingest::{Admission, DROPPED_EVENTS, Intake, IntakeQueue};

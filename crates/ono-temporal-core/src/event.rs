@@ -237,7 +237,7 @@ pub struct FieldChange {
 /// has to resolve an id to draw a row. An unresolved one carries what the source said and stays
 /// visibly unresolved: §5.5 requires an event Ono could not reconcile to be "rendered as such
 /// rather than attached to a guessed object".
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SpatialRef {
     /// The canonical identity, its type and its label.
     Resolved {

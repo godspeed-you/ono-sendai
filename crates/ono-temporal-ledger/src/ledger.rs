@@ -132,6 +132,13 @@ impl LedgerRead for Ledger {
         }
     }
 
+    fn count_events(&self, query: &EventQuery) -> Result<usize, ErrorValue> {
+        match self {
+            Ledger::Session(ledger) => ledger.count_events(query),
+            Ledger::Persistent(store) => store.count_events(query),
+        }
+    }
+
     fn event(&self, id: &EventId) -> Result<Option<TemporalEvent>, ErrorValue> {
         match self {
             Ledger::Session(ledger) => ledger.event(id),

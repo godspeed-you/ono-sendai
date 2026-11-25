@@ -17,13 +17,16 @@
 
 #[path = "change_support/mod.rs"]
 mod change_support;
+#[path = "support/service_manager.rs"]
+mod service_manager;
 
-use change_support::{home, one, ono_at, requires_a_service};
+use change_support::{home, one, ono_at, ono_with};
 use ono_testkit::{SkipReason, skipped};
+use service_manager::FixtureServiceManager;
 
-/// What a host that serves no systemd unit cannot present (v0.4.1 §38.1).
-const NO_SERVICE: &str =
-    "this host serves no systemd unit, so there is no service topology to walk";
+/// What a host without `dbus-daemon` cannot present (v0.4.1 §38.1).
+const NO_BUS: &str = "this needs `dbus-daemon`, so the fixture can serve a service manager whose \
+                      units have a topology to walk";
 
 /// A count out of `impact_summary`, where the plan states one.
 fn count(summary: &serde_yaml_ng::Value, key: &str) -> u64 {
@@ -32,13 +35,18 @@ fn count(summary: &serde_yaml_ng::Value, key: &str) -> u64 {
 
 #[test]
 fn should_walk_past_the_direct_target_or_name_a_boundary_when_a_restart_is_planned() {
-    let home = home();
-    let Some(service) = requires_a_service(home.path()) else {
-        skipped(SkipReason::FixtureNotApplicable, NO_SERVICE);
+    // The units are the fixture's, every one but the first wanting the first, rather than the
+    // host's, whose list changes while a suite runs (issue #300, review finding TST-17).
+    let Some(manager) = FixtureServiceManager::try_start(5) else {
+        skipped(SkipReason::ExternalToolUnavailable, NO_BUS);
         return;
     };
-    let run = ono_at(
+    let home = home();
+    let service = "fixture-0.service";
+    let run = ono_with(
         home.path(),
+        "DBUS_SYSTEM_BUS_ADDRESS",
+        &manager.address(),
         &format!("plan restart service {service} | to json"),
     );
     run.assert_success();

@@ -22,7 +22,7 @@ use std::io::{Seek as _, SeekFrom, Write as _};
 
 use ono_core::ErrorCode;
 use ono_temporal_core::{EventKind, EventQuery, GapReason, LedgerRead, LedgerWrite, TimeRange};
-use ono_temporal_ledger::LedgerStore;
+use ono_temporal_ledger::{CheckDue, LedgerStore, WholeFileCancel, WholeFileCheck};
 
 use common::{event, event_about, path_in, store_in};
 
@@ -197,21 +197,22 @@ fn should_refuse_a_truncated_file_rather_than_answer_from_half_of_it() {
     drop(file);
 
     match LedgerStore::open(&path) {
-        Err(refusal) => assert!(
-            matches!(
-                refusal.code(),
-                ErrorCode::TemporalStoreCorrupt | ErrorCode::TemporalStoreUnavailable
-            ),
-            "§31.7: a truncated store is refused, not half-answered; it said {refusal:?}"
+        Err(refusal) => assert_eq!(
+            refusal.code(),
+            ErrorCode::TemporalStoreCorrupt,
+            "§31.7: a truncated store is refused as corrupt, not half-answered: {refusal:?}"
         ),
         Ok(store) => {
-            let held = store
+            // Review finding SEC-C-2: the open is constant-cost and may not read the missing
+            // pages (ADR-1068), so the read that needs them is where the truncation is met — and
+            // it is refused as corruption, never answered from what is left.
+            let refused = store
                 .events(&EventQuery::in_range(TimeRange::all()))
-                .map(|events| events.len())
-                .unwrap_or_default();
-            assert!(
-                held < 3 || !store.integrity().is_healthy(),
-                "a store missing two thirds of its bytes may not report a whole history"
+                .expect_err("§31.7: a store missing two thirds of its bytes is not answered from");
+            assert_eq!(
+                refused.code(),
+                ErrorCode::TemporalStoreCorrupt,
+                "§31.7: a truncated store read back is corruption: {refused:?}"
             );
         }
     }
@@ -288,5 +289,423 @@ fn should_name_the_store_as_corrupt_when_a_read_meets_damage_the_open_did_not_re
     assert!(
         format!("{refused:?}").contains("ledger.sqlite3"),
         "§31.7's second obligation: the affected store is identified: {refused:?}"
+    );
+}
+
+/// Two thousand events, flushed and closed, so the file has pages no check at open reads.
+fn larger_history(home: &std::path::Path) -> std::path::PathBuf {
+    let store = store_in(home);
+    let events: Vec<_> = (0..2_000)
+        .map(|index| {
+            let at = common::instant("2026-08-31T14:00:00Z")
+                .checked_add(jiff::Span::new().seconds(index))
+                .expect("an instant in range");
+            event_about(EventKind::ObjectAppeared, &at.to_string(), index)
+        })
+        .collect();
+    store.append(&events, &[]).expect("an append succeeds");
+    store.flush().expect("a flush succeeds");
+    store.path().to_path_buf()
+}
+
+/// Adds rows to `events` that no index on it holds — the table and its indexes disagree, which
+/// SQLite never reports on an ordinary read (a stale or missing index entry silently skips rows).
+///
+/// The indexes are hidden from the schema while the rows go in and restored afterwards, which is
+/// how a crash in the middle of a writer that lost its index pages leaves a store.
+fn hide_rows_from_every_index(path: &std::path::Path) {
+    let connection = rusqlite::Connection::open(path).expect("the store opens for the fixture");
+    connection
+        .execute_batch("PRAGMA writable_schema = ON;")
+        .expect("the schema is writable for the fixture");
+    let indexes: Vec<(String, String, String, i64, String)> = {
+        let mut statement = connection
+            .prepare(
+                "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master \
+                 WHERE type = 'index' AND tbl_name = 'events' AND sql IS NOT NULL",
+            )
+            .expect("the schema lists");
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            })
+            .expect("the schema lists")
+            .collect::<rusqlite::Result<_>>()
+            .expect("the schema lists")
+    };
+    assert!(!indexes.is_empty(), "the events table carries indexes");
+    connection
+        .execute(
+            "DELETE FROM sqlite_master WHERE type = 'index' AND tbl_name = 'events' \
+             AND sql IS NOT NULL",
+            [],
+        )
+        .expect("the indexes are hidden");
+    drop(connection);
+
+    let connection = rusqlite::Connection::open(path).expect("the store reopens for the fixture");
+    let columns: Vec<String> = {
+        let mut statement = connection
+            .prepare("SELECT name FROM pragma_table_info('events')")
+            .expect("the columns list");
+        statement
+            .query_map([], |row| row.get(0))
+            .expect("the columns list")
+            .collect::<rusqlite::Result<_>>()
+            .expect("the columns list")
+    };
+    let selected: Vec<String> = columns
+        .iter()
+        .map(|column| match column.as_str() {
+            "event_id" => "event_id || 'ffff'".to_owned(),
+            other => other.to_owned(),
+        })
+        .collect();
+    connection
+        .execute(
+            &format!(
+                "INSERT INTO events ({}) SELECT {} FROM events \
+                 ORDER BY presentation_nanos DESC LIMIT 5",
+                columns.join(", "),
+                selected.join(", ")
+            ),
+            [],
+        )
+        .expect("rows go in while the indexes are hidden");
+    drop(connection);
+
+    let connection = rusqlite::Connection::open(path).expect("the store reopens for the fixture");
+    connection
+        .execute_batch("PRAGMA writable_schema = ON;")
+        .expect("the schema is writable for the fixture");
+    for (kind, name, table, root, sql) in &indexes {
+        connection
+            .execute(
+                "INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![kind, name, table, root, sql],
+            )
+            .expect("the indexes are restored");
+    }
+    drop(connection);
+}
+
+#[test]
+fn should_find_the_store_unhealthy_when_its_whole_file_check_meets_rows_missing_from_an_index() {
+    // Review finding COR-T1, ADR-1125: a store whose table and indexes disagree answers two reads
+    // of one history differently and SQLite never says so on a read. Opening stays constant-cost
+    // (ADR-1068); the whole-file check is due on a store nobody has checked, and once it has
+    // failed the store is not healthy, refuses every read and every write as corrupt, and the
+    // next open refuses it as v0.6.5's open did.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = history(home.path());
+    hide_rows_from_every_index(&path);
+
+    let store = LedgerStore::open(&path).expect("the constant-cost open does not read the file");
+    assert!(
+        store
+            .whole_file_check_due(common::instant("2026-09-01T00:00:00Z"), &all_alive)
+            .expect("due answers")
+            .is_some(),
+        "a store no check has passed is due for one"
+    );
+    let outcome = store
+        .check_whole_file(
+            &WholeFileCancel::default(),
+            common::instant("2026-09-01T00:00:00Z"),
+            &[],
+        )
+        .expect("the check runs");
+    assert!(
+        matches!(outcome, WholeFileCheck::Failed(_)),
+        "the whole-file check finds rows missing from an index: {outcome:?}"
+    );
+    assert!(
+        !store.integrity().is_healthy() && store.integrity().is_fatal(),
+        "a failed whole-file check leaves the store unhealthy: {:?}",
+        store.integrity()
+    );
+    let read = store
+        .events(&EventQuery::in_range(TimeRange::all()))
+        .expect_err("a store known to be inconsistent is not answered from");
+    assert_eq!(read.code(), ErrorCode::TemporalStoreCorrupt, "{read:?}");
+    let write = store
+        .append(
+            &[event_about(
+                EventKind::ObjectAppeared,
+                "2026-08-31T15:00:00Z",
+                7,
+            )],
+            &[],
+        )
+        .expect_err("nothing is appended to a store known to be inconsistent");
+    assert_eq!(write.code(), ErrorCode::TemporalStoreCorrupt, "{write:?}");
+    drop(store);
+
+    let reopened = LedgerStore::open(&path).expect_err("the failed check is remembered");
+    assert_eq!(
+        reopened.code(),
+        ErrorCode::TemporalStoreCorrupt,
+        "{reopened:?}"
+    );
+}
+
+#[test]
+fn should_open_a_store_damaged_in_its_middle_pages_and_refuse_the_read_that_meets_them() {
+    // Review finding TST-5, issue #147: opening reads no page it does not need, so a store damaged
+    // before the open opens — at the cost of any other — and the read that reaches the damage is
+    // refused as corruption naming the store. Putting the whole-file check back into the open
+    // turns this red.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = larger_history(home.path());
+    {
+        let length = std::fs::metadata(&path).expect("the store exists").len();
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("the store is writable");
+        file.seek(SeekFrom::Start((length * 2 / 5) / 4_096 * 4_096))
+            .expect("the middle is reachable");
+        let span = usize::try_from(length / 5).expect("a test-sized store");
+        file.write_all(&vec![0x5a; span])
+            .expect("the scribble lands");
+        file.sync_all().expect("the scribble is durable");
+    }
+
+    let store = LedgerStore::open(&path).expect("issue #147: the open reads no middle page");
+    let refused = store
+        .events(&EventQuery::in_range(TimeRange::all()))
+        .expect_err("§31.7: a read that meets damaged pages is refused");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::TemporalStoreCorrupt,
+        "{refused:?}"
+    );
+}
+
+/// Every writer is alive.
+fn all_alive(_: &str) -> bool {
+    true
+}
+
+#[test]
+fn should_make_the_whole_file_check_due_after_an_unclean_shutdown_and_not_after_a_clean_one() {
+    // ADR-1125: a passed check is recorded with the version that ran it; a writer that opened the
+    // store and is gone without closing it makes the check due again, and a clean close does not.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = history(home.path());
+    let now = common::instant("2026-09-01T00:00:00Z");
+    {
+        let store = LedgerStore::open(&path).expect("the store opens");
+        assert!(matches!(
+            store
+                .whole_file_check_due(now, &all_alive)
+                .expect("due answers"),
+            Some(CheckDue::NeverChecked)
+        ));
+        let outcome = store
+            .check_whole_file(&WholeFileCancel::default(), now, &[])
+            .expect("the check runs");
+        assert!(matches!(outcome, WholeFileCheck::Passed), "{outcome:?}");
+        assert!(
+            store
+                .whole_file_check_due(now, &all_alive)
+                .expect("due answers")
+                .is_none()
+        );
+        store
+            .mark_writer_open("100:1", now)
+            .expect("the writer is marked");
+    }
+    // Writer 100:1 is gone and never closed.
+    let gone = |writer: &str| writer != "100:1";
+    {
+        let store = LedgerStore::open(&path).expect("the store opens");
+        let due = store.whole_file_check_due(now, &gone).expect("due answers");
+        assert!(
+            matches!(&due, Some(CheckDue::UncleanShutdown(keys)) if keys.len() == 1),
+            "a writer that is gone without closing makes the check due: {due:?}"
+        );
+        let Some(CheckDue::UncleanShutdown(settles)) = due else {
+            unreachable!("asserted above")
+        };
+        store
+            .mark_writer_open("200:2", now)
+            .expect("the writer is marked");
+        let outcome = store
+            .check_whole_file(&WholeFileCancel::default(), now, &settles)
+            .expect("the check runs");
+        assert!(matches!(outcome, WholeFileCheck::Passed), "{outcome:?}");
+        assert!(
+            store
+                .whole_file_check_due(now, &gone)
+                .expect("due answers")
+                .is_none(),
+            "a passed check settles the writer it was for"
+        );
+        store
+            .mark_writer_closed("200:2")
+            .expect("the writer closes cleanly");
+    }
+    let store = LedgerStore::open(&path).expect("the store opens");
+    assert!(
+        store
+            .whole_file_check_due(now, &gone)
+            .expect("due answers")
+            .is_none(),
+        "a clean close leaves the passed check standing"
+    );
+    let later = common::instant("2026-09-09T00:00:00Z");
+    assert!(
+        matches!(
+            store
+                .whole_file_check_due(later, &all_alive)
+                .expect("due answers"),
+            Some(CheckDue::Periodic)
+        ),
+        "a check older than the period is due again"
+    );
+}
+
+#[test]
+fn should_keep_one_writers_mark_when_another_closes_cleanly() {
+    // Review finding R2C-2: the writer mark was one key, so shell A's clean stop cleared it
+    // while shell B still wrote, and B's crash then made no check due; B's start also read A's
+    // live mark as an unclean shutdown. Each writer has a row of its own.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = history(home.path());
+    let now = common::instant("2026-09-01T00:00:00Z");
+    let first = LedgerStore::open(&path).expect("the store opens");
+    first
+        .check_whole_file(&WholeFileCancel::default(), now, &[])
+        .expect("the check runs");
+    let second = LedgerStore::open(&path).expect("the store opens again");
+    first.mark_writer_open("100:1", now).expect("A is marked");
+    second.mark_writer_open("200:2", now).expect("B is marked");
+    assert!(
+        second
+            .whole_file_check_due(now, &all_alive)
+            .expect("due answers")
+            .is_none(),
+        "a writer that is alive is not an unclean shutdown"
+    );
+    first.mark_writer_closed("100:1").expect("A closes cleanly");
+    let b_gone = |writer: &str| writer != "200:2";
+    assert!(
+        matches!(
+            first.whole_file_check_due(now, &b_gone).expect("due answers"),
+            Some(CheckDue::UncleanShutdown(keys)) if keys == vec!["writer_open:200:2".to_owned()]
+        ),
+        "A's clean close leaves B's mark, and B gone without closing makes the check due"
+    );
+}
+
+#[test]
+fn should_refuse_a_store_another_handle_found_damaged_once_it_rereads_the_mark() {
+    // Review finding R2C-2: a condemnation lived in one handle's memory and the metadata, so a
+    // second shell already running kept reading and appending until it reopened. The mark is one
+    // row, read where a turn can spare it; after that read the second handle refuses too.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = history(home.path());
+    let running = LedgerStore::open(&path).expect("a second shell's handle, open before");
+    hide_rows_from_every_index(&path);
+    let checking = LedgerStore::open(&path).expect("the store opens");
+    let outcome = checking
+        .check_whole_file(
+            &WholeFileCancel::default(),
+            common::instant("2026-09-01T00:00:00Z"),
+            &[],
+        )
+        .expect("the check runs");
+    assert!(matches!(outcome, WholeFileCheck::Failed(_)), "{outcome:?}");
+
+    assert!(
+        running.refresh_condemnation().expect("the mark reads"),
+        "the other handle learns of the failed check"
+    );
+    let refused = running
+        .events(&EventQuery::in_range(TimeRange::all()))
+        .expect_err("and refuses to answer from the store");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::TemporalStoreCorrupt,
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn should_record_nothing_when_the_whole_file_check_is_cancelled() {
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = history(home.path());
+    let now = common::instant("2026-09-01T00:00:00Z");
+    let store = LedgerStore::open(&path).expect("the store opens");
+    let cancel = WholeFileCancel::default();
+    cancel.cancel();
+    let outcome = store
+        .check_whole_file(&cancel, now, &[])
+        .expect("the check answers");
+    assert!(matches!(outcome, WholeFileCheck::Cancelled), "{outcome:?}");
+    assert!(
+        store
+            .whole_file_check_due(now, &all_alive)
+            .expect("due answers")
+            .is_some()
+    );
+    assert!(store.integrity().is_healthy());
+}
+
+#[test]
+fn should_not_let_a_table_outside_the_ledgers_schema_decide_the_open() {
+    // Review finding SEC2-4: the open's structure check probed every table and index in the
+    // catalogue, so twenty thousand planted tables made the "constant-cost" open take seconds.
+    // It probes the ledger's own tables and indexes only: a damaged table somebody else added
+    // holds nothing the ledger reads and does not refuse the store.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = history(home.path());
+    let root: i64 = {
+        let connection =
+            rusqlite::Connection::open(&path).expect("the store opens for the fixture");
+        connection
+            .execute_batch(
+                "CREATE TABLE planted (payload BLOB);
+                 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+                 INSERT INTO planted SELECT randomblob(200) FROM n;
+                 PRAGMA wal_checkpoint(TRUNCATE);",
+            )
+            .expect("a table of somebody else's");
+        connection
+            .query_row(
+                "SELECT rootpage FROM sqlite_master WHERE name = 'planted'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("its root page")
+    };
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("the store is writable");
+        file.seek(SeekFrom::Start(
+            u64::try_from(root - 1).expect("a page number") * 4_096,
+        ))
+        .expect("the planted root is reachable");
+        file.write_all(&[0x5a; 4_096]).expect("the scribble lands");
+        file.sync_all().expect("the scribble is durable");
+    }
+
+    let store = LedgerStore::open(&path).expect("SEC2-4: only the ledger's own schema is probed");
+    assert_eq!(
+        store
+            .events(&EventQuery::in_range(TimeRange::all()))
+            .expect("the ledger's history reads")
+            .len(),
+        3
     );
 }

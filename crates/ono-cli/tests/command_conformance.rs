@@ -8,11 +8,12 @@
 //! cannot run here is either skipped by its contracts or exempted in
 //! `docs/contracts/conformance/command_examples.yaml`, with the reason.
 //!
-//! 135 examples run; 243 are not run, each for the reason listed at the end of this file.
+//! 134 examples run; 244 are not run, each for the reason listed at the end of this file.
 //! 52 of the examples that run may produce no value in a fresh environment, each with the reason it carries; every other one must produce at least one.
 //!
-//! Commands no example of which runs (143):
+//! Commands no example of which runs (144):
 //!
+//! - `ono.change.plan` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 //! - `ono.change-plan.inspect` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
 //! - `ono.change-plan.rebase` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.
 //! - `ono.change-plan.resume` — runs `ono.change-plan.resume`, whose verb `resume` changes the system (verbs.yaml)
@@ -170,18 +171,6 @@
 mod conformance_harness;
 
 use conformance_harness as harness;
-
-/// `plan set package openssl --latest`
-#[rustfmt::skip]
-#[test]
-fn should_produce_what_ono_change_plan_declares_when_example_2_runs() {
-    harness::assert_example_conforms(&harness::ExampleCase {
-        command: "ono.change.plan",
-        example: "plan set package openssl --latest",
-        output: "ono.change-plan/1",
-        may_be_empty: None,
-    });
-}
 
 /// `get plan`
 #[rustfmt::skip]
@@ -1794,6 +1783,7 @@ fn should_produce_what_ono_recorder_get_declares_when_example_1_runs() {
 // Not run, with the reason the contracts or docs/contracts/conformance/command_examples.yaml give:
 //
 // - `ono.change.plan` `plan restart service nginx` — exempt: plans against the unit `nginx`, which a test host need not have.
+// - `ono.change.plan` `plan set package openssl --latest` — exempt: plans against the host's own package database — the scratch shell inherits only `PATH`, and the harness has no fake-manager seam — so it needs dpkg, rpm or zypper with `openssl` installed, which a test host need not have (review findings COR-C3, TST-9, ARC-14). The proof is `crates/ono-cli/tests/containers_packages.rs` (`should_plan_an_update_of_an_installed_package_with_its_protection_evaluated`, over fake managers on a PATH of its own) and acceptance case 441, in the container.
 // - `ono.change.plan` `get service | where state == failed | plan restart service` — exempt: plans against the failed units of the host; a healthy test host has none, and a plan over nothing is refused rather than empty.
 // - `ono.change.plan` `plan copy file ./nginx.conf /etc/nginx/nginx.conf` — exempt: plans to replace `/etc/nginx/nginx.conf` from `./nginx.conf`; a scratch directory has neither file.
 // - `ono.change-plan.get` `get plan a82f` — exempt: names the plan `a82f`, and a fresh state directory holds no plan.

@@ -185,7 +185,7 @@ pub(crate) fn start_recorder(
     now: Timestamp,
 ) -> Result<ono_recorder::StartOutcome, ErrorValue> {
     let outcome = recorder().start(&configured_settings(), now)?;
-    note_started(outcome.status.since);
+    note_started(outcome.since);
     if let Ok(mut held) = start_refusal().write() {
         *held = None;
     }
@@ -206,6 +206,11 @@ pub(crate) fn persistence_failure(now: Timestamp) -> Option<ErrorValue> {
     let status = recorder().status(now);
     if status.running || status.health != ono_recorder::RecorderHealth::Failed {
         return None;
+    }
+    // The refusal itself where the recorder kept it: a store found damaged is refused as corrupt,
+    // not as unreadable (§31.7, ADR-1125).
+    if let Some(refusal) = recorder().refusal() {
+        return Some(refusal);
     }
     // The diagnostic is the refusal's terse rendering — its message, then its help — and the
     // help is the part that names the store and the reason.
@@ -244,7 +249,10 @@ fn status_record(state: &TemporalState, now: Timestamp) -> Result<Value, ErrorVa
     // §43.4 and issue #142: a start the configuration asked for and the recorder refused is part
     // of the recorder's health, not something to forget. The recorder's own diagnostic wins
     // where it has one, because it is the newer word.
+    // Only for a recorder that is not running: a running one is not the start that was refused
+    // (COR-T2).
     if status.diagnostic.is_none()
+        && !status.running
         && let Some(refusal) = start_refusal().read().ok().and_then(|held| held.clone())
     {
         status.diagnostic = Some(Arc::from(refusal.render_terse().as_str()));
@@ -365,6 +373,11 @@ impl CommandImpl for StopRecorder {
             recorder().stop(now)?;
             let carried = state.set_shared_ledger(recorder().ledger());
             note_started(None);
+            // A stop is the operator's word on the recorder; a refusal of an earlier start the
+            // configuration asked for is no longer what `get recorder` should say (COR-T2).
+            if let Ok(mut held) = start_refusal().write() {
+                *held = None;
+            }
             carried?;
             let record = status_record(&state, now)?;
             Ok(Outcome::Values(ValueStream::from_values([record])))

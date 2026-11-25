@@ -39,7 +39,7 @@ use ono_temporal_core::{
     Appended, ClockDomain, Evidence, EvidenceSource, LedgerRead as _, LedgerWrite as _,
     TemporalCoverage, TemporalEvent, TemporalGap,
 };
-use ono_temporal_ledger::{Ledger, StoreOptions, Swept};
+use ono_temporal_ledger::{Ledger, StoreOptions, Swept, WholeFileCancel, WholeFileCheck};
 use ono_value::{ErrorValue, Value};
 
 use crate::checkpoint::{CheckpointReason, CheckpointSchedule};
@@ -114,10 +114,20 @@ impl RecorderOptions {
 }
 
 /// What a `start recorder` produced (§10.8, §44.1, §44.3).
+///
+/// The recorder's state after the start, without the retention figures: those count the store,
+/// and the implicit start of a recording shell has no status to print (review finding PRF-4). A
+/// caller that prints one asks [`Recorder::status`].
 #[derive(Debug)]
 pub struct StartOutcome {
-    /// The recorder's state after the start.
-    pub status: RecorderStatus,
+    /// Whether the recorder is collecting after the start (§10.8).
+    pub running: bool,
+    /// When the running recorder started.
+    pub since: Option<Timestamp>,
+    /// §43.4's health after the start.
+    pub health: RecorderHealth,
+    /// Where retained history lives, where the start opened a store.
+    pub store: Option<PathBuf>,
     /// §44.1's restart procedure, where a store was opened.
     pub plan: Option<RestartPlan>,
     /// §44.3's explicit diagnostic, where persistence could not be brought up.
@@ -189,6 +199,8 @@ struct State {
     health: RecorderHealth,
     /// §44.3's diagnostic, kept so `get recorder` answers it after the fact as well.
     diagnostic: Option<std::sync::Arc<str>>,
+    /// The refusal behind a `failed` health, whole, so a reader can be refused with its code.
+    refusal: Option<ErrorValue>,
     last_flush: Option<Timestamp>,
     declared: Vec<EvidenceSource>,
 }
@@ -209,6 +221,66 @@ struct Inner {
     ledger: RwLock<Arc<Ledger>>,
     state: Mutex<State>,
     in_flight: std::sync::atomic::AtomicUsize,
+    /// The whole-file check running off the prompt path, where one is (ADR-1125).
+    check: Mutex<Option<RunningCheck>>,
+    /// The earliest instant the running recorder may begin a due whole-file check: the start
+    /// plus [`WHOLE_FILE_CHECK_GRACE`], and after every attempt the attempt plus the same, so a
+    /// check whose thread could not run is retried at a later turn rather than forgotten.
+    check_not_before: Mutex<Option<Timestamp>>,
+}
+
+/// A refusal of the start's first writes, saying that the store opened and then refused them —
+/// not that it could not be opened (review finding R2C-10).
+fn first_write_refused(refusal: ErrorValue) -> ErrorValue {
+    let said = refusal
+        .help()
+        .unwrap_or("the store did not say why")
+        .to_owned();
+    refusal.with_help(format!(
+        "the store opened, and the recorder's first write into it was refused: {said}"
+    ))
+}
+
+/// This process as a writer of the store: its pid and its start time in clock ticks since boot,
+/// which together tell a live writer from a gone one whose pid was reused (ADR-1125, R2C-2).
+fn this_writer() -> String {
+    let pid = std::process::id();
+    let started = process_start(std::path::Path::new("/proc"), pid).unwrap_or(0);
+    format!("{pid}:{started}")
+}
+
+/// Whether the writer `writer` names is still running: the pid exists and started when it did.
+fn writer_alive(writer: &str) -> bool {
+    let Some((pid, started)) = writer.split_once(':') else {
+        return false;
+    };
+    let (Ok(pid), Ok(started)) = (pid.parse::<u32>(), started.parse::<u64>()) else {
+        return false;
+    };
+    process_start(std::path::Path::new("/proc"), pid).is_some_and(|now| now == started)
+}
+
+/// The start time of process `pid` in clock ticks since boot, field 22 of `/proc/<pid>/stat`.
+fn process_start(proc: &std::path::Path, pid: u32) -> Option<u64> {
+    let stat = std::fs::read_to_string(proc.join(pid.to_string()).join("stat")).ok()?;
+    // The command name is in parentheses and may hold spaces and parentheses itself; the fields
+    // after the last `)` begin at field 3.
+    let (_, rest) = stat.rsplit_once(')')?;
+    rest.split_whitespace().nth(19)?.parse().ok()
+}
+
+/// How long a started recorder waits before it begins a due whole-file check (ADR-1125).
+///
+/// The check reads the whole file on a second thread, and on a small, loaded machine that
+/// contends with the shell's own first reads; a `-c` shell is gone long before this, and an
+/// interactive one begins it at the first maintenance turn after.
+pub const WHOLE_FILE_CHECK_GRACE: jiff::SignedDuration = jiff::SignedDuration::from_secs(30);
+
+/// A whole-file check on a thread of its own, and the means to stop it (ADR-1125).
+#[derive(Debug)]
+struct RunningCheck {
+    cancel: WholeFileCancel,
+    handle: std::thread::JoinHandle<Result<WholeFileCheck, ErrorValue>>,
 }
 
 impl Recorder {
@@ -236,10 +308,13 @@ impl Recorder {
                     dropped: 0,
                     health: RecorderHealth::Stopped,
                     diagnostic: None,
+                    refusal: None,
                     last_flush: None,
                     declared: Vec::new(),
                 }),
                 in_flight: std::sync::atomic::AtomicUsize::new(0),
+                check: Mutex::new(None),
+                check_not_before: Mutex::new(None),
                 options,
             }),
         }
@@ -291,17 +366,12 @@ impl Recorder {
             return Err(refusal);
         }
         if self.with_state(|state| state.running) {
-            return Ok(StartOutcome {
-                status: self.status(now),
-                plan: None,
-                diagnostic: None,
-            });
+            return Ok(self.outcome(None, None));
         }
 
         let Some(path) = self.inner.options.store.clone() else {
             return Ok(self.degrade(
                 settings,
-                now,
                 ono_temporal_core::error::store_unavailable(
                     "no ledger path was configured, so nothing can be retained across sessions",
                 ),
@@ -311,7 +381,7 @@ impl Recorder {
         let options = StoreOptions::at(&path).with_retention(settings.retention());
         let ledger = match Ledger::persistent(&options) {
             Ok(ledger) => Arc::new(ledger),
-            Err(refusal) => return Ok(self.degrade(settings, now, refusal)),
+            Err(refusal) => return Ok(self.degrade(settings, refusal)),
         };
 
         // §44.1, in order, before anything new is written into the store.
@@ -327,14 +397,33 @@ impl Recorder {
         });
         let plan = match plan {
             Ok(plan) => plan,
-            Err(refusal) => return Ok(self.degrade(settings, now, refusal)),
+            Err(refusal) => return Ok(self.degrade(settings, refusal)),
         };
 
-        let declared = self.declare_continuity(&ledger, now)?;
-        if let Some(plan) = plan.as_ref() {
-            self.record_gaps(&ledger, &plan.gaps, now)?;
+        // ADR-1125: this writer's own row, which a later start reads as an unclean shutdown only
+        // once this process is gone without closing it. Whether a check is due is asked at the
+        // maintenance turns that follow (`begin_due_check`).
+        if let Some(Err(refusal)) = ledger
+            .store()
+            .map(|store| store.mark_writer_open(&this_writer(), now))
+        {
+            return Ok(self.degrade(settings, first_write_refused(refusal)));
         }
-        self.open_coverage(&ledger, now)?;
+
+        // §44.1's writes are the first the store takes. One that fails — a full disk, a file-size
+        // limit — is a start that was refused after the store opened, and it is `failed` with the
+        // reason like a store that would not open, never a quiet `stopped` (issue #142, COR-T2).
+        let written = self.declare_continuity(&ledger, now).and_then(|declared| {
+            if let Some(plan) = plan.as_ref() {
+                self.record_gaps(&ledger, &plan.gaps, now)?;
+            }
+            self.open_coverage(&ledger, now)?;
+            Ok(declared)
+        });
+        let declared = match written {
+            Ok(declared) => declared,
+            Err(refusal) => return Ok(self.degrade(settings, first_write_refused(refusal))),
+        };
 
         {
             let mut state = self.lock_state();
@@ -350,14 +439,18 @@ impl Recorder {
             };
             state.last_flush = Some(now);
             state.declared = declared;
+            state.diagnostic = None;
+            state.refusal = None;
         }
         self.replace_ledger(ledger);
+        *self
+            .inner
+            .check_not_before
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            now.checked_add(WHOLE_FILE_CHECK_GRACE).ok();
 
-        Ok(StartOutcome {
-            status: self.status(now),
-            plan,
-            diagnostic: None,
-        })
+        Ok(self.outcome(plan, None))
     }
 
     /// `stop recorder` (§10.8).
@@ -369,9 +462,13 @@ impl Recorder {
         if !self.with_state(|state| state.running) {
             return Err(ono_temporal_core::error::recorder_not_running());
         }
+        self.cancel_whole_file_check();
         let ledger = self.ledger();
         self.close_coverage(&ledger, now)?;
         ledger.flush()?;
+        if let Some(store) = ledger.store() {
+            store.mark_writer_closed(&this_writer())?;
+        }
         {
             let mut state = self.lock_state();
             state.running = false;
@@ -380,6 +477,7 @@ impl Recorder {
             state.store = None;
             state.health = RecorderHealth::Stopped;
             state.diagnostic = None;
+            state.refusal = None;
         }
         let capacity = self.with_state(|state| state.settings.session_max_events);
         self.replace_ledger(Arc::new(Ledger::session_with_capacity(capacity)));
@@ -395,6 +493,7 @@ impl Recorder {
     /// recorder's domain: freezing the last known state and calling it current.
     #[must_use]
     pub fn status(&self, now: Timestamp) -> RecorderStatus {
+        self.absorb_condemnation();
         let retention = self.ledger().retention();
         let state = self.lock_state();
         let health = if state.running && state.is_stalled(now) {
@@ -427,6 +526,19 @@ impl Recorder {
                 .load(std::sync::atomic::Ordering::Relaxed),
             diagnostic: state.diagnostic.clone(),
         }
+    }
+
+    /// Why the recorder is `failed`, as the refusal a reader of its history is answered with —
+    /// `temporal.store_corrupt` for a damaged store, `temporal.store_unavailable` for one that could
+    /// not be opened or written; `None` where it is not failed (§31.7, §44.3, issue #142).
+    #[must_use]
+    pub fn refusal(&self) -> Option<ErrorValue> {
+        self.absorb_condemnation();
+        self.with_state(|state| {
+            (state.health == RecorderHealth::Failed)
+                .then(|| state.refusal.clone())
+                .flatten()
+        })
     }
 
     /// The sources this recorder has told the store number their events contiguously (§43.2).
@@ -591,6 +703,32 @@ impl Recorder {
     ///
     /// Returns a §34 store refusal.
     pub fn maintenance(&self, now: Timestamp) -> Result<Maintenance, ErrorValue> {
+        // Another shell may have found the store damaged since this one opened it: one metadata
+        // row, read here rather than on every read (ADR-1125, review finding R2C-2).
+        if let Some(store) = self.ledger().store() {
+            let _ = store.refresh_condemnation();
+        }
+        if self.absorb_condemnation() {
+            return Err(self.condemnation().unwrap_or_else(|| {
+                ono_temporal_core::error::store_unavailable("the store failed its whole-file check")
+            }));
+        }
+        self.begin_due_check(now);
+        // A truncating log checkpoint waits for every reader, and a whole-file check is one long
+        // read: a flush or a sweep's reclaim now would hold this turn — and the prompt behind it
+        // — until the check finished (ADR-1125). Both wait for the next turn; what was committed
+        // is durable in the write-ahead log meanwhile (§31.5), and the turn still counts as one.
+        if self.whole_file_check_running() {
+            self.lock_state().last_flush = Some(now);
+            return Ok(Maintenance {
+                flushed: false,
+                swept: Swept {
+                    complete: false,
+                    ..Swept::default()
+                },
+                checkpoint: self.with_state(|state| state.schedule.due(now)),
+            });
+        }
         let (due_flush, interval) = self.with_state(|state| {
             (
                 state
@@ -674,6 +812,150 @@ impl Recorder {
         }
     }
 
+    /// Waits for the whole-file check this recorder started, and answers what it found; `None`
+    /// where none is running (ADR-1125).
+    ///
+    /// The check runs off the prompt path and nothing in the shell waits for it. This is the
+    /// integration tests' way to wait for it: it has no production caller (review finding R2C-7).
+    pub fn wait_for_whole_file_check(&self) -> Option<Result<WholeFileCheck, ErrorValue>> {
+        let running = self
+            .inner
+            .check
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()?;
+        let outcome = running.handle.join().unwrap_or_else(|_| {
+            Err(ono_temporal_core::error::store_unavailable(
+                "the whole-file check did not finish",
+            ))
+        });
+        self.absorb_condemnation();
+        Some(outcome)
+    }
+
+    /// Starts the whole-file check on a thread of its own (ADR-1125).
+    ///
+    /// It reads on a connection of its own, so the store's connection stays free for the prompt;
+    /// `stop recorder` cancels it, and a check that did not finish records nothing and stays due.
+    fn begin_whole_file_check(&self, ledger: Arc<Ledger>, now: Timestamp) {
+        let mut slot = self
+            .inner
+            .check
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot
+            .as_ref()
+            .is_some_and(|running| !running.handle.is_finished())
+        {
+            return;
+        }
+        let cancel = WholeFileCancel::default();
+        let theirs = cancel.clone();
+        let handle = std::thread::spawn(move || match ledger.store() {
+            Some(store) => {
+                // The writers gone without closing are what this check is for; a pass settles
+                // them.
+                let settles = match store.whole_file_check_due(now, &writer_alive) {
+                    Ok(Some(ono_temporal_ledger::CheckDue::UncleanShutdown(keys))) => keys,
+                    _ => Vec::new(),
+                };
+                store.check_whole_file(&theirs, now, &settles)
+            }
+            None => Ok(WholeFileCheck::Cancelled),
+        });
+        *slot = Some(RunningCheck { cancel, handle });
+    }
+
+    /// Begins the whole-file check a running recorder is due for (ADR-1125): one found due at
+    /// its start, once [`WHOLE_FILE_CHECK_GRACE`] has passed, or one that has come due by age.
+    fn begin_due_check(&self, now: Timestamp) {
+        if !self.with_state(|state| state.running) {
+            return;
+        }
+        let ledger = self.ledger();
+        let Some(store) = ledger.store() else {
+            return;
+        };
+        if self.whole_file_check_running() {
+            return;
+        }
+        let mut not_before = self
+            .inner
+            .check_not_before
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if not_before.is_some_and(|earliest| now < earliest) {
+            return;
+        }
+        // Due by the store's own record — a writer gone without closing, no pass, another
+        // version's pass, or a pass older than the period — never by this recorder's own row,
+        // which is alive (review finding R2C-1).
+        if matches!(store.whole_file_check_due(now, &writer_alive), Ok(Some(_))) {
+            *not_before = now.checked_add(WHOLE_FILE_CHECK_GRACE).ok();
+            drop(not_before);
+            self.begin_whole_file_check(ledger, now);
+        }
+    }
+
+    /// Whether a whole-file check is reading the store now (ADR-1125).
+    fn whole_file_check_running(&self) -> bool {
+        self.inner
+            .check
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|running| !running.handle.is_finished())
+    }
+
+    /// Cancels a running whole-file check and waits for its thread (ADR-1125).
+    fn cancel_whole_file_check(&self) {
+        let running = self
+            .inner
+            .check
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(running) = running {
+            running.cancel.cancel();
+            let _ = running.handle.join();
+        }
+        *self
+            .inner
+            .check_not_before
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+
+    /// The refusal a store that failed its whole-file check answers with, where it did.
+    fn condemnation(&self) -> Option<ErrorValue> {
+        let ledger = self.ledger();
+        let store = ledger.store()?;
+        let report = store.integrity();
+        report.is_fatal().then(|| {
+            ono_temporal_core::error::store_corrupt(
+                &store.path().display().to_string(),
+                &report.guidance(),
+            )
+        })
+    }
+
+    /// Turns a running recorder whose store failed its whole-file check into a failed one that
+    /// says why (§31.7, §43.4, ADR-1125). The store stays the session's ledger, so every read
+    /// through it is refused as corrupt rather than answered. Whether it did.
+    fn absorb_condemnation(&self) -> bool {
+        let Some(refusal) = self.condemnation() else {
+            return false;
+        };
+        let mut state = self.lock_state();
+        if state.running {
+            state.running = false;
+            state.health = RecorderHealth::Failed;
+            state.diagnostic = Some(refusal.render_terse().into());
+            state.refusal = Some(refusal);
+        }
+        true
+    }
+
     /// Discards the whole local ledger (§30.8's `remove temporal-history`).
     ///
     /// # Errors
@@ -729,13 +1011,20 @@ impl Recorder {
         )
     }
 
+    /// What a start answers: the state, read without counting the store (PRF-4).
+    fn outcome(&self, plan: Option<RestartPlan>, diagnostic: Option<ErrorValue>) -> StartOutcome {
+        self.with_state(|state| StartOutcome {
+            running: state.running,
+            since: state.since,
+            health: state.health,
+            store: state.store.clone(),
+            plan,
+            diagnostic,
+        })
+    }
+
     /// §44.3: persistence is off, the shell keeps working, and the diagnostic is explicit.
-    fn degrade(
-        &self,
-        settings: &RecorderSettings,
-        now: Timestamp,
-        diagnostic: ErrorValue,
-    ) -> StartOutcome {
+    fn degrade(&self, settings: &RecorderSettings, diagnostic: ErrorValue) -> StartOutcome {
         {
             let mut state = self.lock_state();
             state.running = false;
@@ -747,12 +1036,9 @@ impl Recorder {
             state.store = None;
             state.health = RecorderHealth::Failed;
             state.diagnostic = Some(diagnostic.render_terse().into());
+            state.refusal = Some(diagnostic.clone());
         }
-        StartOutcome {
-            status: self.status(now),
-            plan: None,
-            diagnostic: Some(diagnostic),
-        }
+        self.outcome(None, Some(diagnostic))
     }
 
     /// Tells the store which sources promised sequence continuity (§21.5, §43.2).

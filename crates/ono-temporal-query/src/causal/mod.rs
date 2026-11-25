@@ -46,5 +46,5 @@ pub use rules::{
 };
 pub use why::{
     CausalExplanation, CausalNode, CausalStep, DEFAULT_DEPTH, DEFAULT_MAX_CANDIDATES,
-    TemporalAssociation, WhyOptions, WhyRequest,
+    TemporalAssociation, WhyOptions, WhyRequest, is_target_transition, why_candidates,
 };

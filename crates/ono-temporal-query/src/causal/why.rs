@@ -407,6 +407,65 @@ fn provenance_value(provenance: &Provenance) -> Value {
     Value::Map(Arc::new(map))
 }
 
+/// Whether `event` is a transition `why <target>` can explain about `subject`: a notable kind,
+/// naming the subject, with evidence behind it (§16.3).
+///
+/// The caller that reads the ledger uses it to find the target's own last transition, however
+/// many other events the host has had since (review finding COR-T8).
+#[must_use]
+pub fn is_target_transition(event: &TemporalEvent, subject: &SpatialId) -> bool {
+    NOTABLE.contains(&event.kind) && facts::mentions(event, subject) && !event.evidence.is_empty()
+}
+
+/// The events `why` reads from `ledger` to answer `request` at `at`, each read bounded by
+/// `max_candidates` (§16.3, §32.3, §33's `temporal.why.max_candidates`).
+///
+/// The newest `max_candidates` events of the whole scope need not hold the target's own last
+/// transition: a target that last changed before that many other events would read as having no
+/// recorded transition although the ledger holds one (review finding COR-T8). So for the first
+/// form the target's own events are read first — bounded the same way — and the scope-wide window
+/// the causes are drawn from ends at the newest transition among them rather than at `at`. At
+/// most two reads of `max_candidates` events each; the other forms read the one window.
+///
+/// # Errors
+///
+/// Whatever §34 refusal the ledger raises.
+pub fn why_candidates(
+    ledger: &dyn ono_temporal_core::LedgerRead,
+    scope: &SpatialScope,
+    request: &WhyRequest,
+    at: Timestamp,
+    max_candidates: usize,
+) -> Result<Vec<TemporalEvent>, ErrorValue> {
+    let query = |subjects: Vec<SpatialId>, until: Timestamp| ono_temporal_core::EventQuery {
+        scope: Some(scope.clone()),
+        subjects,
+        kinds: Vec::new(),
+        range: ono_temporal_core::TimeRange::until(until),
+        limit: Some(max_candidates),
+        order: ono_temporal_core::QueryOrder::Descending,
+    };
+    let mut until = at;
+    let mut own = Vec::new();
+    if let WhyRequest::Target { subject, .. } = request {
+        own = ledger.events(&query(vec![subject.clone()], at))?;
+        if let Some(last) = own
+            .iter()
+            .find(|event| is_target_transition(event, subject))
+        {
+            until = facts::instant(last);
+        }
+    }
+    let mut events = ledger.events(&query(Vec::new(), until))?;
+    let held: BTreeSet<_> = events.iter().map(|event| event.event_id.clone()).collect();
+    events.extend(
+        own.into_iter()
+            .filter(|event| facts::instant(event) <= until && !held.contains(&event.event_id)),
+    );
+    presentation_order(&mut events);
+    Ok(events)
+}
+
 impl CausalEngine {
     /// The explanation for one of §16.2's three questions.
     ///
@@ -442,11 +501,9 @@ impl CausalEngine {
                         error::not_recorded(&scope_hint(&candidates), options.at, &[])
                     })?,
             ),
-            WhyRequest::Target { subject, .. } => most_recent(&candidates, |event| {
-                NOTABLE.contains(&event.kind)
-                    && facts::mentions(event, subject)
-                    && !event.evidence.is_empty()
-            })?,
+            WhyRequest::Target { subject, .. } => {
+                most_recent(&candidates, |event| is_target_transition(event, subject))?
+            }
             WhyRequest::Field { subject, field, .. } => most_recent(&candidates, |event| {
                 facts::mentions(event, subject)
                     && !event.evidence.is_empty()

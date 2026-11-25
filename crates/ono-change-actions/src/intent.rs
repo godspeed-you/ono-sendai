@@ -58,7 +58,7 @@ impl Mutation<'_> {
     /// The selector that names the object being acted on.
     ///
     /// The first declared selector that was written, which is the rule the rest of the shell
-    /// already resolves a mutation's target by (ADR-0082 §2): `copy file <source> to
+    /// already resolves a mutation's target by (ADR-0082 §2): `copy file <source>
     /// <destination>` acts on the source and carries the destination as an argument.
     pub(crate) fn object_selector(&self) -> Option<&Argument> {
         self.contract.selectors().iter().find_map(|spec| {

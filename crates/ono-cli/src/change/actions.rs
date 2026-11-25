@@ -92,7 +92,7 @@ pub struct PlannableOperation {
     pub shape: TargetShape,
     /// Which selector of the contract names the object it mutates.
     ///
-    /// `copy file ./new to /etc/nginx.conf` writes the *destination*, and freezing the source
+    /// `copy file ./new /etc/nginx.conf` writes the *destination*, and freezing the source
     /// would put the wrong path into the plan's recovery domain (Appendix B).
     pub subject: &'static str,
     /// Whether the selector that names the object is a number rather than text (§4.3).
@@ -166,7 +166,7 @@ fn operations() -> &'static [PlannableOperation] {
                 );
                 let first = contract.selectors().first();
                 // Which selector names the object the plan is *about* — the one it freezes and
-                // the one a recovery domain is resolved from. `copy file <source> to
+                // the one a recovery domain is resolved from. `copy file <source>
                 // <destination>` acts on the source and changes the destination, and freezing
                 // the source would put the wrong path into Appendix B's resolution. The registry
                 // already says so: an effect names the selector it lands on (§8.2), and the
@@ -326,7 +326,7 @@ pub enum Resolution {
         subjects: Vec<String>,
         /// The object identity the provider acts on, where the statement fixed one.
         ///
-        /// `copy file <source> to <destination>` acts on the *source* and writes the
+        /// `copy file <source> <destination>` acts on the *source* and writes the
         /// destination, so the object a provider is asked about and the object the plan is
         /// protecting are different things and both have to travel (ADR-0082 §1, §2).
         object: Option<String>,
@@ -409,6 +409,16 @@ pub fn resolve(
         return Err(error::action_not_plannable(&statement.source, &detail));
     };
     let bound = contract.bind(resolved.arguments)?;
+    // A `set package` that names two destinations, or none, is refused before anything is
+    // planned or sealed, by the check the provider applies to the direct command (ADR-1084,
+    // review findings COR-C1, COR-C2).
+    if contract.id() == "ono.package.set" {
+        ono_provider_linux::check_set_request(
+            bound.option("version"),
+            bound.option("latest"),
+            bound.option("hold"),
+        )?;
+    }
     // Planned from a job, the operation's relative paths mean the job's directory (ADR-0957).
     let bound = match directory {
         Some(directory) => bound.anchored(directory),
@@ -443,6 +453,13 @@ pub fn resolve(
             ));
         }
     };
+    // R2C-4: a package's name and version are held to the grammar the providers hold them to,
+    // before anything is sealed, so the plan and the direct command refuse alike.
+    if contract.id().starts_with("ono.package.") {
+        for subject in &subjects {
+            ono_provider_linux::check_package_arguments(subject, bound.option("version"))?;
+        }
+    }
     // ADR-0082 §1: the object a provider is asked about is the first declared selector that was
     // written, and a `path` selector is acted on rather than resolved. Recording which one it was
     // is what lets execution build the same action the shell's own mutation path builds.
@@ -599,7 +616,7 @@ fn verification_of(statement: &Statement) -> Result<Resolution, ErrorValue> {
 
 /// The object a statement mutates, read from the selector [`PlannableOperation::subject`] names.
 ///
-/// Where the contract has no such selector — `copy file <source> to <destination>` writes the
+/// Where the contract has no such selector — `copy file <source> <destination>` writes the
 /// destination as an option in some spellings and as a selector in others — every declared
 /// selector and option of that name is consulted before the answer is `None`.
 fn subject_of(
@@ -713,10 +730,17 @@ pub fn fragment_for(
             // The effect lands on the object as a person and a mount table both name it, which
             // is the label rather than the frozen identity: §11.2 maps a mutation domain onto a
             // persistence domain by path, and `/etc/nginx.conf@/dev/sda2` is not a path. A row
-            // that names its own selector overrides that — `copy file <source> to <destination>`
+            // that names its own selector overrides that — `copy file <source> <destination>`
             // creates the destination and reads the source.
             let mut acted = action;
-            for spec in operation.declared.effects() {
+            // `--latest` names no version: the package manager picks the destination when the
+            // plan is applied, so the seal cannot cover it, and the plan says so in the effect it
+            // is about (ADR-1084, review finding SEC2-6).
+            let unsealed_destination = operation.command == "ono.package.set"
+                && arguments.iter().any(|(name, value)| {
+                    name.as_ref() == "latest" && matches!(value, Value::Bool(true))
+                });
+            for (position, spec) in operation.declared.effects().iter().enumerate() {
                 let object = spec
                     .object_selector()
                     .and_then(|selector| {
@@ -726,12 +750,22 @@ pub fn fragment_for(
                             .and_then(|(_, value)| value.as_str().ok().map(str::to_owned))
                     })
                     .unwrap_or_else(|| target.label().to_owned());
+                let explanation = if unsealed_destination && position == 0 {
+                    format!(
+                        "{}; the destination version is the newest the repositories offer when \
+                         the plan is applied, resolved then by the package manager and not \
+                         covered by the seal",
+                        spec.explanation()
+                    )
+                } else {
+                    spec.explanation().to_owned()
+                };
                 let mut effect = ProposedEffect::new(
                     id.clone(),
                     spec.domain(),
                     spec.kind(),
                     spec.confidence(),
-                    spec.explanation(),
+                    explanation,
                 )
                 .on(object)
                 .citing(operation.command);

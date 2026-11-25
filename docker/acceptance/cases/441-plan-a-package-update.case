@@ -2,7 +2,10 @@
 # resolves the installed package, freezes the version it starts from (§7.2), evaluates protection
 # over the package's files (§30.2) and runs no package manager command (§2.1). `apply` goes
 # through the plan/apply path, and as the unprivileged user this container runs as it changes
-# nothing: the refusal comes before any package manager starts (spec §17.2).
+# nothing: the privilege gate refuses the plan (change.privilege_required) before any package
+# manager starts (v0.6 §43.3, spec §17.2). Review findings COR-C4, TST-8: p4 asserts the
+# protection verdict, p5 the honest refusal and the domain it names, p6 the exit status and the
+# refusal's code, p8/p9 the usage-error code.
 case: an update of an installed package is planned with its protection evaluated
 timeout: 180
 env: NO_COLOR=1
@@ -26,16 +29,24 @@ run: |
     'grep -q "\"operation\":\"ono.package.set\"" /tmp/p441.json && grep -q "\"name\":\"latest\",\"value\":true" /tmp/p441.json'
   prove p3 "the version it starts from is frozen as a precondition (§7.2)" \
     'grep -qF "\"kind\":\"version\"" /tmp/p441.json && grep -qF "\"expected\":\"$BEFORE\"" /tmp/p441.json'
-  prove p4 "its protection was evaluated over the package's files (§30.2)" \
-    'grep -q "\"domain\":\"filesystem-persistent\"" /tmp/p441.json'
-  prove p5 "\`--protection require\` refuses a plan nothing can protect, and says so (§17.2)" \
-    'ono -c "plan --protection require set package dpkg --latest" 2>&1 | grep -q "recovery.coverage_insufficient"'
+  prove p4 "its protection was evaluated over the package's files: compensatable, not covered (§30.2, §27.4)" \
+    'grep -q "\"domain\":\"filesystem-persistent\",\"objective\":\"preserve-exact\",\"protection\":\"compensatable\",\"satisfied\":false" /tmp/p441.json'
+  # No first-party provider maps a package's data to a persistence domain yet (a known gap,
+  # ADR-1084); what is asserted is that `require` then refuses honestly and names the domain it
+  # could not cover, not that the gap is the desired answer.
+  prove p5 "\`--protection require\` refuses and names the domain nothing covers (§17.2)" \
+    'ono -c "plan --protection require set package dpkg --latest" 2>&1 | grep "recovery.coverage_insufficient" -A3 | grep -q "Uncovered: .*application-persistent"'
 
-  ono -c "apply $(plan_id /tmp/p441.json) --accept-risk --accept-irreversible --confirm" > /tmp/p441.txt 2>&1
-  prove p6 "apply as an unprivileged user does not succeed" '! grep -q "\"status\":\"success\"" /tmp/p441.txt'
+  ono -c "apply $(plan_id /tmp/p441.json) --accept-risk --accept-irreversible --confirm | to json" > /tmp/p441.txt 2>&1
+  APPLIED=$?
+  prove p6 "apply as an unprivileged user is refused by the privilege gate, and nothing runs (v0.6 §43.3)" \
+    '[ "$APPLIED" -ne 0 ] && grep -q "Ono-Sendai-E1727" /tmp/p441.txt && ! grep -q "\"status\":\"success\"" /tmp/p441.txt'
   prove p7 "and the installed version is unchanged" '[ "$(dpkg-query -W -f "\${Version}" dpkg)" = "$BEFORE" ]'
-  prove p8 "an update together with a named version is refused (ADR-1084)" \
-    'ono -c "set package dpkg --latest --version 1.0 | to json" 2>&1 | grep -q -- "--latest"'
+  prove p8 "an update together with a named version is refused as a usage error (ADR-1084)" \
+    'ono -c "set package dpkg --latest --version 1.0 | to json" 2>&1 | grep -q "Ono-Sendai-E0201"'
+  PLANS=$(ono -c "get plan | count")
+  prove p9 "and a plan of it is refused before anything is sealed (ADR-1084)" \
+    '! ono -c "plan set package dpkg --latest --version 1.0" > /tmp/p441b.txt 2>&1 && grep -q "Ono-Sendai-E0201" /tmp/p441b.txt && [ "$(ono -c "get plan | count")" = "$PLANS" ]'
 
   echo 'package update: done'
 exit: 0
@@ -47,6 +58,7 @@ stdout-contains: PROVED p5
 stdout-contains: PROVED p6
 stdout-contains: PROVED p7
 stdout-contains: PROVED p8
+stdout-contains: PROVED p9
 stdout-contains: package update: done
 stdout-not-contains: FAILED
 stdout-not-contains: panicked

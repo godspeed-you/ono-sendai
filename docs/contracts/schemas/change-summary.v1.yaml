@@ -30,5 +30,12 @@ fields:
     type: list<record>
     required: true
     doc: The changes themselves, each carrying the object it happened to and when it was observed.
+  reason:
+    type: string
+    nullable: true
+    doc: >-
+      Why the section cannot say what changed, where that is the case: the window held more events
+      than one comparison may read (`resource.item_limit`, ADR-1067), so `state` is `unknown` and the
+      rest of the view still answers (review finding COR-T7, ADR-1067). Null otherwise.
 default_view:
   columns: [window, state, source]
