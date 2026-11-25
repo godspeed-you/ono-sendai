@@ -64,4 +64,7 @@ pub use retention::{
     DEFAULT_MAX_AGE, DEFAULT_MAX_SIZE, DEFAULT_RETENTION_BATCH, RetentionPolicy, Swept,
 };
 pub use sequences::SourceSequence;
-pub use store::{Durability, LedgerStore, StoreOptions};
+pub use store::{
+    CheckDue, Durability, LedgerStore, StoreOptions, WHOLE_FILE_CHECK_PERIOD, WholeFileCancel,
+    WholeFileCheck,
+};

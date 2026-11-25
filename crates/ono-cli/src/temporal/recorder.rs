@@ -207,6 +207,11 @@ pub(crate) fn persistence_failure(now: Timestamp) -> Option<ErrorValue> {
     if status.running || status.health != ono_recorder::RecorderHealth::Failed {
         return None;
     }
+    // The refusal itself where the recorder kept it: a store found damaged is refused as corrupt,
+    // not as unreadable (§31.7, ADR-1125).
+    if let Some(refusal) = recorder().refusal() {
+        return Some(refusal);
+    }
     // The diagnostic is the refusal's terse rendering — its message, then its help — and the
     // help is the part that names the store and the reason.
     let reason = status.diagnostic.as_deref().map_or(

@@ -15,7 +15,9 @@
 //! leaf of every table and index — at a cost that does not grow with the store (ADR-1068); the
 //! whole-file `PRAGMA integrity_check` runs where a migration is about to rewrite the store. Damage
 //! elsewhere in the file is met by the read that reaches it and refused as corruption naming the
-//! store. The damage SQLite cannot see is a row whose payload no longer decodes, and that is found
+//! store. A table and its indexes that disagree are met by no read at all; the recorder runs the
+//! whole-file check off the prompt at the checkpoints ADR-1125 defines, and a store that fails it is
+//! refused from then on. The damage SQLite cannot see is a row whose payload no longer decodes, and that is found
 //! on read too: the row fails, the query answers, and the affected interval becomes a gap.
 
 use std::sync::Arc;

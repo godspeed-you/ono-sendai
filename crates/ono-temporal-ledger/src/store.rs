@@ -195,6 +195,7 @@ impl LedgerStore {
 
         let mut integrity = IntegrityReport::default();
         check_structure(&connection, &path, &mut integrity);
+        remembered_failure(&connection, &path, &mut integrity);
         if integrity.is_fatal() {
             return Err(error::store_corrupt(
                 &path.display().to_string(),
@@ -245,7 +246,7 @@ impl LedgerStore {
     ///
     /// Returns a §34 store refusal.
     pub fn latest(&self) -> Result<Option<Timestamp>, ErrorValue> {
-        let connection = self.locked();
+        let connection = self.usable()?;
         let latest: Option<i64> = connection
             .query_row("SELECT MAX(presentation_nanos) FROM events", [], |row| {
                 row.get(0)
@@ -462,7 +463,7 @@ impl LedgerStore {
     ///
     /// Returns a §34 store refusal.
     pub fn source_sequences(&self) -> Result<Vec<SourceSequence>, ErrorValue> {
-        let connection = self.locked();
+        let connection = self.usable()?;
         let mut statement = connection
             .prepare(
                 "SELECT source, domain_host, domain_boot, lowest, highest, seen, contiguous, \
@@ -541,7 +542,7 @@ impl LedgerStore {
         scope: &SpatialScope,
         at: Timestamp,
     ) -> Result<(), ErrorValue> {
-        let connection = self.locked();
+        let connection = self.usable()?;
         let at = nanos(at).map_err(|detail| corrupt("source_sequences", &detail))?;
         connection
             .execute(
@@ -572,7 +573,7 @@ impl LedgerStore {
     ///
     /// Returns a §34 store refusal.
     pub fn sweep(&self, now: Timestamp) -> Result<Swept, ErrorValue> {
-        let mut connection = self.locked();
+        let mut connection = self.usable()?;
         let policy = self.retention;
         if !policy.is_bounded() {
             return Ok(Swept {
@@ -826,6 +827,22 @@ impl LedgerStore {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The connection, unless a whole-file check has found the store inconsistent (ADR-1125).
+    ///
+    /// A store whose table and indexes disagree answers two reads of one history differently and
+    /// SQLite says nothing on either, so once the check has said so nothing is read from it and
+    /// nothing appended to it: every read and write is refused as corruption naming the store.
+    fn usable(&self) -> Result<MutexGuard<'_, Connection>, ErrorValue> {
+        let report = self.integrity();
+        if report.is_fatal() {
+            return Err(error::store_corrupt(
+                &self.path.display().to_string(),
+                &report.guidance(),
+            ));
+        }
+        Ok(self.locked())
+    }
+
     fn unavailable(&self, error: &rusqlite::Error) -> ErrorValue {
         unavailable(&self.path, error)
     }
@@ -854,6 +871,273 @@ fn is_damage(error: &rusqlite::Error) -> bool {
         error.sqlite_error_code(),
         Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
     )
+}
+
+// ---- the whole-file check ---------------------------------------------------------------------
+
+/// The metadata key holding the instant the last whole-file check passed (ADR-1125).
+const CHECKED_AT_KEY: &str = "integrity_checked_at";
+/// The metadata key holding the version of the Ono whose check passed.
+const CHECKED_BY_KEY: &str = "integrity_checked_by";
+/// The metadata key holding what a failed whole-file check found; present means condemned.
+const FAILED_KEY: &str = "integrity_failed";
+/// The metadata key a writer sets while it has the store open and clears when it closes cleanly.
+const WRITER_KEY: &str = "writer_open_since";
+
+/// How old a passed whole-file check may grow before it is due again (ADR-1125).
+pub const WHOLE_FILE_CHECK_PERIOD: jiff::SignedDuration = jiff::SignedDuration::from_hours(7 * 24);
+
+/// The version a passed check is recorded under.
+const CHECKER_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Why the whole-file check is due (ADR-1125).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckDue {
+    /// No whole-file check has passed on this store — new, or written only by an Ono before
+    /// ADR-1125.
+    NeverChecked,
+    /// The last check that passed was run by another version of Ono, which may have written it
+    /// differently since.
+    OtherVersion(String),
+    /// A writer opened the store and did not close it cleanly.
+    UncleanShutdown,
+    /// The last check that passed is older than [`WHOLE_FILE_CHECK_PERIOD`].
+    Periodic,
+}
+
+/// What one whole-file check found (ADR-1125).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WholeFileCheck {
+    /// Every page read back, and every table agrees with its indexes; recorded in the store.
+    Passed,
+    /// SQLite found damage; recorded in the store, which refuses every read and write from now on
+    /// and is refused at every later open.
+    Failed(String),
+    /// The check was cancelled before it finished; nothing was recorded and it stays due.
+    Cancelled,
+}
+
+/// Stops a running whole-file check from another thread (ADR-1125).
+///
+/// The check reads the whole file, so it runs on a thread of its own and on a connection of its
+/// own; cancelling interrupts that connection, which SQLite answers at its next page.
+#[derive(Debug, Clone, Default)]
+pub struct WholeFileCancel {
+    inner: std::sync::Arc<Mutex<CancelState>>,
+}
+
+#[derive(Default)]
+struct CancelState {
+    cancelled: bool,
+    handle: Option<rusqlite::InterruptHandle>,
+}
+
+impl std::fmt::Debug for CancelState {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CancelState")
+            .field("cancelled", &self.cancelled)
+            .field("running", &self.handle.is_some())
+            .finish()
+    }
+}
+
+impl WholeFileCancel {
+    /// Asks the check to stop; a check that has not started yet will not start.
+    pub fn cancel(&self) {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        state.cancelled = true;
+        if let Some(handle) = state.handle.as_ref() {
+            handle.interrupt();
+        }
+    }
+
+    /// Whether [`WholeFileCancel::cancel`] was called.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.inner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .cancelled
+    }
+
+    /// Registers the connection the check runs on; `false` where it was cancelled already.
+    fn register(&self, handle: rusqlite::InterruptHandle) -> bool {
+        let mut state = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        if state.cancelled {
+            return false;
+        }
+        state.handle = Some(handle);
+        true
+    }
+}
+
+impl LedgerStore {
+    /// Whether the whole-file check is due, and why (ADR-1125). Reads four metadata rows: a
+    /// constant cost, whatever the store holds.
+    ///
+    /// # Errors
+    ///
+    /// Returns a §34 store refusal.
+    pub fn whole_file_check_due(&self, now: Timestamp) -> Result<Option<CheckDue>, ErrorValue> {
+        let connection = self.locked();
+        let read = |key: &str| -> Result<Option<String>, ErrorValue> {
+            connection
+                .query_row(
+                    "SELECT value FROM metadata WHERE key = ?1",
+                    params![key],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|error| unavailable(&self.path, &error))
+        };
+        if read(WRITER_KEY)?.is_some() {
+            return Ok(Some(CheckDue::UncleanShutdown));
+        }
+        let Some(checked_at) = read(CHECKED_AT_KEY)? else {
+            return Ok(Some(CheckDue::NeverChecked));
+        };
+        let checked_by = read(CHECKED_BY_KEY)?.unwrap_or_default();
+        if checked_by != CHECKER_VERSION {
+            return Ok(Some(CheckDue::OtherVersion(checked_by)));
+        }
+        let Ok(checked_at) = checked_at.parse::<Timestamp>() else {
+            return Ok(Some(CheckDue::NeverChecked));
+        };
+        if now.duration_since(checked_at) >= WHOLE_FILE_CHECK_PERIOD {
+            return Ok(Some(CheckDue::Periodic));
+        }
+        Ok(None)
+    }
+
+    /// Reads the whole file with `PRAGMA integrity_check` and records the outcome (ADR-1125).
+    ///
+    /// Runs on a read-only connection of its own, so the store's own connection — every read and
+    /// write the shell makes — is not held while it runs; it costs as much as the store is large,
+    /// which is why the caller runs it off the prompt path. A failure is recorded in the store's
+    /// metadata, so the next open refuses the store, and in this handle's integrity report, so
+    /// every read and write through it is refused from now on.
+    ///
+    /// # Errors
+    ///
+    /// Returns a §34 store refusal where the check's connection cannot be opened or the outcome
+    /// cannot be recorded.
+    pub fn check_whole_file(
+        &self,
+        cancel: &WholeFileCancel,
+        now: Timestamp,
+    ) -> Result<WholeFileCheck, ErrorValue> {
+        if cancel.is_cancelled() {
+            return Ok(WholeFileCheck::Cancelled);
+        }
+        let checker = Connection::open_with_flags(
+            &self.path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| unavailable(&self.path, &error))?;
+        if !cancel.register(checker.get_interrupt_handle()) {
+            return Ok(WholeFileCheck::Cancelled);
+        }
+        let answer: rusqlite::Result<Vec<String>> = checker
+            .prepare("PRAGMA integrity_check(16)")
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))?
+                    .collect()
+            });
+        drop(checker);
+        // An interrupted check may still have answered rows; nothing a cancelled check said is a
+        // finding about the store.
+        if cancel.is_cancelled() {
+            return Ok(WholeFileCheck::Cancelled);
+        }
+        let finding = match answer {
+            Ok(lines) if lines.len() == 1 && lines[0].eq_ignore_ascii_case("ok") => None,
+            Ok(lines) => Some(format!("SQLite reports `{}`", lines.join("; "))),
+            Err(error)
+                if error.sqlite_error_code() == Some(rusqlite::ErrorCode::OperationInterrupted) =>
+            {
+                return Ok(WholeFileCheck::Cancelled);
+            }
+            Err(error) if is_damage(&error) => Some(format!("SQLite reports `{error}`")),
+            Err(error) => return Err(unavailable(&self.path, &error)),
+        };
+        match finding {
+            None => {
+                let connection = self.locked();
+                write_metadata(&connection, CHECKED_AT_KEY, &now.to_string())
+                    .and_then(|()| write_metadata(&connection, CHECKED_BY_KEY, CHECKER_VERSION))
+                    .map_err(|error| unavailable(&self.path, &error))?;
+                Ok(WholeFileCheck::Passed)
+            }
+            Some(detail) => {
+                {
+                    let mut report = self
+                        .integrity
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    report.findings.push(IntegrityFinding::new(
+                        &self.path.display().to_string(),
+                        &detail,
+                        true,
+                    ));
+                }
+                // Remembered so the next open refuses the store. Writing into a damaged file may
+                // itself fail; this handle refuses everything either way.
+                let connection = self.locked();
+                let _ = write_metadata(&connection, FAILED_KEY, &detail);
+                Ok(WholeFileCheck::Failed(detail))
+            }
+        }
+    }
+
+    /// Records that a writer has the store open, so a close that never happens makes the
+    /// whole-file check due at the next start (ADR-1125).
+    ///
+    /// # Errors
+    ///
+    /// Returns a §34 store refusal.
+    pub fn mark_writer_open(&self, now: Timestamp) -> Result<(), ErrorValue> {
+        let connection = self.usable()?;
+        write_metadata(&connection, WRITER_KEY, &now.to_string())
+            .map_err(|error| self.unavailable(&error))
+    }
+
+    /// Records that the writer closed the store cleanly (ADR-1125).
+    ///
+    /// # Errors
+    ///
+    /// Returns a §34 store refusal.
+    pub fn mark_writer_closed(&self) -> Result<(), ErrorValue> {
+        let connection = self.usable()?;
+        connection
+            .execute("DELETE FROM metadata WHERE key = ?1", params![WRITER_KEY])
+            .map(|_| ())
+            .map_err(|error| self.unavailable(&error))
+    }
+}
+
+/// A failed whole-file check recorded by an earlier open, read back as a fatal finding (ADR-1125).
+///
+/// One row of the metadata table: a store nobody checked, or that is older than the table, reads
+/// as nothing recorded.
+fn remembered_failure(connection: &Connection, path: &Path, report: &mut IntegrityReport) {
+    let recorded: Option<String> = connection
+        .query_row(
+            "SELECT value FROM metadata WHERE key = ?1",
+            params![FAILED_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    if let Some(detail) = recorded {
+        report.findings.push(IntegrityFinding::new(
+            &path.display().to_string(),
+            &format!("an earlier whole-file check found the store damaged: {detail}"),
+            true,
+        ));
+    }
 }
 
 // ---- opening -----------------------------------------------------------------------------------
@@ -1294,7 +1578,7 @@ fn event_selection(query: &EventQuery) -> Decoded<Selection> {
 impl LedgerRead for LedgerStore {
     fn events(&self, query: &EventQuery) -> Result<Vec<TemporalEvent>, ErrorValue> {
         let selection = event_selection(query).map_err(|detail| corrupt("events", &detail))?;
-        let connection = self.locked();
+        let connection = self.usable()?;
         let mut statement = connection
             .prepare(&selection.sql)
             .map_err(|error| self.unavailable(&error))?;
@@ -1330,7 +1614,7 @@ impl LedgerRead for LedgerStore {
     }
 
     fn event(&self, id: &EventId) -> Result<Option<TemporalEvent>, ErrorValue> {
-        let connection = self.locked();
+        let connection = self.usable()?;
         let mut statement = connection
             .prepare(&format!(
                 "SELECT {EVENT_COLUMNS} FROM events WHERE event_id >= ?1 AND event_id < ?2 LIMIT 2"
@@ -1373,7 +1657,7 @@ impl LedgerRead for LedgerStore {
         // contiguous with it. That is two seeks per rendered row, over two statements prepared
         // once for the whole batch, rather than a query per row per lengthening step (§32.3).
         let floor = minimum.max(1);
-        let connection = self.locked();
+        let connection = self.usable()?;
         let mut below = connection
             .prepare(
                 "SELECT event_id FROM events WHERE event_id < ?1 ORDER BY event_id DESC LIMIT 1",
@@ -1407,7 +1691,7 @@ impl LedgerRead for LedgerStore {
             return Ok(Vec::new());
         }
         let placeholders: Vec<String> = (1..=ids.len()).map(|index| format!("?{index}")).collect();
-        let connection = self.locked();
+        let connection = self.usable()?;
         let mut statement = connection
             .prepare(&format!(
                 "SELECT evidence_id, source, observed_nanos, scope_path, subject, strength, body \
@@ -1447,7 +1731,7 @@ impl LedgerRead for LedgerStore {
     }
 
     fn causal_links(&self, effect: &EventId) -> Result<Vec<CausalLink>, ErrorValue> {
-        let connection = self.locked();
+        let connection = self.usable()?;
         let mut statement = connection
             .prepare(
                 "SELECT link_id, relation, cause, effect, rule, strength, source \
@@ -1517,7 +1801,7 @@ impl LedgerRead for LedgerStore {
         } else {
             format!(" WHERE {}", clauses.join(" AND "))
         };
-        let connection = self.locked();
+        let connection = self.usable()?;
         let mut statement = connection
             .prepare(&format!(
                 "SELECT scope_path, capability, from_nanos, until_nanos, completeness, \
@@ -1557,7 +1841,7 @@ impl LedgerRead for LedgerStore {
         let prefix = scope_path(scope);
         let upper = scope_upper_bound(&prefix);
         let at = nanos(at).map_err(|detail| corrupt("checkpoints", &detail))?;
-        let connection = self.locked();
+        let connection = self.usable()?;
         let header = connection
             .query_row(
                 "SELECT checkpoint_id, scope_path, captured_nanos, body FROM checkpoints \
@@ -1664,7 +1948,7 @@ impl LedgerRead for LedgerStore {
         } else {
             format!(" WHERE {}", clauses.join(" AND "))
         };
-        let connection = self.locked();
+        let connection = self.usable()?;
         let mut statement = connection
             .prepare(&format!(
                 "SELECT action_id, requested_nanos, actor, session_id, operation, target, \
@@ -1741,7 +2025,7 @@ impl LedgerWrite for LedgerStore {
         events: &[TemporalEvent],
         evidence: &[Evidence],
     ) -> Result<Appended, ErrorValue> {
-        let mut connection = self.locked();
+        let mut connection = self.usable()?;
         let transaction = connection
             .transaction()
             .map_err(|error| self.unavailable(&error))?;
@@ -1834,7 +2118,7 @@ impl LedgerWrite for LedgerStore {
     }
 
     fn append_links(&self, links: &[CausalLink]) -> Result<usize, ErrorValue> {
-        let mut connection = self.locked();
+        let mut connection = self.usable()?;
         let transaction = connection
             .transaction()
             .map_err(|error| self.unavailable(&error))?;
@@ -1904,7 +2188,7 @@ impl LedgerWrite for LedgerStore {
     }
 
     fn record_coverage(&self, intervals: &[TemporalCoverage]) -> Result<(), ErrorValue> {
-        let mut connection = self.locked();
+        let mut connection = self.usable()?;
         let transaction = connection
             .transaction()
             .map_err(|error| self.unavailable(&error))?;
@@ -1938,7 +2222,7 @@ impl LedgerWrite for LedgerStore {
 
     fn record_action(&self, action: &ActionEvent) -> Result<(), ErrorValue> {
         let columns = action_columns(action).map_err(|detail| corrupt("actions", &detail))?;
-        let connection = self.locked();
+        let connection = self.usable()?;
         // §17.2's lifecycle updates one action rather than appending a second: the identity is
         // minted before execution and the result arrives later.
         connection
@@ -1967,7 +2251,7 @@ impl LedgerWrite for LedgerStore {
     fn write_checkpoint(&self, checkpoint: &Checkpoint) -> Result<(), ErrorValue> {
         let header =
             checkpoint_columns(checkpoint).map_err(|detail| corrupt("checkpoints", &detail))?;
-        let mut connection = self.locked();
+        let mut connection = self.usable()?;
         let transaction = connection
             .transaction()
             .map_err(|error| self.unavailable(&error))?;
