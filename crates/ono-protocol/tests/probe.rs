@@ -233,3 +233,48 @@ async fn should_tell_a_holder_when_its_link_is_gone() {
     within(fixture.link.closed()).await;
     assert!(!fixture.link.is_alive());
 }
+
+#[tokio::test]
+async fn should_forget_a_probe_whose_caller_went_away_and_drop_its_late_answer() {
+    // A dropped probe future (a Ctrl-C during `look`) must take its stream with it, and the late
+    // answer must be dropped as a frame that crossed with a cancellation — not fail the whole
+    // link as a credit overrun (review PRF-1). The probe is answered in the agent's own loop, in
+    // order, so the late answer reaches the client before the next probe's does.
+    let tapped = tap::connect(
+        client_config("testhost"),
+        probing_agent(),
+        DemoService::new(Arc::new(Observed::default())),
+    )
+    .await
+    .expect("the handshake succeeds");
+    tapped.tap.drop_kind(FrameKind::Probe);
+    let id = {
+        let probing = tapped.link.probe(Duration::from_secs(5));
+        tokio::pin!(probing);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), probing.as_mut())
+                .await
+                .is_err(),
+            "nothing has answered yet"
+        );
+        let open = tapped.link.open_streams();
+        assert_eq!(open.len(), 1, "the probe holds one stream, got {open:?}");
+        open[0].id
+    };
+    assert!(
+        tapped.link.open_streams().is_empty(),
+        "a probe nobody waits for any more leaves no stream behind, got {:?}",
+        tapped.link.open_streams()
+    );
+
+    tapped
+        .tap
+        .inject(Frame::new(FrameKind::Probe, id, b"null".to_vec()));
+    tapped.tap.pass_kind(FrameKind::Probe);
+    for _ in 0..2 {
+        within(tapped.link.probe(Duration::from_secs(5)))
+            .await
+            .expect("the link survived the late answer and is probed again");
+    }
+    assert!(tapped.link.is_alive());
+}

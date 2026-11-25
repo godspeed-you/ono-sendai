@@ -269,3 +269,52 @@ async fn should_fail_the_link_as_a_mismatch_when_an_agent_receives_a_request_it_
         ErrorCode::RemoteProtocolMismatch
     );
 }
+
+#[tokio::test]
+async fn should_forget_a_request_whose_caller_went_away_and_drop_its_late_answer() {
+    // A caller that stops waiting — a Ctrl-C during `map links --depth 2`, a `look` given up —
+    // drops the future mid-request. The stream must go with it: a late answer is a message that
+    // crossed with a cancellation, not a peer overrunning its credit, and it must not take the
+    // whole link down (review PRF-1).
+    let tapped = tap::connect(
+        client_config("testhost"),
+        agent(),
+        service(LinkTable::of(vec![entry("db01", "connected")])),
+    )
+    .await
+    .expect("the handshake succeeds");
+    // The agent does not see the request yet: its answer is held back.
+    tapped.tap.drop_kind(FrameKind::ListLinks);
+    let id = {
+        let asking = tapped.link.links(WAIT);
+        tokio::pin!(asking);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), asking.as_mut())
+                .await
+                .is_err(),
+            "nothing has answered yet"
+        );
+        let open = tapped.link.open_streams();
+        assert_eq!(open.len(), 1, "the request holds one stream, got {open:?}");
+        open[0].id
+        // The future is dropped here, unanswered.
+    };
+    assert!(
+        tapped.link.open_streams().is_empty(),
+        "a request nobody waits for any more leaves no stream behind, got {:?}",
+        tapped.link.open_streams()
+    );
+
+    // Now the answer arrives, late: the agent is asked under the abandoned stream's id.
+    tapped.tap.inject(ono_protocol::Frame::new(
+        FrameKind::ListLinks,
+        id,
+        b"null".to_vec(),
+    ));
+    tapped.tap.pass_kind(FrameKind::ListLinks);
+    let answered = within(tapped.link.links(WAIT))
+        .await
+        .expect("the link survived the late answer and serves the next request");
+    assert_eq!(answered.links.len(), 1);
+    assert!(tapped.link.is_alive());
+}
