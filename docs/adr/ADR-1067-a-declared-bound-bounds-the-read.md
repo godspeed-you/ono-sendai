@@ -65,7 +65,11 @@ temporal`, `crates/ono-temporal-reconstruct` and `crates/ono-recorder`:
 
 - A window holding more than 50,000 events is refused by `changes`, by `look`'s change section
   (§13.5) and by the full-screen timeline's return-to-now summary, all of which call the one
-  engine (§13.5 forbids a second). Before, they read the whole window and answered.
+  engine (§13.5 forbids a second). Before, they read the whole window and answered. *Corrected
+  after review (COR-T7):* `look --changes <window>` propagated the refusal and failed the whole
+  `look`; its change section is now `state: unknown` with the refusal as the section's new
+  optional `reason` (`ono.change-summary/1`, a nullable field added — compatible), and the rest of
+  the view answers.
 - `look`'s change section and the return-to-now summary receive `limit + 1` changes when the
   limit cuts, and do not yet say so; they are §13.5's summaries rather than the answer `changes`
   promises, and their rendering is spatial code outside this increment. Recorded as a finding.

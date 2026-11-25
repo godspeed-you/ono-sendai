@@ -283,6 +283,7 @@ Default view: `window`, `state`, `source`
 | `state` | `enum` | — | required | Whether changes could be observed at all (§35.2). `unsupported` means no event source and no comparison snapshot existed, which §24.3 forbids being rendered as "nothing changed". |
 | `source` | `string` | — | nullable | What the changes were observed through — an event stream or a snapshot comparison (§25.4). |
 | `entries` | `list<record>` | — | required | The changes themselves, each carrying the object it happened to and when it was observed. |
+| `reason` | `string` | — | nullable | Why the section cannot say what changed, where that is the case: the window held more events than one comparison may read (`resource.item_limit`, ADR-1067), so `state` is `unknown` and the rest of the view still answers (review finding COR-T7, ADR-1067). Null otherwise. |
 
 ## ChangeVerificationResult — `ono.change-verification/1`
 
