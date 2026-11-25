@@ -98,3 +98,50 @@ holds a slot the §12.1/§12.3 ceilings count, so the sockets held this way stay
 - **A separate, shorter grace for the refusal.** Would be a second number for §52.2 to centralise;
   the handshake timeout is already the figure an operator sets for "how long a stranger may hold
   this agent before it has a link".
+
+## Amendment (v0.6.6 remediation, reviews ARC-4, SEC-3, PRF-9)
+
+**One deadline, not two halves.** The decision measured §12.2's deadline in two halves: TLS got one
+`handshake_timeout` in the listener, and `serve` gave the `Hello` a second full one, so a peer
+could spend about twice the figure before it was refused — and a refused one a third while the
+refusal drained. Now the listener starts the deadline at accept and hands the same instant to
+whatever reads the `Hello` (`ServerConfig::with_handshake_deadline`, `ono_protocol::refuse_by`):
+a peer that spends most of the figure in TLS has only the rest for its `Hello`. A stdio agent,
+whose transport has no handshake of its own, starts the deadline when `serve` does.
+
+**Authorization before admission.** The listener used to admit every TLS peer to the live
+ceiling (§12.1, §12.3) before the store was asked, so fresh self-signed keys that never said
+hello could hold every live slot while their refusal waited — a lockout of the clients the
+operator authorized. The store snapshot is now read right after TLS and a key it does not list is
+refused (E1202 with its census details, audited `connection.unknown_client_refused`) holding only
+the pending-handshake slot it already held for TLS; only a listed key is admitted. ADR-1055's
+guarantee — a never-granted client is refused, never swept — now holds by construction. An
+unreadable store is refused the same way, before admission.
+
+Tests: `crates/ono-remote/tests/limits.rs::should_give_the_hello_only_what_the_tls_handshake_left_of_the_one_deadline`
+(a relay holds the client's TLS bytes 1.5 s of a 2 s deadline; a `Hello` 1 s after TLS is refused
+E1502 — red with the deadline restarted in `serve`) and
+`…::should_not_let_unknown_keys_that_never_say_hello_lock_an_authorized_client_out` (32 strangers
+that complete TLS and say nothing; an authorized client still links with a live ceiling of 2 —
+red before, `remote.connection_limit`). The barrier of
+`…::should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revocation_sweep_runs_first`
+now waits for the stranger in the pending slot rather than admitted, which is the changed
+behaviour; its assertions are unchanged.
+
+## Spec deviation
+
+- Section: v0.4.1 §12.2
+- Text: "A peer that does not complete TLS plus Ono protocol negotiation within the timeout MUST be
+  disconnected."
+- Instead: a peer that does not complete TLS plus Ono negotiation within `handshake_timeout` of
+  being accepted is refused at that deadline; where it completed TLS it is then told why (E1502,
+  or the refusal that applies) and disconnected within **one more** `handshake_timeout` — the
+  bound inside which the refusal is written and the peer's remaining input drained. A peer whose
+  TLS did not complete is disconnected at the deadline itself. So the disconnection happens
+  within `2 × handshake_timeout` of accept, never later, whatever the peer does.
+- Why: §54.1 wants a peer that has an authenticated channel told which boundary decided, and a
+  refusal written into a socket that is then closed with unread input is reset and lost before
+  the peer reads it (the reason `refuse_within` drains). Telling it needs time after the deadline;
+  bounding that time by the same figure keeps the agent's cost per refused peer fixed by its own
+  limits, and a peer that never reads gains nothing by it.
+

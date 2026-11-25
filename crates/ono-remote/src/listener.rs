@@ -545,13 +545,11 @@ async fn serve_one(
     } = serving;
     let record = |event: AuditEvent| audit.record(&event.with_source_address(Some(&source)));
 
-    // §12.2: TLS is bounded, because a peer that completes TCP and then says nothing must not
-    // hold a slot for as long as it likes. The Ono negotiation that follows is bounded by the
-    // same figure, inside `ono_protocol::serve`.
-    let handshake = tokio::time::timeout(
-        limits.handshake_timeout(),
-        listener.handshake(stream, &source),
-    );
+    // §12.2: "TLS plus Ono protocol negotiation within the timeout" — one deadline, started
+    // here at accept and handed to whatever reads the peer's `Hello`, so a peer that spends most
+    // of it in TLS has only the rest for the `Hello` (ADR-1057, amended).
+    let deadline = tokio::time::Instant::now() + limits.handshake_timeout();
+    let handshake = tokio::time::timeout_at(deadline, listener.handshake(stream, &source));
     let transport = match handshake.await {
         Ok(Ok(transport)) => transport,
         Ok(Err(error)) => {
@@ -591,6 +589,41 @@ async fn serve_one(
         return;
     };
 
+    // Read once per accepted connection, so an operator's `add client-key` reaches the next
+    // connection; fixed for this connection's life, which is §10.3's rule (ADR-0470). Read
+    // *before* the connection is admitted (review SEC-3): a key the store does not list is
+    // refused holding only the pending-handshake slot it held for TLS, never one of the live
+    // slots §12.1 keeps for the clients the operator authorized.
+    let store = match authorization() {
+        Ok(store) => Arc::new(store),
+        Err(error) => {
+            // §2.3: the control could not be applied, so the connection does not start. The
+            // listener stays up, because the next connection may find a repaired file.
+            record(
+                AuditEvent::new(AuditKind::UnknownClientRefused, "unaccepted", "denied")
+                    .with_peer(fingerprint)
+                    .with_error_code(error.code()),
+            );
+            ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
+            let _ =
+                ono_protocol::refuse_by(transport, &as_told_to_the_peer(&error), limits, deadline)
+                    .await;
+            return;
+        }
+    };
+    // A client the store does not list is told so — E1202 with the details its census row lets
+    // cross the wire (ADR-1056) — exactly as `serve` would have told it from the same snapshot,
+    // and is never admitted: ADR-1055's guarantee (refused, not swept) holds by construction.
+    if let Err(refusal) = store.authorize(fingerprint) {
+        record(
+            AuditEvent::new(AuditKind::UnknownClientRefused, "unaccepted", "denied")
+                .with_peer(fingerprint)
+                .with_error_code(refusal.code()),
+        );
+        let _ = ono_protocol::refuse_by(transport, &refusal, limits, deadline).await;
+        return;
+    }
+
     let slot = match registry.admit(fingerprint) {
         Ok(admitted) => admitted,
         Err(refusal) => {
@@ -601,7 +634,7 @@ async fn serve_one(
             );
             // The peer completed the cryptographic handshake, so there is a channel to tell it
             // why (§54.1). It learns nothing else: not the provider inventory, not the store.
-            let _ = ono_protocol::refuse(transport, &refusal, limits).await;
+            let _ = ono_protocol::refuse_by(transport, &refusal, limits, deadline).await;
             return;
         }
     };
@@ -611,28 +644,6 @@ async fn serve_one(
     // ceiling a second, much lower global ceiling (§12.1 is the one that counts established
     // connections, and it has already counted this one).
     drop(handshake_slot);
-
-    // Read once per accepted connection, so an operator's `add client-key` reaches the next
-    // connection; fixed for this connection's life, which is §10.3's rule (ADR-0470).
-    let store = match authorization() {
-        Ok(store) => Arc::new(store),
-        Err(error) => {
-            // §2.3: the control could not be applied, so the connection does not start. The
-            // listener stays up, because the next connection may find a repaired file.
-            record(
-                AuditEvent::new(
-                    AuditKind::UnknownClientRefused,
-                    slot.connection_id(),
-                    "denied",
-                )
-                .with_peer(fingerprint)
-                .with_error_code(error.code()),
-            );
-            ono_core::diagnostic!("{}: {}", ono_core::SHORT_NAME, error.message());
-            let _ = ono_protocol::refuse(transport, &as_told_to_the_peer(&error), limits).await;
-            return;
-        }
-    };
 
     // §12.5 withdraws a grant, so only a connection that holds one can have it withdrawn. The
     // question is asked of the very store this session is about to authorize from: a client it
@@ -656,7 +667,8 @@ async fn serve_one(
         .with_authorization(ServerAuthorization::Store(store))
         .with_audit(Arc::clone(audit))
         .with_source_address(&source)
-        .with_limits(limits.clone());
+        .with_limits(limits.clone())
+        .with_handshake_deadline(deadline);
     // Whichever finishes first: the session, or the operator withdrawing the grant it runs
     // under. Dropping the session future drops the transport, which closes the socket — which
     // is what "the connection is terminated" means to the peer (§12.5).

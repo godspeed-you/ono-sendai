@@ -75,6 +75,9 @@ pub struct ServerConfig {
     audit: Audit,
     source_address: Option<String>,
     clock: Option<PeerClock>,
+    /// The moment the whole handshake must be complete by, where the caller started counting
+    /// before `serve` was called — at accept, with TLS inside the same bound (ADR-1057).
+    handshake_deadline: Option<tokio::time::Instant>,
 }
 
 impl Default for ServerConfig {
@@ -93,6 +96,7 @@ impl Default for ServerConfig {
             audit: Arc::new(NoAudit),
             source_address: None,
             clock: None,
+            handshake_deadline: None,
         }
     }
 }
@@ -227,6 +231,15 @@ impl ServerConfig {
     #[must_use]
     pub fn with_source_address(mut self, address: impl Into<String>) -> Self {
         self.source_address = Some(address.into());
+        self
+    }
+
+    /// The moment the handshake must be complete by: v0.4.1 §12.2's one deadline for TLS plus
+    /// Ono negotiation, started by the listener at accept. Without it the deadline starts when
+    /// `serve` does (a transport with no handshake of its own, such as stdio).
+    #[must_use]
+    pub const fn with_handshake_deadline(mut self, deadline: tokio::time::Instant) -> Self {
+        self.handshake_deadline = Some(deadline);
         self
     }
 
@@ -560,11 +573,32 @@ pub async fn refuse<T: Transport>(
     refusal: &ErrorValue,
     limits: &Limits,
 ) -> Result<(), ErrorValue> {
+    refuse_by(
+        transport,
+        refusal,
+        limits,
+        tokio::time::Instant::now() + limits.handshake_timeout(),
+    )
+    .await
+}
+
+/// As [`refuse`], with the peer's `Hello` awaited only until `deadline` — the moment the
+/// listener gave the whole handshake, TLS included (§12.2's one deadline, ADR-1057).
+///
+/// # Errors
+///
+/// As [`refuse`].
+pub async fn refuse_by<T: Transport>(
+    transport: T,
+    refusal: &ErrorValue,
+    limits: &Limits,
+    deadline: tokio::time::Instant,
+) -> Result<(), ErrorValue> {
     let (reader, writer) = tokio::io::split(transport);
     let mut reader = FrameReader::new(reader, limits.clone());
     let payload = encode_message(&Message::Reject(Reject::refusing(refusal)), limits)
         .map_err(ErrorValue::from)?;
-    let _ = tokio::time::timeout(limits.handshake_timeout(), reader.next()).await;
+    let _ = tokio::time::timeout_at(deadline, reader.next()).await;
     refuse_within(
         &mut reader,
         writer,
@@ -675,7 +709,10 @@ where
     // listener that accepted the socket; this is the other half — a peer that completed the
     // cryptographic handshake and then says nothing must not hold the connection open for ever.
     // It has a channel, so it is told why it is being let go (§54.1, issue #181).
-    let opening = match tokio::time::timeout(limits.handshake_timeout(), reader.next()).await {
+    let deadline = config
+        .handshake_deadline
+        .unwrap_or_else(|| tokio::time::Instant::now() + limits.handshake_timeout());
+    let opening = match tokio::time::timeout_at(deadline, reader.next()).await {
         Ok(Ok(Some(opening))) => opening,
         Ok(Ok(None)) => {
             // Gone before it said anything: there is nobody to tell, and still a decision to
