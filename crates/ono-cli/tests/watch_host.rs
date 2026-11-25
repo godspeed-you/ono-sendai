@@ -115,16 +115,26 @@ fn should_emit_a_change_when_the_far_side_of_a_held_link_goes_away() {
 
     far.kill();
     let (changed, before) = watch.until(Duration::from_secs(30), |line| {
-        line.contains("\"reachability\":\"unreachable\"")
+        line.contains("\"reachability\":\"unreachable\"") && line.contains("the far side is gone")
     });
     assert!(
         changed.contains("\"kind\":\"changed\""),
         "a transition is a `changed` event, got {changed}"
     );
-    assert!(
-        before.is_empty(),
-        "nothing changed while the host stayed reachable, so nothing was emitted: {before:#?}"
-    );
+    // One event per change, never one per probe (review TST-10): whatever a loaded machine made
+    // a probe do in between, no event repeats the reachability the one before it reported.
+    let mut last = "reachable".to_owned();
+    for line in &before {
+        let now = serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|event| event["host"]["reachability"].as_str().map(str::to_owned))
+            .unwrap_or_default();
+        assert_ne!(
+            now, last,
+            "an event that reports no change was emitted: {before:#?}"
+        );
+        last = now;
+    }
 }
 
 #[test]

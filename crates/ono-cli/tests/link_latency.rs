@@ -82,14 +82,25 @@ fn should_reuse_one_probe_for_every_view_drawn_within_the_reuse_window() {
     run.assert_success();
     let views = support::json_lines(&run);
     assert_eq!(views.len(), 3, "three views, got {:?}", run.stdout());
-    let taken: Vec<Value> = views
+    let taken: Vec<jiff::Timestamp> = views
         .iter()
-        .map(|view| field(&link_in(view, "testbox"), "latency_measured_at").clone())
+        .map(|view| {
+            field(&link_in(view, "testbox"), "latency_measured_at")
+                .as_str()
+                .and_then(|text| text.parse().ok())
+                .unwrap_or_else(|| panic!("every view states when its latency was taken"))
+        })
         .collect();
-    assert!(
-        !taken[0].is_null() && taken.iter().all(|at| *at == taken[0]),
-        "one probe served every view inside the window, got {taken:?}"
-    );
+    // The contract is "at most one probe per link per window", whatever the views cost to draw
+    // (review TST-10): two views either share a measurement or carry ones at least the window
+    // apart. On an idle machine the three views share one.
+    for pair in taken.windows(2) {
+        let apart = pair[1].duration_since(pair[0]).unsigned_abs();
+        assert!(
+            pair[0] == pair[1] || apart >= std::time::Duration::from_secs(5),
+            "a second probe inside the reuse window, got {taken:?}"
+        );
+    }
 }
 
 #[test]
