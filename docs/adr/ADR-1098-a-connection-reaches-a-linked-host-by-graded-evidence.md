@@ -125,7 +125,10 @@ mirror from another machine; and no strong edge, `ambiguous` with `partial`, whi
 link's table is cut at its bound. (A table that fails part way is detected only where the failure
 arrives after a record: a far stream's failures travel beside its values, not behind them, so a
 failure that overtakes the first record makes the whole table `unavailable` — the conservative
-reading, and why the suite proves partiality by the bound.) The grading of each basis — confidence, `far_socket`,
+reading, and why the suite proves partiality by the bound.) A table whose read runs out of time after records arrived is likewise partial — what arrived is
+evidence, what did not cannot be excluded — and only a table of which nothing arrived is
+`unavailable`. (Found when the bound-cut fixture's 4,097 rows took longer than 5 s on a loaded
+host and the cut table was read as unavailable, leaving the other link's verdict unique.) The grading of each basis — confidence, `far_socket`,
 `private_address` — is unit-tested on `edge`.
 
 **What still has no real two-host proof.** Unprivileged user namespaces are not available on the

@@ -539,8 +539,8 @@ async fn read(
     // One more than the bound is asked for, so a table that holds exactly the bound is told
     // apart from one that holds more.
     let mut stream = prober.query(&query.limit(limit + 1))?;
+    let mut table = Table::default();
     let collect = async {
-        let mut table = Table::default();
         while let Some(message) = stream.recv().await {
             match message {
                 ono_protocol::RemoteMessage::Value(Value::Record(record)) => {
@@ -557,10 +557,16 @@ async fn read(
                 _ => {}
             }
         }
-        Ok(table)
+        Ok(())
     };
     match tokio::time::timeout(FAR_TIMEOUT, collect).await {
-        Ok(read) => read,
+        Ok(Ok(())) => Ok(table),
+        Ok(Err(refusal)) => Err(refusal),
+        // Out of time part way: what arrived is evidence, and what did not cannot be excluded.
+        Err(_) if !table.records.is_empty() => {
+            table.partial = true;
+            Ok(table)
+        }
         Err(_) => Err(ErrorValue::new(
             ono_core::ErrorCode::RemoteUnreachable,
             format!(
