@@ -1188,12 +1188,21 @@ enum Probe {
 ///
 /// A probe that SQLite refuses for a reason other than damage — a partial index whose condition
 /// the probe does not repeat — proves nothing either way and is passed over by the caller.
+///
+/// Only the ledger's own tables and indexes are probed (review finding SEC2-4): a catalogue
+/// somebody filled with twenty thousand tables of their own made the open probe every one of them,
+/// and nothing the ledger reads lives in them.
 fn probes(connection: &Connection) -> rusqlite::Result<Vec<Probe>> {
+    let (own_tables, own_indexes) = crate::migrate::own_schema();
     let mut statement = connection.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     )?;
     let tables: Vec<String> = statement
-        .query_map([], |row| row.get(0))?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .filter(|name| {
+            name.as_ref()
+                .map_or(true, |name| own_tables.contains(&name.as_str()))
+        })
         .collect::<rusqlite::Result<_>>()?;
     let mut probes = Vec::new();
     for table in tables {
@@ -1207,6 +1216,11 @@ fn probes(connection: &Connection) -> rusqlite::Result<Vec<Probe>> {
             .query_map([], |row| row.get(1))?
             .collect::<rusqlite::Result<_>>()?;
         for index in indexes {
+            // The index SQLite keeps for a primary key is part of the table; any other index is
+            // probed only where the migrations made it.
+            if !index.starts_with("sqlite_autoindex_") && !own_indexes.contains(&index.as_str()) {
+                continue;
+            }
             let mut info = connection.prepare(&format!("PRAGMA index_info({})", quote(&index)))?;
             let first: Option<String> = info
                 .query_map([], |row| row.get::<_, Option<String>>(2))?

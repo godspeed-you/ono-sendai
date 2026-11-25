@@ -565,3 +565,53 @@ fn should_record_nothing_when_the_whole_file_check_is_cancelled() {
     );
     assert!(store.integrity().is_healthy());
 }
+
+#[test]
+fn should_not_let_a_table_outside_the_ledgers_schema_decide_the_open() {
+    // Review finding SEC2-4: the open's structure check probed every table and index in the
+    // catalogue, so twenty thousand planted tables made the "constant-cost" open take seconds.
+    // It probes the ledger's own tables and indexes only: a damaged table somebody else added
+    // holds nothing the ledger reads and does not refuse the store.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = history(home.path());
+    let root: i64 = {
+        let connection =
+            rusqlite::Connection::open(&path).expect("the store opens for the fixture");
+        connection
+            .execute_batch(
+                "CREATE TABLE planted (payload BLOB);
+                 WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 200)
+                 INSERT INTO planted SELECT randomblob(200) FROM n;
+                 PRAGMA wal_checkpoint(TRUNCATE);",
+            )
+            .expect("a table of somebody else's");
+        connection
+            .query_row(
+                "SELECT rootpage FROM sqlite_master WHERE name = 'planted'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("its root page")
+    };
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("the store is writable");
+        file.seek(SeekFrom::Start(
+            u64::try_from(root - 1).expect("a page number") * 4_096,
+        ))
+        .expect("the planted root is reachable");
+        file.write_all(&[0x5a; 4_096]).expect("the scribble lands");
+        file.sync_all().expect("the scribble is durable");
+    }
+
+    let store = LedgerStore::open(&path).expect("SEC2-4: only the ledger's own schema is probed");
+    assert_eq!(
+        store
+            .events(&EventQuery::in_range(TimeRange::all()))
+            .expect("the ledger's history reads")
+            .len(),
+        3
+    );
+}
