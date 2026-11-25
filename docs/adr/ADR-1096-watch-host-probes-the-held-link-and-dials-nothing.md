@@ -84,3 +84,9 @@ one probe per held link per 5 s, whatever `--every` says.
 - **Emit the probe time on every poll.** Each probe would be a `changed` event; a reader watching
   for reachability would drown in timestamps. `reachability_since` keeps the evidence's time and
   moves only when the evidence does.
+
+*Amended in the v0.6.6 remediation (review ARC-3).* The fields `reachability` and `reachability_reason` were first declared
+`required` in place in a `/1` schema, which v0.2 §10.4 counts as a versioned schema change
+("adding a required field"). Following the repository's precedent (ADR-0134, ADR-0996), they are
+declared `nullable` instead: this build always produces them, and a consumer of `ono.host/1` that
+predates them stays valid. No version bump.

@@ -107,3 +107,9 @@ labelled `handshake`.
   asked, not on the link.
 - **Bumping `PROTOCOL_VERSION`.** ADR-1056 reserves that for a change of meaning; a new request
   behind an announced id is its case 2.
+
+*Amended in the v0.6.6 remediation (review ARC-3).* The field `latency_status` was first declared
+`required` in place in a `/1` schema, which v0.2 §10.4 counts as a versioned schema change
+("adding a required field"). Following the repository's precedent (ADR-0134, ADR-0996), it is
+declared `nullable` instead: this build always produces it, and a consumer of `ono.link-place/1` that
+predates it stays valid. No version bump.
