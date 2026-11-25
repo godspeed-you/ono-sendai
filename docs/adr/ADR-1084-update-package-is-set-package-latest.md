@@ -50,15 +50,25 @@ cannot spell (`latest` is a legal version string for some managers).
   as exactly one package, for every package operation, both providers, and every way a name
   arrives (a piped record's identity, a creating verb's selector, `resolve`'s pass-through):
   `act` checks it before any process starts — the root check and `rpm -q`/`dpkg-query` included —
-  and refuses with `type.mismatch` (E0201). dpkg/apt: deb-control(5)'s grammar, no trailing `-` or
-  `+` (apt reads them as "remove" and "install"), and a name with a `.` only where dpkg has that
-  exact name installed (apt reads a dotted name no package has as a regular expression — `xz.`
-  selects every package with `xz` in its name), so `add package python3.11` is refused on apt
-  where it is not installed; a local archive (`/…/x.deb`, `./x.deb`) is let through for `add`.
+  and refuses with `type.mismatch` (E0201). dpkg/apt: deb-control(5)'s grammar (so nothing that
+  begins with `-`). A trailing `-` or `+` (apt's "remove" and "install") and a `.` (apt's regular
+  expression) are instructions to apt only where no package of exactly that name exists, so such a
+  name passes where dpkg has it installed or the package database knows it exactly — `apt-cache
+  pkgnames -- <name>`, read-only, after `--`, an exact line — and is refused otherwise, before any
+  mutation, with a message saying the database knows no package of exactly that name: `g++` and
+  `python3.11` work wherever the repositories carry them, `curl-` and `xz.` are refused. Every
+  apt-get and apt-mark mutation also carries `-o APT::Cmd::Pattern-Only=true` before `--`, which
+  turns off apt's regex and glob fallback (verified on apt 2.8.4: `apt-get -s -o
+  APT::Cmd::Pattern-Only=true install xz.` finds no package where without it 386 would be
+  installed; libapt-pkg also sets it for `apt(8)` itself by default). An apt that does not know the
+  key ignores it as it ignores every unknown `-o` key (verified: an invented `-o Foo::Bar=1` does
+  not fail the command); the exact lookup is the defence for such an apt. Which apt release first
+  honours the key is not recorded in the changelog shipped here and was not established. A local
+  archive (`/…/x.deb`, `./x.deb`) is let through for `add`.
   rpm: rpm's name grammar (no globs, provides or paths — dnf and zypper read `*`, `cu*`,
   `/usr/bin/curl`, `pkgconfig(x)` as selections). A version is letters, digits and `.+~:-_^`.
-  Every built command puts `--` before the package (`apt-get install -y --no-remove -- curl`,
-  `apt-mark hold -- curl`, `dpkg-query -W -f … -- curl`, `dnf upgrade -y -- curl`,
+  Every built command puts `--` before the package (`apt-get install -y --no-remove -o APT::Cmd::Pattern-Only=true -- curl`,
+  `apt-mark hold -o APT::Cmd::Pattern-Only=true -- curl`, `dpkg-query -W -f … -- curl`, `dnf upgrade -y -- curl`,
   `zypper --non-interactive update -- curl`, `rpm -q --queryformat … -- curl`), and apt's installs
   carry `--no-remove`. `set --latest` of a package that is not installed is refused with
   `io.not_found` before any manager runs, in both providers — `apt-get install --only-upgrade`

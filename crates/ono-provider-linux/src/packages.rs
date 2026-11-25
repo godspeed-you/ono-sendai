@@ -312,12 +312,32 @@ pub(crate) fn is_package_name(name: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '+' | '-' | '.'))
 }
 
-/// Whether apt reads `name` as exactly one package: a dpkg name that does not end in `-` or `+`,
-/// which apt-get takes as "remove" and "install" (review finding SEC-C-1). A `.` is apt's sign of
-/// a pattern only where no package has the name, which [`PackageProvider`]'s `act` checks against
-/// the database before it lets one through.
-pub(crate) fn is_apt_selection(name: &str) -> bool {
-    is_package_name(name) && !name.ends_with(['-', '+'])
+/// Whether apt could read `name` as something other than the package of that name: a trailing `-`
+/// ("remove") or `+` ("install") and a `.` (a regular expression) are instructions to apt only
+/// where no package of exactly that name exists (`g++` and `python3.11` are packages). Such a name
+/// is let through once the package database knows it exactly ([`exactly_known`]).
+pub(crate) fn needs_exact_lookup(name: &str) -> bool {
+    name.ends_with(['-', '+']) || name.contains('.')
+}
+
+/// Whether apt's package database knows a package of exactly `name` (review finding SEC-C-1).
+///
+/// `apt-cache pkgnames -- <name>` lists the names that begin with `name`, read-only and without
+/// pattern matching; an exact line is the answer. `name` has passed [`is_package_name`] before it
+/// gets here, and travels after `--`, so the lookup cannot be read as an option either.
+async fn exactly_known(dpkg: &Dpkg, name: &str) -> Result<bool, ErrorValue> {
+    let Some(apt_cache) = &dpkg.apt_cache else {
+        return Ok(false);
+    };
+    let answer = run(
+        apt_cache,
+        &["pkgnames".to_owned(), "--".to_owned(), name.to_owned()],
+    )
+    .await?;
+    Ok(answer.status == Some(0)
+        && String::from_utf8_lossy(&answer.stdout)
+            .lines()
+            .any(|line| line.trim() == name))
 }
 
 /// Whether `version` is a version string and nothing else — a package manager is handed it
@@ -354,7 +374,7 @@ fn check_apt_request(action: &Action, name: &str) -> Result<(), ErrorValue> {
         && name.starts_with('/')
         && name.ends_with(".deb")
         && !name.chars().any(char::is_control);
-    if !archive && !is_apt_selection(name) {
+    if !archive && !is_package_name(name) {
         return Err(not_one_package("package name", name, "apt"));
     }
     if let Some(Value::String(version)) = action.argument("version")
@@ -837,8 +857,29 @@ pub(crate) struct Mutation {
     pub(crate) versioned: bool,
 }
 
+/// The apt option that turns off apt's reading of a package argument as a regular expression or
+/// a glob when no package has that name (`xz.` is every package with `xz` in its name otherwise):
+/// patterns only, and only the `?pattern` syntax (review finding SEC-C-1). Honoured by this host's
+/// apt 2.8.4; an apt that does not know the key ignores it, as it ignores every unknown `-o` key,
+/// and [`exactly_known`] is the defence for that apt.
+pub(crate) const APT_PATTERN_ONLY: [&str; 2] = ["-o", "APT::Cmd::Pattern-Only=true"];
+
 impl Mutation {
+    /// The invocations an action asks for, each with [`APT_PATTERN_ONLY`] before its `--`.
     fn of(action: &Action, dpkg: &Dpkg, name: &str) -> Result<Self, ErrorValue> {
+        let mut mutation = Self::unguarded(action, dpkg, name)?;
+        for (_, arguments) in &mut mutation.commands {
+            if let Some(at) = arguments.iter().position(|argument| argument == "--") {
+                for (offset, option) in APT_PATTERN_ONLY.iter().enumerate() {
+                    arguments.insert(at + offset, (*option).to_owned());
+                }
+            }
+        }
+        Ok(mutation)
+    }
+
+    /// [`Mutation::of`]'s invocations, before the pattern guard.
+    fn unguarded(action: &Action, dpkg: &Dpkg, name: &str) -> Result<Self, ErrorValue> {
         let unsupported = |message: String, help: &str| {
             Err(ErrorValue::new(ErrorCode::ProviderUnsupported, message).with_help(help))
         };
@@ -1163,17 +1204,33 @@ impl Provider for PackageProvider {
         } else {
             installed_version(&dpkg, &name).await?
         };
+        // A trailing `-`/`+` or a `.` is apt's instruction or pattern only where no package of
+        // exactly that name exists: an installed one, or one the package database knows exactly,
+        // is that package; anything else is refused before any manager changes anything (SEC-C-1).
+        if !archive
+            && before.is_none()
+            && needs_exact_lookup(&name)
+            && !exactly_known(&dpkg, &name).await?
+        {
+            return Err(ErrorValue::new(
+                ErrorCode::TypeMismatch,
+                format!(
+                    "the package database knows no package called exactly `{name}`, and apt would \
+                     read the name as an instruction or a pattern"
+                ),
+            )
+            .with_help(
+                "a trailing `-` means \"remove\" and `+` \"install\" to apt, and a `.` a \
+                 pattern, wherever no package has exactly that name; name the package as \
+                 `apt-cache pkgnames` lists it",
+            ));
+        }
         if !archive && before.is_none() {
             // COR-C5: an update of a package that is not there is refused, not "skipped" by apt
             // with status 0 and reported as success.
             if action.operation() == "set" && action.argument("latest") == Some(&Value::Bool(true))
             {
                 return Err(not_installed(&name));
-            }
-            // apt reads a name with a `.` as a regular expression when no package has that name;
-            // one that dpkg has installed is a name, anything else is refused (SEC-C-1).
-            if name.contains('.') {
-                return Err(not_one_package("package name", &name, "apt"));
             }
         }
         if action.is_dry_run() {
@@ -1269,6 +1326,8 @@ mod tests {
                     "--only-upgrade".to_owned(),
                     "-y".to_owned(),
                     "--no-remove".to_owned(),
+                    "-o".to_owned(),
+                    "APT::Cmd::Pattern-Only=true".to_owned(),
                     "--".to_owned(),
                     "curl".to_owned()
                 ]
@@ -1399,8 +1458,12 @@ mod names_reaching_apt {
     use super::*;
     use ono_provider_api::{Action, ObjectId};
 
-    /// A PATH holding a `dpkg-query` that lists `listed` and fakes of apt-get and apt-mark, all
-    /// writing their arguments to `calls.log`.
+    /// The names the fake package database knows: `apt-cache pkgnames -- <prefix>` lists those
+    /// that begin with the prefix, as apt-cache does.
+    const KNOWN: &str = "g++ g++-13 python3.11 python3.11-venv curl";
+
+    /// A PATH holding a `dpkg-query` that lists `listed`, an `apt-cache` that knows [`KNOWN`] and
+    /// fakes of apt-get and apt-mark, all writing their arguments to `calls.log`.
     fn fake_managers(listed: &str) -> (tempfile::TempDir, PackageProvider) {
         let directory = tempfile::tempdir().expect("a scratch PATH");
         let log = directory.path().join("calls.log");
@@ -1415,8 +1478,12 @@ mod names_reaching_apt {
         } else {
             format!("printf '{listed}\\n'; exit 0")
         };
+        let pkgnames = format!(
+            "for n in {KNOWN}; do case \"$n\" in \"$3\"*) echo \"$n\";; esac; done; exit 0"
+        );
         for (name, answer) in [
             ("dpkg-query", listing.as_str()),
+            ("apt-cache", pkgnames.as_str()),
             ("apt-get", "exit 0"),
             ("apt-mark", "exit 0"),
         ] {
@@ -1449,8 +1516,6 @@ mod names_reaching_apt {
         for name in [
             "-oDebug::pkgProblemResolver=1",
             "--auto-remove",
-            "curl-",
-            "curl+",
             "*",
             "/usr/bin/curl",
             "pkgconfig(openssl)",
@@ -1474,25 +1539,75 @@ mod names_reaching_apt {
                 assert_eq!(
                     calls(&directory),
                     "",
-                    "`{operation} package {name}`: no manager ran, not even dpkg-query"
+                    "`{operation} package {name}`: no manager ran, not even a lookup"
                 );
             }
         }
     }
 
     #[tokio::test]
-    async fn should_refuse_a_dotted_name_no_package_has_because_apt_reads_it_as_a_pattern() {
-        let (directory, provider) = fake_managers("");
-        let refused = provider
-            .act(&action("add", "xz.", &[]))
-            .await
-            .expect_err("SEC-C-1: `xz.` matches every package with an `xz` in its name");
-        assert_eq!(refused.code(), ErrorCode::TypeMismatch, "{refused:?}");
-        assert!(
-            !calls(&directory).contains("apt-get"),
-            "only the database was asked: {}",
-            calls(&directory)
-        );
+    async fn should_refuse_a_suffixed_or_dotted_name_the_package_database_does_not_know() {
+        // Review finding SEC-C-1: apt reads `curl-` as "remove curl", `curl+` as "install curl"
+        // and `xz.` as a pattern over every package — wherever no package has exactly that name.
+        // The package database is asked, read-only and after `--`; unknown, the name is refused
+        // and no mutation starts.
+        for name in ["curl-", "curl+", "xz.", "python3.12"] {
+            for (operation, arguments) in [
+                ("add", vec![]),
+                ("remove", vec![]),
+                ("set", vec![("hold", Value::Bool(true))]),
+            ] {
+                let (directory, provider) = fake_managers("");
+                let refused = provider
+                    .act(&action(operation, name, &arguments))
+                    .await
+                    .expect_err("an instruction or a pattern is refused");
+                assert_eq!(
+                    refused.code(),
+                    ErrorCode::TypeMismatch,
+                    "`{operation} package {name}`: {refused:?}"
+                );
+                assert!(
+                    refused
+                        .message()
+                        .contains("knows no package called exactly"),
+                    "the refusal says what was looked for: {refused:?}"
+                );
+                let asked = calls(&directory);
+                assert!(
+                    asked.contains(&format!("apt-cache [pkgnames] [--] [{name}]")),
+                    "the database was asked for exactly that name, after `--`: {asked}"
+                );
+                assert!(
+                    !asked.contains("apt-get") && !asked.contains("apt-mark"),
+                    "no mutation started: {asked}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn should_take_a_suffixed_or_dotted_name_the_package_database_knows_as_that_package() {
+        // `g++` ends in `+` and `python3.11` holds a `.`, and both are packages: a name the
+        // database knows exactly is literal to apt, and stopping `add package g++` would be a
+        // regression against v0.6.5.
+        for name in ["g++", "python3.11"] {
+            let (directory, provider) = fake_managers("");
+            let outcome = provider
+                .act(&action("add", name, &[]).as_dry_run())
+                .await
+                .expect("a package the database knows is one package");
+            assert_eq!(
+                outcome.status(),
+                ono_value::ActionStatus::Skipped,
+                "`add package {name}` is a dry run here: {outcome:?}"
+            );
+            assert!(
+                !calls(&directory).contains("apt-get"),
+                "a dry run starts no mutation: {}",
+                calls(&directory)
+            );
+        }
     }
 
     #[tokio::test]
@@ -1554,16 +1669,21 @@ mod names_reaching_apt {
             apt_mark: Some(PathBuf::from("/fake/apt-mark")),
             apt_config: None,
         };
-        for (operation, arguments) in [
-            ("add", vec![]),
-            ("add", vec![("version", Value::string("8.5.0"))]),
-            ("remove", vec![]),
-            ("remove", vec![("purge", Value::Bool(true))]),
-            ("set", vec![("latest", Value::Bool(true))]),
-            ("set", vec![("version", Value::string("8.5.0"))]),
-            ("set", vec![("hold", Value::Bool(true))]),
+        for (name, operation, arguments) in [
+            ("curl", "add", vec![]),
+            ("g++", "add", vec![]),
+            (
+                "python3.11",
+                "add",
+                vec![("version", Value::string("3.11.2-6"))],
+            ),
+            ("curl", "remove", vec![]),
+            ("curl", "remove", vec![("purge", Value::Bool(true))]),
+            ("g++", "set", vec![("latest", Value::Bool(true))]),
+            ("curl", "set", vec![("version", Value::string("8.5.0"))]),
+            ("curl", "set", vec![("hold", Value::Bool(true))]),
         ] {
-            let mutation = Mutation::of(&action(operation, "curl", &arguments), &dpkg, "curl")
+            let mutation = Mutation::of(&action(operation, name, &arguments), &dpkg, name)
                 .expect("a mutation");
             for (program, built) in &mutation.commands {
                 let at = built
@@ -1574,6 +1694,17 @@ mod names_reaching_apt {
                     at,
                     built.len() - 2,
                     "the package is the one argument after `--`: {built:?}"
+                );
+                assert!(
+                    built
+                        .last()
+                        .is_some_and(|operand| operand.starts_with(name)),
+                    "the operand is the package: {built:?}"
+                );
+                assert_eq!(
+                    built[at - 2..at],
+                    ["-o".to_owned(), "APT::Cmd::Pattern-Only=true".to_owned()],
+                    "apt reads the operand as a name, never as a regex or a glob: {built:?}"
                 );
                 if program.ends_with("apt-get") && built[0] == "install" {
                     assert!(
