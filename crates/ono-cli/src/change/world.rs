@@ -432,7 +432,7 @@ fn text(record: &RecordValue, field: &str) -> Option<String> {
 
 /// `path` made canonical, resolving a path whose last component does not exist yet.
 ///
-/// A plan may write a file that is not there — `copy file ./nginx.conf to /etc/nginx/nginx.conf`
+/// A plan may write a file that is not there — `copy file ./nginx.conf /etc/nginx/nginx.conf`
 /// on a host that has neither — and §7.1 still wants a canonical path, because an unresolved one
 /// is a selector wearing the name of an identity. So the parent is canonicalised and the name is
 /// joined onto it.

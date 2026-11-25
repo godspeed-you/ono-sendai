@@ -148,7 +148,7 @@ impl ProviderChangeProvider {
     /// §4.3 freezes the target set at resolution and §2.6 forbids adding to it later, so a caller
     /// that resolved the set passes it in and this filters it to the schema the statement acts on.
     /// A statement whose schema nothing in that set matches names its own object, which is what a
-    /// plan block's `copy file ./a to /etc/b` does.
+    /// plan block's `copy file ./a /etc/b` does.
     fn targets_for(
         &self,
         mutation: &intent::Mutation<'_>,

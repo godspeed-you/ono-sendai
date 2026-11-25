@@ -92,7 +92,7 @@ pub struct PlannableOperation {
     pub shape: TargetShape,
     /// Which selector of the contract names the object it mutates.
     ///
-    /// `copy file ./new to /etc/nginx.conf` writes the *destination*, and freezing the source
+    /// `copy file ./new /etc/nginx.conf` writes the *destination*, and freezing the source
     /// would put the wrong path into the plan's recovery domain (Appendix B).
     pub subject: &'static str,
     /// Whether the selector that names the object is a number rather than text (§4.3).
@@ -166,7 +166,7 @@ fn operations() -> &'static [PlannableOperation] {
                 );
                 let first = contract.selectors().first();
                 // Which selector names the object the plan is *about* — the one it freezes and
-                // the one a recovery domain is resolved from. `copy file <source> to
+                // the one a recovery domain is resolved from. `copy file <source>
                 // <destination>` acts on the source and changes the destination, and freezing
                 // the source would put the wrong path into Appendix B's resolution. The registry
                 // already says so: an effect names the selector it lands on (§8.2), and the
@@ -326,7 +326,7 @@ pub enum Resolution {
         subjects: Vec<String>,
         /// The object identity the provider acts on, where the statement fixed one.
         ///
-        /// `copy file <source> to <destination>` acts on the *source* and writes the
+        /// `copy file <source> <destination>` acts on the *source* and writes the
         /// destination, so the object a provider is asked about and the object the plan is
         /// protecting are different things and both have to travel (ADR-0082 §1, §2).
         object: Option<String>,
@@ -609,7 +609,7 @@ fn verification_of(statement: &Statement) -> Result<Resolution, ErrorValue> {
 
 /// The object a statement mutates, read from the selector [`PlannableOperation::subject`] names.
 ///
-/// Where the contract has no such selector — `copy file <source> to <destination>` writes the
+/// Where the contract has no such selector — `copy file <source> <destination>` writes the
 /// destination as an option in some spellings and as a selector in others — every declared
 /// selector and option of that name is consulted before the answer is `None`.
 fn subject_of(
@@ -723,7 +723,7 @@ pub fn fragment_for(
             // The effect lands on the object as a person and a mount table both name it, which
             // is the label rather than the frozen identity: §11.2 maps a mutation domain onto a
             // persistence domain by path, and `/etc/nginx.conf@/dev/sda2` is not a path. A row
-            // that names its own selector overrides that — `copy file <source> to <destination>`
+            // that names its own selector overrides that — `copy file <source> <destination>`
             // creates the destination and reads the source.
             let mut acted = action;
             // `--latest` names no version: the package manager picks the destination when the

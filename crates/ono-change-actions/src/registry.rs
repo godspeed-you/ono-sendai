@@ -150,7 +150,7 @@ impl EffectSpec {
 
     /// Names the selector whose value the effect lands on, where it is not the action's target.
     ///
-    /// `copy file <source> to <destination>` acts on the source and creates the destination, and
+    /// `copy file <source> <destination>` acts on the source and creates the destination, and
     /// §8.2's `object` is the thing that changed. Without this the plan would show the effect
     /// against the file it read.
     #[must_use]
