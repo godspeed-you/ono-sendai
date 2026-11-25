@@ -318,6 +318,21 @@ pub trait LedgerRead: Send + Sync + std::fmt::Debug {
     /// `temporal.store_corrupt` or `temporal.permission_denied`.
     fn events(&self, query: &EventQuery) -> Result<Vec<TemporalEvent>, ErrorValue>;
 
+    /// How many events `query` answers, counting no further than its `limit` — without decoding
+    /// one where the ledger can avoid it (§32.3).
+    ///
+    /// A bound decided by reading the events it bounds is a bound on the answer and not on the
+    /// work: `changes` refuses a window holding more than its ceiling, and deciding that by
+    /// decoding fifty thousand and one events made the refusal cost what the answer would have
+    /// (review finding PRF-5). The default reads the events; the persistent store counts its index.
+    ///
+    /// # Errors
+    ///
+    /// As [`LedgerRead::events`].
+    fn count_events(&self, query: &EventQuery) -> Result<usize, ErrorValue> {
+        self.events(query).map(|events| events.len())
+    }
+
     /// One event by reference, which may be shortened (§11.6).
     ///
     /// # Errors

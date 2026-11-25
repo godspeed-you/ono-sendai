@@ -1497,6 +1497,21 @@ struct Selection {
 }
 
 fn event_selection(query: &EventQuery) -> Decoded<Selection> {
+    event_selection_of(query, EVENT_COLUMNS, true)
+}
+
+/// The count of what `query` selects, no further than its limit, from the index and the rows'
+/// filtered columns — no payload is decoded (review finding PRF-5).
+fn event_count_selection(query: &EventQuery) -> Decoded<Selection> {
+    let inner = event_selection_of(query, "1", false)?;
+    Ok(Selection {
+        sql: format!("SELECT COUNT(*) FROM ({})", inner.sql),
+        binds: inner.binds,
+    })
+}
+
+/// [`event_selection`] with the columns asked for, ordered or not.
+fn event_selection_of(query: &EventQuery, columns: &str, ordered: bool) -> Decoded<Selection> {
     use rusqlite::types::Value as Bound;
     let mut clauses: Vec<String> = Vec::new();
     let mut binds: Vec<Bound> = Vec::new();
@@ -1581,15 +1596,33 @@ fn event_selection(query: &EventQuery) -> Decoded<Selection> {
         ""
     };
     Ok(Selection {
-        sql: format!(
-            "SELECT {EVENT_COLUMNS} FROM events{index}{where_clause} \
-             ORDER BY presentation_nanos {order}, event_id {order}{limit}"
-        ),
+        sql: if ordered {
+            format!(
+                "SELECT {columns} FROM events{index}{where_clause} \
+                 ORDER BY presentation_nanos {order}, event_id {order}{limit}"
+            )
+        } else {
+            format!("SELECT {columns} FROM events{index}{where_clause}{limit}")
+        },
         binds,
     })
 }
 
 impl LedgerRead for LedgerStore {
+    fn count_events(&self, query: &EventQuery) -> Result<usize, ErrorValue> {
+        let selection =
+            event_count_selection(query).map_err(|detail| corrupt("events", &detail))?;
+        let connection = self.usable()?;
+        let counted: i64 = connection
+            .query_row(
+                &selection.sql,
+                rusqlite::params_from_iter(selection.binds.iter()),
+                |row| row.get(0),
+            )
+            .map_err(|error| self.unavailable(&error))?;
+        Ok(usize::try_from(counted).unwrap_or_default())
+    }
+
     fn events(&self, query: &EventQuery) -> Result<Vec<TemporalEvent>, ErrorValue> {
         let selection = event_selection(query).map_err(|detail| corrupt("events", &detail))?;
         let connection = self.usable()?;

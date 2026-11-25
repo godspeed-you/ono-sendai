@@ -29,8 +29,16 @@ answer, it is a wrong one: a subject whose later events were not read would repo
    window that holds more is refused with `resource.item_limit` (E1101, v0.4.1 §21.4), whose
    metadata names the stage (`changes`), the limit, the consumption that crossed it and the
    window, and whose help says to narrow `--since`/`--until` or name a target. 50,000 is an hour
-   of the whole host at the fixture's rate (11.6 events a second) with headroom, and decoded it
-   stays in the tens of megabytes.
+   of the whole host at the fixture's rate (11.6 events a second) with headroom. *Corrected after
+   review (PRF-5, COR-T6):* decoded, a window at the bound is not "tens of megabytes" — ADR-1068
+   measured 130 MB resident at 100k events with the refusal decoding 50,001 events (1,151 ms) to
+   find out. A window is now decided at index cost first: `LedgerRead::count_events` counts at
+   most `max_events + 1` index entries (`SELECT COUNT(*) FROM (SELECT 1 … LIMIT ?)` in the store,
+   no payload read), and only a window inside the bound is read and decoded. Grouping the window
+   by subject is a map lookup per event over borrowed events (it searched every run for every
+   event and copied each event into its run). The refusal carries the metadata keys every
+   `resource.item_limit` refusal carries — `stage`, `ceiling` (`values`), `limit`, `consumed`,
+   `setting` (null: no setting raises this bound) — plus the window.
 2. **The answer bound is reported, not hidden.** `changes` returns at most `limit + 1` changes;
    the extra one says the limit cut the answer — the idiom `timeline` already uses at the ledger
    (`limit + 1` → `truncated`). The `changes` command prints the first `limit` and says on the

@@ -343,3 +343,62 @@ fn should_spell_a_lonely_identity_at_the_shortest_length_a_caller_would_print() 
         "asking about nothing reads nothing"
     );
 }
+
+#[test]
+fn should_count_a_window_without_decoding_an_event_when_a_bound_is_decided() {
+    // Review finding PRF-5: `changes` decides whether a window is over its bound by counting it,
+    // and the count reads the index, not the events. Every payload here is unreadable: a decoded
+    // read would refuse each row and note it as damage; the count answers without a finding.
+    let home = tempfile::tempdir().expect("a temporary home");
+    let path = {
+        let store = store_in(home.path());
+        let events: Vec<_> = (0..30)
+            .map(|index| {
+                let at = instant("2026-08-31T14:00:00Z")
+                    .checked_add(jiff::Span::new().seconds(index))
+                    .expect("an instant in range");
+                event_about(EventKind::ObjectAppeared, &at.to_string(), index)
+            })
+            .collect();
+        store.append(&events, &[]).expect("an append succeeds");
+        store.flush().expect("a flush succeeds");
+        store.path().to_path_buf()
+    };
+    rusqlite::Connection::open(&path)
+        .expect("the store opens for the fixture")
+        .execute("UPDATE events SET body = ?1", rusqlite::params![vec![0xff_u8; 32]])
+        .expect("every payload is unreadable");
+    let store = ono_temporal_ledger::LedgerStore::open(&path).expect("the store opens");
+    let window = EventQuery {
+        scope: Some(scope()),
+        subjects: Vec::new(),
+        kinds: Vec::new(),
+        range: TimeRange::between(
+            instant("2026-08-31T14:00:05Z"),
+            instant("2026-08-31T14:00:25Z"),
+        ),
+        limit: Some(11),
+        order: QueryOrder::Ascending,
+    };
+
+    assert_eq!(
+        store.count_events(&window).expect("the count answers"),
+        11,
+        "the count stops at the query's limit"
+    );
+    assert_eq!(
+        store
+            .count_events(&EventQuery {
+                limit: None,
+                ..window.clone()
+            })
+            .expect("the count answers"),
+        20,
+        "the whole window, without a limit"
+    );
+    assert!(
+        store.integrity().is_healthy(),
+        "no event was decoded to count it: {:?}",
+        store.integrity()
+    );
+}
