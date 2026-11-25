@@ -252,7 +252,9 @@ fn place_of(
         &name,
         ono_spatial_core::BootIdentity::unknown_boot(&name),
     );
-    ono_spatial_core::space::learn(&scope);
+    // Learned within a bound: a hostile peer answering every map with fresh names must not grow
+    // a long-lived shell's geography for ever (review SEC-7).
+    ono_spatial_core::space::learn_reported(&scope);
     let root = space::root().spatial_id_in(Some(&scope));
     drawn.insert(key, root.clone());
     let place =
