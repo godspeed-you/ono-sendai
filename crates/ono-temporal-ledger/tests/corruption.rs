@@ -197,21 +197,22 @@ fn should_refuse_a_truncated_file_rather_than_answer_from_half_of_it() {
     drop(file);
 
     match LedgerStore::open(&path) {
-        Err(refusal) => assert!(
-            matches!(
-                refusal.code(),
-                ErrorCode::TemporalStoreCorrupt | ErrorCode::TemporalStoreUnavailable
-            ),
-            "§31.7: a truncated store is refused, not half-answered; it said {refusal:?}"
+        Err(refusal) => assert_eq!(
+            refusal.code(),
+            ErrorCode::TemporalStoreCorrupt,
+            "§31.7: a truncated store is refused as corrupt, not half-answered: {refusal:?}"
         ),
         Ok(store) => {
-            let held = store
+            // Review finding SEC-C-2: the open is constant-cost and may not read the missing
+            // pages (ADR-1068), so the read that needs them is where the truncation is met — and
+            // it is refused as corruption, never answered from what is left.
+            let refused = store
                 .events(&EventQuery::in_range(TimeRange::all()))
-                .map(|events| events.len())
-                .unwrap_or_default();
-            assert!(
-                held < 3 || !store.integrity().is_healthy(),
-                "a store missing two thirds of its bytes may not report a whole history"
+                .expect_err("§31.7: a store missing two thirds of its bytes is not answered from");
+            assert_eq!(
+                refused.code(),
+                ErrorCode::TemporalStoreCorrupt,
+                "§31.7: a truncated store read back is corruption: {refused:?}"
             );
         }
     }
