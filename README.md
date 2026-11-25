@@ -543,7 +543,7 @@ built.
 ```text
 crates=48
 workspace_members=50
-tests=8003
+tests=8009
 tests_that_can_skip=125
 expected_ci_skips=16
 acceptance_cases=335
