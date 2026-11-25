@@ -114,10 +114,20 @@ impl RecorderOptions {
 }
 
 /// What a `start recorder` produced (§10.8, §44.1, §44.3).
+///
+/// The recorder's state after the start, without the retention figures: those count the store,
+/// and the implicit start of a recording shell has no status to print (review finding PRF-4). A
+/// caller that prints one asks [`Recorder::status`].
 #[derive(Debug)]
 pub struct StartOutcome {
-    /// The recorder's state after the start.
-    pub status: RecorderStatus,
+    /// Whether the recorder is collecting after the start (§10.8).
+    pub running: bool,
+    /// When the running recorder started.
+    pub since: Option<Timestamp>,
+    /// §43.4's health after the start.
+    pub health: RecorderHealth,
+    /// Where retained history lives, where the start opened a store.
+    pub store: Option<PathBuf>,
     /// §44.1's restart procedure, where a store was opened.
     pub plan: Option<RestartPlan>,
     /// §44.3's explicit diagnostic, where persistence could not be brought up.
@@ -314,17 +324,12 @@ impl Recorder {
             return Err(refusal);
         }
         if self.with_state(|state| state.running) {
-            return Ok(StartOutcome {
-                status: self.status(now),
-                plan: None,
-                diagnostic: None,
-            });
+            return Ok(self.outcome(None, None));
         }
 
         let Some(path) = self.inner.options.store.clone() else {
             return Ok(self.degrade(
                 settings,
-                now,
                 ono_temporal_core::error::store_unavailable(
                     "no ledger path was configured, so nothing can be retained across sessions",
                 ),
@@ -334,7 +339,7 @@ impl Recorder {
         let options = StoreOptions::at(&path).with_retention(settings.retention());
         let ledger = match Ledger::persistent(&options) {
             Ok(ledger) => Arc::new(ledger),
-            Err(refusal) => return Ok(self.degrade(settings, now, refusal)),
+            Err(refusal) => return Ok(self.degrade(settings, refusal)),
         };
 
         // §44.1, in order, before anything new is written into the store.
@@ -350,7 +355,7 @@ impl Recorder {
         });
         let plan = match plan {
             Ok(plan) => plan,
-            Err(refusal) => return Ok(self.degrade(settings, now, refusal)),
+            Err(refusal) => return Ok(self.degrade(settings, refusal)),
         };
 
         // ADR-1125: whether the whole-file check is due is decided before this writer marks the
@@ -362,7 +367,7 @@ impl Recorder {
         }) {
             None | Some(Ok(None)) => false,
             Some(Ok(Some(_))) => true,
-            Some(Err(refusal)) => return Ok(self.degrade(settings, now, refusal)),
+            Some(Err(refusal)) => return Ok(self.degrade(settings, refusal)),
         };
 
         // §44.1's writes are the first the store takes. One that fails — a full disk, a file-size
@@ -377,7 +382,7 @@ impl Recorder {
         });
         let declared = match written {
             Ok(declared) => declared,
-            Err(refusal) => return Ok(self.degrade(settings, now, refusal)),
+            Err(refusal) => return Ok(self.degrade(settings, refusal)),
         };
 
         {
@@ -404,11 +409,7 @@ impl Recorder {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = due.then_some(now);
 
-        Ok(StartOutcome {
-            status: self.status(now),
-            plan,
-            diagnostic: None,
-        })
+        Ok(self.outcome(plan, None))
     }
 
     /// `stop recorder` (§10.8).
@@ -960,13 +961,20 @@ impl Recorder {
         )
     }
 
+    /// What a start answers: the state, read without counting the store (PRF-4).
+    fn outcome(&self, plan: Option<RestartPlan>, diagnostic: Option<ErrorValue>) -> StartOutcome {
+        self.with_state(|state| StartOutcome {
+            running: state.running,
+            since: state.since,
+            health: state.health,
+            store: state.store.clone(),
+            plan,
+            diagnostic,
+        })
+    }
+
     /// §44.3: persistence is off, the shell keeps working, and the diagnostic is explicit.
-    fn degrade(
-        &self,
-        settings: &RecorderSettings,
-        now: Timestamp,
-        diagnostic: ErrorValue,
-    ) -> StartOutcome {
+    fn degrade(&self, settings: &RecorderSettings, diagnostic: ErrorValue) -> StartOutcome {
         {
             let mut state = self.lock_state();
             state.running = false;
@@ -980,11 +988,7 @@ impl Recorder {
             state.diagnostic = Some(diagnostic.render_terse().into());
             state.refusal = Some(diagnostic.clone());
         }
-        StartOutcome {
-            status: self.status(now),
-            plan: None,
-            diagnostic: Some(diagnostic),
-        }
+        self.outcome(None, Some(diagnostic))
     }
 
     /// Tells the store which sources promised sequence continuity (§21.5, §43.2).

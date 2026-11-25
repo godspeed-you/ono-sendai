@@ -40,11 +40,11 @@ fn should_create_a_private_store_and_report_running_when_the_recorder_starts() {
         .start(&settings(), now)
         .expect("a first start succeeds");
 
-    assert!(outcome.status.running);
-    assert_eq!(outcome.status.since, Some(now));
-    assert_eq!(outcome.status.health, RecorderHealth::Healthy);
+    assert!(outcome.running);
+    assert_eq!(outcome.since, Some(now));
+    assert_eq!(outcome.health, RecorderHealth::Healthy);
     assert_eq!(
-        outcome.status.store.as_deref(),
+        outcome.store.as_deref(),
         Some(directory.path().join("ledger.sqlite3").as_path())
     );
     assert!(directory.path().join("ledger.sqlite3").exists());
@@ -62,9 +62,9 @@ fn should_answer_the_running_recorder_when_a_start_repeats_with_the_same_setting
         .start(&settings(), instant("2026-08-31T12:05:00Z"))
         .expect("§10.8: `start recorder` MUST be idempotent");
 
-    assert!(again.status.running);
+    assert!(again.running);
     assert_eq!(
-        again.status.since,
+        again.since,
         Some(first),
         "an idempotent start reports the recorder that is already running"
     );
@@ -172,8 +172,8 @@ fn should_keep_working_without_persistence_when_the_store_cannot_be_opened() {
         .start(&settings(), instant("2026-08-31T12:00:00Z"))
         .expect("§44.3: the shell keeps working when the store cannot be opened");
 
-    assert!(!outcome.status.running);
-    assert_eq!(outcome.status.health, RecorderHealth::Failed);
+    assert!(!outcome.running);
+    assert_eq!(outcome.health, RecorderHealth::Failed);
     assert!(
         outcome.diagnostic.is_some(),
         "§44.3 requires an explicit diagnostic"
@@ -235,7 +235,7 @@ fn should_run_in_process_when_the_host_has_no_systemd() {
     let outcome = recorder
         .start(&settings(), instant("2026-08-31T12:00:00Z"))
         .expect("§10.9: the recorder is a user-level collector, not a daemon requirement");
-    assert!(outcome.status.running);
+    assert!(outcome.running);
 }
 
 #[test]
@@ -411,7 +411,7 @@ fn should_fail_and_stop_appending_when_the_whole_file_check_after_an_unclean_shu
         .start(&settings(), later)
         .expect("the start answers");
     assert!(
-        outcome.status.running,
+        outcome.running,
         "the open stays constant-cost and the store opens"
     );
     assert!(

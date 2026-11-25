@@ -185,7 +185,7 @@ pub(crate) fn start_recorder(
     now: Timestamp,
 ) -> Result<ono_recorder::StartOutcome, ErrorValue> {
     let outcome = recorder().start(&configured_settings(), now)?;
-    note_started(outcome.status.since);
+    note_started(outcome.since);
     if let Ok(mut held) = start_refusal().write() {
         *held = None;
     }

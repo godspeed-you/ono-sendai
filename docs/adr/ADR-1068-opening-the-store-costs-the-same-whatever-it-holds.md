@@ -62,7 +62,12 @@ Where the time went, on the 100k store (Python `sqlite3`, warm): `PRAGMA integri
    step) gives `downtime::restart` the last observed instant; `get recorder`/`start recorder`
    count the store once rather than twice (the recorder's figures are the session's when the
    session reads the recorder's ledger); `changes` reads `Ledger::max_age()`, the policy alone;
-   the retention sweep asks whether an event exists (`EXISTS`) rather than how many.
+   the retention sweep asks whether an event exists (`EXISTS`) rather than how many. *Corrected after
+   review (PRF-4):* as first written this was false for a recording shell — `Recorder::start`
+   answered `status: self.status(now)`, which counts the store, and the implicit start of
+   `temporal.recording.enabled` threw that status away. `StartOutcome` now carries the state
+   without the retention figures (`running`, `since`, `health`, `store`), and only a caller that
+   prints a status (`start recorder`, `get recorder`) asks `Recorder::status`, once.
 3. **A running recorder's store is never swapped out by configuration**, and `carry_over` moves
    only what the session wrote — events since the session started observing, at most what the
    destination holds, newest first — and reports a failure instead of dropping it
