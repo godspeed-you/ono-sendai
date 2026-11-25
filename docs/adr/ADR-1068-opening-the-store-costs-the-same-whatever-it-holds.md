@@ -112,6 +112,23 @@ throughout, before and after. A recording-enabled shell (`ONO_TEMPORAL_RECORDING
   retention would sweep it. The measurement above is the evidence; its scripts are in the commit
   body.
 
+### Re-measured after review (ADR-1125, PRF-4, PRF-5)
+
+Release build of `implementation-v066-fix-core`, the same method as above (stores the shell built,
+`hyperfine -N --warmup 3 --runs 20`, medians), same i7-6600U, shared with another workstream
+building throughout (load average 4.9–7.5, so run-to-run noise is tens of milliseconds).
+
+- `ono --no-config -c 'start recorder'` with the whole-file check (ADR-1125) not due / due: 1k
+  48 / 48 ms, 20k 70 / 54 ms, 100k 79 / 71 ms at load ~5; later, at load ~6.5, the build before
+  PRF-4 and the final build side by side: 100k 212 / 231 ms and 220 / 186 ms. The open does not
+  grow with the store; `start recorder` still counts the store for the status it prints.
+- A recording-enabled shell (`ONO_TEMPORAL_RECORDING_ENABLED=true ono -c 'timeline --since 5m |
+  count'`) over the 100k store, which no longer counts the store at its implicit start (PRF-4):
+  mean 254 / 294 ms before, 122 / 123 ms after (user time 101 → 59 ms).
+- `changes --since 6h` over the 100k store, refused at the 50,000-event bound (PRF-5): 2.38–3.61 s
+  and 129 MB peak RSS before, 0.30–0.42 s and 15 MB after — decided at index cost, nothing decoded.
+  An accepted 20k-event window: 0.99–1.58 s before, 0.92–1.29 s after, 64 MB either way.
+
 ## Alternatives considered
 
 - **`PRAGMA quick_check`.** Skips index cross-checks but still reads every page: 8 ms against
