@@ -31,6 +31,38 @@ place too.
 - The target is resolved before the temporal state is taken, so `why` holds the spatial and the
   temporal state one after the other rather than one inside the other.
 
+### Amended after review (COR-T3, COR-T4, COR-T8)
+
+- **The coordinate is the stage's.** `why` (and `changes`) took the anchor from the session's
+  coordinate and ignored the stage's own `--at`, which the contract offers and v0.5 §4.5 makes the
+  same engine as `at` context; `why` also resolved its target at the session's coordinate. Both now
+  read `Invocation::temporal()` — the stage's `--at`, else the session's coordinate — for the
+  anchor, and `why` resolves its target there (`spatial::commands::resolved_place_at`, the
+  resolution `enter` uses, given the instant).
+- **A target the past did not record is `temporal.not_recorded`.** At a historical coordinate the
+  target is looked for in the reconstructed world (§14.1), and with the session's own evidence that
+  world rarely holds it: `at -2s; why process 1` refused `spatial.not_found` ("no place is called
+  `process/1`"). v0.4 §40's `not_found` asserts that the place does not exist; what is true is
+  that the history this shell can reconstruct at that instant does not hold it — §12.3's
+  `temporal.not_recorded` (§34 E1302), with the list of what each source can reach, which is how
+  `at` refuses an instant nothing covers. The present-day index is not used to resolve the selector
+  instead: §14.4 would then require the explanation to mark the identity as a resolution aid
+  rather than historical evidence, and `ono.causal-explanation/1` has no field for that. A selector
+  that is ambiguous in the reconstruction keeps its own refusal; one that does not resolve in the
+  present keeps `spatial.not_found`.
+- **The target's own last transition is read for.** The first form read the newest
+  `temporal.why.max_candidates` events of the whole host, so a target whose last transition was
+  older than that many other events read as having "no recorded state transition".
+  `ono_temporal_query::causal::why_candidates` reads the target's own events first (subject
+  filter, bounded by the same figure) and draws the causes from the host-wide window ending at the
+  newest explainable transition among them — at most two bounded reads.
+
+Tests: `crates/ono-cli/tests/why.rs` —
+`should_refuse_a_target_the_past_did_not_record_as_not_recorded_rather_than_not_found`,
+`should_answer_the_same_when_the_coordinate_is_the_stages_own_or_the_sessions`, and
+`should_explain_the_named_target_when_two_targets_are_asked_about` now asserts each subject *is*
+the spatial identity `enter` reaches; `crates/ono-temporal-query/tests/why_candidates.rs`.
+
 ## Consequences
 
 - `why process 1` and `why process 9` now answer about two different subjects; `why process

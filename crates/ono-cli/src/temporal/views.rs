@@ -238,7 +238,8 @@ impl CommandImpl for Changes {
             let arguments = ctx.arguments().evaluated(ctx.scope())?;
             let now = Timestamp::now();
             let state = temporal_session().await;
-            let anchor = state.context().instant().unwrap_or(now);
+            // The stage's coordinate — its own `--at`, else the session's (§4.5, COR-T4).
+            let anchor = ctx.temporal().instant().unwrap_or(now);
 
             // §13.1 makes `--since` required: a comparison needs two ends, and defaulting one of
             // them would make the answer depend on a figure nobody named.
@@ -324,12 +325,37 @@ impl CommandImpl for Why {
             // A target and a field are places, resolved before the temporal state is taken: the
             // resolution may ask a provider, and holding one state while waiting for the other
             // is the nesting ADR-1066 removes from this command.
-            let spatial = spatial_request(ctx.providers(), &subject).await?;
+            //
+            // The coordinate is the stage's: its own `--at`, else the session's (§4.5, review
+            // finding COR-T4) — the target is resolved there and the explanation anchored there.
+            let coordinate = ctx.temporal().instant();
+            let spatial = spatial_request(ctx.providers(), &subject, coordinate).await;
             let state = temporal_session().await;
-            let anchor = state.context().instant().unwrap_or(now);
+            let anchor = coordinate.unwrap_or(now);
             let request = match spatial {
-                Some(request) => request,
-                None => {
+                // §14.1, review finding COR-T3: at a historical coordinate the target is looked
+                // for in the reconstruction, and a place that is not in it was not recorded
+                // there. That is not "no such place" — v0.4 §40's `spatial.not_found` — but §12.3's
+                // `temporal.not_recorded`, with what each source can reach.
+                Err(refusal)
+                    if coordinate.is_some() && refusal.code() == ErrorCode::SpatialNotFound =>
+                {
+                    let at = anchor;
+                    let refusal = ono_temporal_core::error::not_recorded(
+                        &crate::spatial::local_scope(),
+                        at,
+                        &super::coordinate::availability(&state, now),
+                    );
+                    let reach = refusal.help().unwrap_or_default().to_owned();
+                    return Err(refusal.with_help(format!(
+                        "no place answering to `{}` is in the history this shell can reconstruct \
+                         at {at}\n{reach}",
+                        subject.join(" ")
+                    )));
+                }
+                Err(refusal) => return Err(refusal),
+                Ok(Some(request)) => request,
+                Ok(None) => {
                     let reference = subject.get(1).map(String::as_str).unwrap_or_default();
                     let event = super::coordinate::retained_event(&state, reference, now)?;
                     WhyRequest::event(&event.event_id)
@@ -337,7 +363,6 @@ impl CommandImpl for Why {
             };
 
             let ledger = state.ledger_handle();
-            let window = TimeRange::until(anchor);
             // §33's `temporal.why.max_candidates` bounds the question, so it has to bound the
             // read. The engine caps the candidate set as well, but a cap applied after the ledger
             // has handed over every event it holds is a cap on the explanation rather than on the
@@ -345,15 +370,15 @@ impl CommandImpl for Why {
             // one transition. Descending takes the *most recent* candidates, which is the set the
             // engine would have kept, and the engine orders them for itself (§16.3, §32.3).
             let max_candidates = super::session::why_max_candidates();
-            let mut events = ledger.events(&ono_temporal_core::EventQuery {
-                scope: Some(crate::spatial::local_scope()),
-                subjects: Vec::new(),
-                kinds: Vec::new(),
-                range: window,
-                limit: Some(max_candidates),
-                order: ono_temporal_core::QueryOrder::Descending,
-            })?;
-            events.reverse();
+            // The target's own last transition is read for, however many other events the
+            // host has had since (review finding COR-T8).
+            let events = ono_temporal_query::causal::why_candidates(
+                ledger.as_ref(),
+                &crate::spatial::local_scope(),
+                &request,
+                anchor,
+                max_candidates,
+            )?;
             let evidence_ids: Vec<ono_temporal_core::EvidenceId> = events
                 .iter()
                 .flat_map(|event| event.evidence.iter().cloned())
@@ -381,6 +406,7 @@ impl CommandImpl for Why {
 async fn spatial_request(
     providers: &ono_provider_api::ProviderRegistry,
     subject: &[String],
+    coordinate: Option<Timestamp>,
 ) -> Result<Option<WhyRequest>, ErrorValue> {
     match subject.split_first() {
         Some((head, _)) if head == "event" => Ok(None),
@@ -399,11 +425,12 @@ async fn spatial_request(
             };
             let mut spatial = crate::spatial::spatial_session().await;
             let here = spatial.current_place().clone();
-            let target = crate::spatial::commands::resolved_place(
+            let target = crate::spatial::commands::resolved_place_at(
                 providers,
                 &mut spatial,
                 &here,
                 &selector,
+                coordinate.and_then(crate::spatial::historical::at_instant),
                 Timestamp::now(),
             )
             .await?;

@@ -111,6 +111,17 @@ pub fn active() -> Option<Active> {
     })
 }
 
+/// The evidence behind `at` — the coordinate a stage's own `--at` names rather than the
+/// session's — or `None` where no temporal evidence is installed (§4.5).
+#[must_use]
+pub fn at_instant(at: Timestamp) -> Option<Active> {
+    let evidence = EVIDENCE.get()?;
+    Some(Active {
+        at,
+        ledger: evidence.ledger(),
+    })
+}
+
 /// The ledger this session records into and reads history from, where one is installed.
 ///
 /// It is the same ledger in the present and in the past: §13.5's change engine reads it while the

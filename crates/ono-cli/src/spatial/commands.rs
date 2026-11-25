@@ -1235,6 +1235,24 @@ pub async fn resolved_place(
     selector: &str,
     now: Timestamp,
 ) -> Result<ono_spatial_core::SpatialId, ErrorValue> {
+    let historical = crate::spatial::historical::active();
+    resolved_place_at(providers, session, here, selector, historical, now).await
+}
+
+/// [`resolved_place`] at `historical` — a stage's own `--at` — rather than at the session's
+/// coordinate; `None` is the present (v0.5 §4.5, review finding COR-T4).
+///
+/// # Errors
+///
+/// As [`resolved_place`].
+pub async fn resolved_place_at(
+    providers: &ProviderRegistry,
+    session: &mut SpatialSessionState,
+    here: &ono_spatial_core::SpatialId,
+    selector: &str,
+    historical: Option<crate::spatial::historical::Active>,
+    now: Timestamp,
+) -> Result<ono_spatial_core::SpatialId, ErrorValue> {
     // §27.1 step 4 is the *current host's* index: standing on a linked host, `enter process/1`
     // is a question about that host, and answering it with the local pid 1 the index still holds
     // is the accidental local/remote merge §43.7 forbids.
@@ -1244,7 +1262,7 @@ pub async fn resolved_place(
     // v0.5 §14.1: at a historical coordinate a selector names a place that was there, resolved
     // against the reconstructed index. No provider is asked — a provider answers about now, and
     // an answer from one would be the present reached through a past selector (§14.3, §55.2).
-    if let Some(active) = crate::spatial::historical::active() {
+    if let Some(active) = historical {
         let world = active.world(session.current_scope())?;
         let found = world.resolve(selector, &context).require(selector)?;
         return Ok(found.spatial_id().clone());
