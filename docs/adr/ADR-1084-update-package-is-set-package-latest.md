@@ -79,6 +79,10 @@ cannot spell (`latest` is a legal version string for some managers).
 - `change.yaml`'s example becomes `plan set package openssl --latest`, and its conformance
   exemption is removed: the example runs in the conformance suite's scratch shell on any host
   whose package manager has `openssl` installed (this run's host and the CI image both do).
+  *Corrected after review (COR-C3, TST-9, ARC-14):* that made the suite read the host's package
+  database and fail on a host without dpkg/rpm/zypper and `openssl`; the harness inherits only
+  `PATH` and has no fake-manager seam, so the example is exempted again with that reason, and
+  `containers_packages.rs` (fake managers on a PATH of its own) and case 441 are its proof.
   `--protection require` is not part of the example: no first-party provider maps a package's
   files to a persistence domain yet, so `require` refuses such a plan with
   `recovery.coverage_insufficient` (E1807) — which is the honest answer, and which
