@@ -53,13 +53,16 @@ pub struct AgentConfig {
     source_address: Option<String>,
     clock: Option<ono_protocol::PeerClock>,
     links: Option<Arc<dyn LinkTableSource>>,
+    handshake_deadline: Option<tokio::time::Instant>,
 }
 
 /// Where an agent's own link table comes from (`ono.link.links/1`, v0.4 §19.3, ADR-1097).
 ///
-/// An agent that holds links answers with them, as it observed them; one that holds none is
-/// given no source and announces no link table at all, so a peer is never told "no links" by an
-/// agent that does not keep the table.
+/// An agent given a source announces the request and answers with the links the source holds,
+/// as it observed them — an empty table for an agent that holds none, which is a true answer,
+/// since it does keep the table (`ono --agent` always gives one, ADR-1097). An agent given no
+/// source keeps no table and announces no request, so a peer is never told "no links" by an agent
+/// that does not keep one.
 #[async_trait::async_trait]
 pub trait LinkTableSource: Send + Sync + std::fmt::Debug + 'static {
     /// The links this agent holds, as it observes them now.
@@ -86,6 +89,7 @@ impl AgentConfig {
             source_address: None,
             clock: None,
             links: None,
+            handshake_deadline: None,
         }
     }
 
@@ -107,6 +111,14 @@ impl AgentConfig {
     #[must_use]
     pub fn with_source_address(mut self, address: impl Into<String>) -> Self {
         self.source_address = Some(address.into());
+        self
+    }
+
+    /// The moment the connection's handshake — TLS and Ono negotiation together — must be
+    /// complete by (v0.4.1 §12.2, ADR-1057).
+    #[must_use]
+    pub const fn with_handshake_deadline(mut self, deadline: tokio::time::Instant) -> Self {
+        self.handshake_deadline = Some(deadline);
         self
     }
 
@@ -199,6 +211,9 @@ impl AgentConfig {
         }
         if let Some(clock) = &self.clock {
             config = config.with_clock(clock.clone());
+        }
+        if let Some(deadline) = self.handshake_deadline {
+            config = config.with_handshake_deadline(deadline);
         }
         for (target, operation, capability) in &self.action_capabilities {
             config = config.with_action_capability(target, operation, capability);

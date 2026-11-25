@@ -21,7 +21,9 @@ use tokio::sync::Semaphore;
 
 use crate::audit::{Audit, AuditEvent, AuditKind, NoAudit};
 use crate::authorization::{AuthorizationContext, AuthorizedClients, PeerAuthorization};
-use crate::connection::{FrameReader, FrameSink, refuse_within, spawn_writer};
+use crate::connection::{
+    FrameReader, FrameSink, MAX_UNCREDITED_FRAMES, Refused, refuse_within, spawn_writer,
+};
 use crate::error::unreachable;
 use crate::handshake::{
     CapabilityDescriptor, Identity, Offer, PeerClock, ProviderDescriptor, negotiate,
@@ -73,6 +75,9 @@ pub struct ServerConfig {
     audit: Audit,
     source_address: Option<String>,
     clock: Option<PeerClock>,
+    /// The moment the whole handshake must be complete by, where the caller started counting
+    /// before `serve` was called — at accept, with TLS inside the same bound (ADR-1057).
+    handshake_deadline: Option<tokio::time::Instant>,
 }
 
 impl Default for ServerConfig {
@@ -91,6 +96,7 @@ impl Default for ServerConfig {
             audit: Arc::new(NoAudit),
             source_address: None,
             clock: None,
+            handshake_deadline: None,
         }
     }
 }
@@ -225,6 +231,15 @@ impl ServerConfig {
     #[must_use]
     pub fn with_source_address(mut self, address: impl Into<String>) -> Self {
         self.source_address = Some(address.into());
+        self
+    }
+
+    /// The moment the handshake must be complete by: v0.4.1 §12.2's one deadline for TLS plus
+    /// Ono negotiation, started by the listener at accept. Without it the deadline starts when
+    /// `serve` does (a transport with no handshake of its own, such as stdio).
+    #[must_use]
+    pub const fn with_handshake_deadline(mut self, deadline: tokio::time::Instant) -> Self {
+        self.handshake_deadline = Some(deadline);
         self
     }
 
@@ -558,11 +573,32 @@ pub async fn refuse<T: Transport>(
     refusal: &ErrorValue,
     limits: &Limits,
 ) -> Result<(), ErrorValue> {
+    refuse_by(
+        transport,
+        refusal,
+        limits,
+        tokio::time::Instant::now() + limits.handshake_timeout(),
+    )
+    .await
+}
+
+/// As [`refuse`], with the peer's `Hello` awaited only until `deadline` — the moment the
+/// listener gave the whole handshake, TLS included (§12.2's one deadline, ADR-1057).
+///
+/// # Errors
+///
+/// As [`refuse`].
+pub async fn refuse_by<T: Transport>(
+    transport: T,
+    refusal: &ErrorValue,
+    limits: &Limits,
+    deadline: tokio::time::Instant,
+) -> Result<(), ErrorValue> {
     let (reader, writer) = tokio::io::split(transport);
     let mut reader = FrameReader::new(reader, limits.clone());
     let payload = encode_message(&Message::Reject(Reject::refusing(refusal)), limits)
         .map_err(ErrorValue::from)?;
-    let _ = tokio::time::timeout(limits.handshake_timeout(), reader.next()).await;
+    let _ = tokio::time::timeout_at(deadline, reader.next()).await;
     refuse_within(
         &mut reader,
         writer,
@@ -673,7 +709,10 @@ where
     // listener that accepted the socket; this is the other half — a peer that completed the
     // cryptographic handshake and then says nothing must not hold the connection open for ever.
     // It has a channel, so it is told why it is being let go (§54.1, issue #181).
-    let opening = match tokio::time::timeout(limits.handshake_timeout(), reader.next()).await {
+    let deadline = config
+        .handshake_deadline
+        .unwrap_or_else(|| tokio::time::Instant::now() + limits.handshake_timeout());
+    let opening = match tokio::time::timeout_at(deadline, reader.next()).await {
         Ok(Ok(Some(opening))) => opening,
         Ok(Ok(None)) => {
             // Gone before it said anything: there is nobody to tell, and still a decision to
@@ -833,7 +872,8 @@ where
                         }
                         service.query(&authorization, query, &responder).await.err()
                     }
-                });
+                })
+                .map_err(|refusal| overrun(refusal, &record, &event))?;
             }
             Message::StartSubscribe(query) => {
                 let refusal = authorization
@@ -858,7 +898,8 @@ where
                             .await
                             .err()
                     }
-                });
+                })
+                .map_err(|refusal| overrun(refusal, &record, &event))?;
             }
             Message::StartAdapt(request) => {
                 // Adapting runs a program of the caller's choosing on this host. No entry in
@@ -890,7 +931,8 @@ where
                             .await
                             .err()
                     }
-                });
+                })
+                .map_err(|refusal| overrun(refusal, &record, &event))?;
             }
             Message::Act(request) => {
                 // The capability is resolved from this agent's own contracts, never from the
@@ -934,13 +976,17 @@ where
                             Err(error) => Some(error),
                         }
                     }
-                });
+                })
+                .map_err(|refusal| overrun(refusal, &record, &event))?;
             }
             Message::Probe if negotiated(crate::PROBE_CAPABILITY) => {
                 // Answered here, in the loop, at once: no task, no provider, no credit — the
                 // round trip it measures is the link and this loop, nothing else (ADR-1095).
+                // Not unbounded, though: an answer the peer leaves unread counts against the
+                // connection's allowance (ADR-1115).
                 if let Ok(payload) = encode_message(&Message::End, &limits) {
-                    let _ = frames.send(Frame::new(FrameKind::End, id, payload));
+                    uncredited(&frames, Frame::new(FrameKind::End, id, payload))
+                        .map_err(|refusal| overrun(refusal, &record, &event))?;
                 }
             }
             Message::ListLinks if negotiated(crate::LINKS_CAPABILITY) => {
@@ -970,7 +1016,8 @@ where
                             Err(error) => Some(error),
                         }
                     }
-                });
+                })
+                .map_err(|refusal| overrun(refusal, &record, &event))?;
             }
             Message::Cancel => {
                 if let Some(stream) = with_streams(&streams, |open| open.remove(&id)) {
@@ -1033,7 +1080,8 @@ fn start<F, Fut>(
     id: u32,
     window: u32,
     body: F,
-) where
+) -> Result<(), Refused>
+where
     F: FnOnce(StreamResponder) -> Fut,
     Fut: std::future::Future<Output = Option<ErrorValue>> + Send + 'static,
 {
@@ -1058,14 +1106,18 @@ fn start<F, Fut>(
         true
     });
     if !admitted {
+        // The refusal and its `end` cost the peer nothing to ask for, so they count against the
+        // connection's allowance like a probe's answer (ADR-1115).
         let refusal = ErrorValue::from(ProtocolError::TooManyStreams {
             limit: limits.max_streams(),
         });
         if let Ok(payload) = encode_message(&Message::Failure(refusal), limits) {
-            let _ = frames.send(Frame::new(FrameKind::Failure, id, payload));
+            uncredited(frames, Frame::new(FrameKind::Failure, id, payload))?;
         }
-        responder.finish();
-        return;
+        if let Ok(payload) = encode_message(&Message::End, limits) {
+            uncredited(frames, Frame::new(FrameKind::End, id, payload))?;
+        }
+        return Ok(());
     }
     let future = body(responder.clone());
     let streams = Arc::clone(streams);
@@ -1076,6 +1128,29 @@ fn start<F, Fut>(
         responder.finish();
         with_streams(&streams, |open| open.remove(&responder.id));
     });
+    Ok(())
+}
+
+/// Queues a frame no credit governs; an overrun is the peer not reading what it asked for.
+fn uncredited(frames: &FrameSink, frame: Frame) -> Result<(), Refused> {
+    match frames.send_uncredited(frame) {
+        Ok(()) | Err(Refused::Gone) => Ok(()),
+        Err(Refused::Overrun) => Err(Refused::Overrun),
+    }
+}
+
+/// Ends a connection whose peer left [`MAX_UNCREDITED_FRAMES`] answers unread: recorded as a
+/// connection ended for a limit, and failed with the bound it exceeded (ADR-1115).
+fn overrun(
+    _refused: Refused,
+    record: &impl Fn(AuditEvent),
+    event: &impl Fn(AuditKind, &'static str) -> AuditEvent,
+) -> ErrorValue {
+    let error = ErrorValue::from(ProtocolError::UnreadAnswers {
+        limit: MAX_UNCREDITED_FRAMES,
+    });
+    record(event(AuditKind::ConnectionLimitDenied, "denied").with_error_code(error.code()));
+    error
 }
 
 /// Whether one declared capability is inside what this peer may use (§9.4, §9.6).

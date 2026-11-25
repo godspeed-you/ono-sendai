@@ -98,3 +98,71 @@ holds a slot the §12.1/§12.3 ceilings count, so the sockets held this way stay
 - **A separate, shorter grace for the refusal.** Would be a second number for §52.2 to centralise;
   the handshake timeout is already the figure an operator sets for "how long a stranger may hold
   this agent before it has a link".
+
+## Amendment (v0.6.6 remediation, reviews ARC-4, SEC-3, PRF-9)
+
+**One deadline, not two halves.** The decision measured §12.2's deadline in two halves: TLS got one
+`handshake_timeout` in the listener, and `serve` gave the `Hello` a second full one, so a peer
+could spend about twice the figure before it was refused — and a refused one a third while the
+refusal drained. Now the listener starts the deadline at accept and hands the same instant to
+whatever reads the `Hello` (`ServerConfig::with_handshake_deadline`, `ono_protocol::refuse_by`):
+a peer that spends most of the figure in TLS has only the rest for its `Hello`. A stdio agent,
+whose transport has no handshake of its own, starts the deadline when `serve` does.
+
+**Authorization before admission.** The listener used to admit every TLS peer to the live
+ceiling (§12.1, §12.3) before the store was asked, so fresh self-signed keys that never said
+hello could hold every live slot while their refusal waited — a lockout of the clients the
+operator authorized. The store snapshot is now read right after TLS and a key it does not list is
+refused (E1202 with its census details, audited `connection.unknown_client_refused`) holding only
+the pending-handshake slot it already held for TLS; only a listed key is admitted. ADR-1055's
+guarantee — a never-granted client is refused, never swept — now holds by construction. An
+unreadable store is refused the same way, before admission.
+
+Tests: `crates/ono-remote/tests/limits.rs::should_give_the_hello_only_what_the_tls_handshake_left_of_the_one_deadline`
+(a relay holds the client's TLS bytes 1.5 s of a 2 s deadline; a `Hello` 1 s after TLS is refused
+E1502 — red with the deadline restarted in `serve`) and
+`…::should_not_let_unknown_keys_that_never_say_hello_lock_an_authorized_client_out` (32 strangers
+that complete TLS and say nothing; an authorized client still links with a live ceiling of 2 —
+red before, `remote.connection_limit`). The barrier of
+`…::should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revocation_sweep_runs_first`
+now waits for the stranger in the pending slot rather than admitted, which is the changed
+behaviour; its assertions are unchanged.
+
+## Spec deviation
+
+- Section: v0.4.1 §12.2
+- Text: "A peer that does not complete TLS plus Ono protocol negotiation within the timeout MUST be
+  disconnected."
+- Instead: a peer that does not complete TLS plus Ono negotiation within `handshake_timeout` of
+  being accepted is refused at that deadline; where it completed TLS it is then told why (E1502,
+  or the refusal that applies) and disconnected within **one more** `handshake_timeout` — the
+  bound inside which the refusal is written and the peer's remaining input drained. A peer whose
+  TLS did not complete is disconnected at the deadline itself. So the disconnection happens
+  within `2 × handshake_timeout` of accept, never later, whatever the peer does.
+- Why: §54.1 wants a peer that has an authenticated channel told which boundary decided, and a
+  refusal written into a socket that is then closed with unread input is reset and lost before
+  the peer reads it (the reason `refuse_within` drains). Telling it needs time after the deadline;
+  bounding that time by the same figure keeps the agent's cost per refused peer fixed by its own
+  limits, and a peer that never reads gains nothing by it.
+
+**The stdio agent's exit status (review COR-R6), kept and recorded.** `ono --agent` over stdio whose
+only caller never says hello writes the E1502 `Reject` on stdout and exits 0; one whose caller
+hangs up before saying hello exits 1 (`remote.unreachable`); v0.6.5 exited 1 in both. Kept: ADR-0008
+gives the agent `0` when the session ended "however unimpressive the caller's manners" and `1` when
+the agent itself failed, and refusing a late caller is the agent doing its job — the refusal was
+written, and the caller has it. A caller that vanished before anything could be said is a
+transport failure the agent reports. For a wrapper (`ssh host ono --agent`): the refusal is on
+the wire, the exit status says whether the agent could deliver it.
+
+**What the one deadline means for the stranger of #161's test.** In
+`limits.rs::should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revocation_sweep_runs_first`
+the stranger completes TLS and waits, unadmitted, while a revocation sweep runs; its one deadline
+(10 s from accept) is far longer than the sweep (1 s), and if a loaded host ever stretched the
+wait past it, the agent writes the stranger its refusal at the deadline and lets the socket go one
+deadline later. Either way the stranger's late hello meets a refusal or a closed connection at
+once — proved by `limits.rs::should_refuse_promptly_a_stranger_that_says_hello_after_its_deadline`
+(hello 600 ms and 1.2 s after a 500 ms deadline: refused within the bound, never a hang). The
+test's intermittent hang was not this path but a stream opened as the revoked link failed
+(ADR-1099, amended). And because the deadline now covers TLS and the hello together,
+`limits.rs::should_drop_a_handshake_that_has_not_completed_within_the_timeout` gives its
+legitimate client 2 s instead of 200 ms, which a loaded two-core host could not fit both into.

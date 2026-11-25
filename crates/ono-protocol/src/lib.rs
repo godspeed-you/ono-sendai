@@ -66,6 +66,7 @@ mod link;
 mod links;
 mod message;
 mod refusal;
+pub use refusal::MAX_REFUSAL_MESSAGE;
 mod service;
 mod store_file;
 mod trust;
@@ -75,8 +76,9 @@ pub mod transport;
 pub use audit::{Audit, AuditEvent, AuditKind, AuditSink, NoAudit};
 pub use authorization::{
     ActionGrant, AuthorizationContext, AuthorizedClient, AuthorizedClients, PeerAuthorization,
-    refusal_guidance, unauthenticated_refusal, update_store, write_store,
+    refusal_guidance, unauthenticated_refusal, update_store,
 };
+pub use connection::{MAX_UNCREDITED_FRAMES, WRITE_DEADLINE};
 pub use error::ProtocolError;
 pub use features::{FEATURES, LINKS_CAPABILITY, PROBE_CAPABILITY, is_feature};
 pub use frame::{FRAME_HEADER_LEN, FRAME_VERSION, Frame, FrameKind, decode, encode};
@@ -89,11 +91,14 @@ pub use limits::{
     MAX_CREDIT, MAX_FRAME_PAYLOAD, MAX_PENDING_HANDSHAKES, MAX_STREAMS, MAX_VALUE_DEPTH,
 };
 pub use link::{ClientConfig, Link, OpenStream, Prober, RemoteMessage, RemoteStream};
-pub use links::{LinkEntry, LinkTable, MAX_LINK_FIELD_BYTES, MAX_LINK_TABLE_ENTRIES};
+pub use links::{
+    LinkEntry, LinkState, LinkTable, LinkTransport, MAX_LINK_FIELD_BYTES, MAX_LINK_TABLE_ENTRIES,
+};
 pub use message::{ActRequest, AdaptRequest, Message, RemoteQuery, decode_message, encode_message};
 pub use service::{
     RemoteService, ServerAuthorization, ServerConfig, StreamResponder, handshake_timeout_refusal,
-    refuse, serve,
+    refuse, refuse_by, serve,
 };
+pub use store_file::STORE_LOCK_WAIT;
 pub use transport::{Transport, UnauthenticatedTransport};
 pub use trust::{Fingerprint, HostKey, TrustDecision, TrustEntry, TrustPolicy, TrustStore};

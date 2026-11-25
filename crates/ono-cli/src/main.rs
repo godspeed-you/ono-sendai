@@ -119,6 +119,22 @@ fn main() -> ExitCode {
             let mut declared = Vec::new();
             for link in &agent_options.links {
                 match ono_cli::agent_links::Declared::parse(link) {
+                    // A held link's table entry and its measurements are keyed by its name, so
+                    // one name for two links would be one entry reporting two hosts (review COR-7).
+                    Ok(link)
+                        if declared
+                            .iter()
+                            .any(|held: &ono_cli::agent_links::Declared| {
+                                held.name == link.name
+                            }) =>
+                    {
+                        ono_core::diagnostic!(
+                            "{}: --link names `{}` twice; each held link needs a name of its own",
+                            ono_core::SHORT_NAME,
+                            link.name
+                        );
+                        return ExitCode::from(ExitStatus::USAGE);
+                    }
                     Ok(link) => declared.push(link),
                     Err(usage) => {
                         ono_core::diagnostic!("{}: {usage}", ono_core::SHORT_NAME);
@@ -135,6 +151,16 @@ fn main() -> ExitCode {
                 );
                 return ExitCode::from(ExitStatus::USAGE);
             }
+            // Before any link is held: an agent that refuses its configuration must not already
+            // have dialled anybody (§2.3, ADR-1042, review ARC-12).
+            let limits = if agent_options.listen.is_some() {
+                let Some(limits) = configured_limits(&options) else {
+                    return ExitCode::from(ExitStatus::FAILURE);
+                };
+                Some(limits)
+            } else {
+                None
+            };
             let held = if declared.is_empty() {
                 ono_cli::agent_links::HeldLinks::none()
             } else {
@@ -161,9 +187,10 @@ fn main() -> ExitCode {
                 // `provider_capability` field `docs/contracts/commands/` already declares. A peer
                 // never says which capability it needs; this side resolves it (§65.2).
                 let config = with_action_capabilities(config);
-                // Before the store and the socket: a ceiling the agent cannot apply as written
-                // must stop it before it is reachable (§2.3, §55.2, ADR-1042).
-                let Some(limits) = configured_limits(&options) else {
+                // Read above, before the store, the socket and every held link: a ceiling the
+                // agent cannot apply as written stops it before it is reachable (§2.3, §55.2,
+                // ADR-1042).
+                let Some(limits) = limits else {
                     return ExitCode::from(ExitStatus::FAILURE);
                 };
                 return runtime.block_on(serve_authenticated(
@@ -459,18 +486,26 @@ fn print_startup_summary(
     // §8.2 rule 5: `--host-key` may name a key other than the one every direct link from this
     // machine presents. That is allowed (ADR-0435) and must not be silent (ADR-1045). Only an
     // existing link identity is compared; none is created for the purpose.
-    if explicit_identity
-        && let Some(link) = config_directory()
-            .and_then(|directory| ono_cli::trust::existing_link_identity(&directory))
-        && link.fingerprint() != identity.fingerprint()
-    {
-        ono_core::diagnostic!(
-            "{name}: link identity {} ({}) differs from the host key this agent presents; a \
-             peer that pinned one is refused by the other",
-            link.fingerprint(),
-            link.path()
-                .map_or_else(String::new, |path| path.display().to_string())
-        );
+    if explicit_identity && let Some(directory) = config_directory() {
+        match ono_cli::trust::read_link_identity(&directory) {
+            Ok(Some(link)) if link.fingerprint() != identity.fingerprint() => {
+                ono_core::diagnostic!(
+                    "{name}: link identity {} ({}) differs from the host key this agent \
+                     presents; a peer that pinned one is refused by the other",
+                    link.fingerprint(),
+                    link.path()
+                        .map_or_else(String::new, |path| path.display().to_string())
+                );
+            }
+            Ok(_) => {}
+            // Unreadable is not "the same": the operator is told the comparison was not made.
+            Err(refusal) => ono_core::diagnostic!(
+                "{name}: link identity at {} could not be compared with the host key this agent \
+                 presents: {}",
+                directory.join(ono_cli::trust::LINK_IDENTITY_FILE).display(),
+                refusal.message()
+            ),
+        }
     }
     ono_core::diagnostic!(
         "{name}: authorization store {}",
@@ -516,7 +551,12 @@ fn print_startup_summary(
 fn configured_limits(options: &ono_cli::invocation::Options) -> Option<ono_protocol::Limits> {
     let reporter = Reporter::new(Presentation::choose(std::io::stderr().is_terminal(), &[]));
     let mut session = Session::new(false);
-    let problems = config::load_settings(&mut session, options, &reporter);
+    let mut problems = config::load_settings(&mut session, options, &reporter);
+    // `--no-config` leaves the files out; the environment's ceilings still hold, as they did
+    // before the files were read at all (ADR-1042, review COR-R1).
+    if options.no_config {
+        problems.extend(config::load_environment(&mut session, &reporter));
+    }
     if !problems.is_empty() {
         let name = ono_core::SHORT_NAME;
         ono_core::diagnostic!(
@@ -529,7 +569,8 @@ fn configured_limits(options: &ono_cli::invocation::Options) -> Option<ono_proto
         }
         ono_core::diagnostic!(
             "{name}: fix the setting named above, or start with `ono --no-config --agent \
-             --listen` to use the built-in ceilings deliberately"
+             --listen` to leave the configuration files out deliberately (the `ONO_LIMITS_REMOTE_*` \
+             variables still apply)"
         );
         return None;
     }

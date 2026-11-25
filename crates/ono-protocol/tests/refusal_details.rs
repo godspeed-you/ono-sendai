@@ -175,6 +175,40 @@ async fn should_tell_an_unauthorized_client_that_the_agent_lists_somebody_else()
 }
 
 #[tokio::test]
+async fn should_tell_an_emptied_store_apart_from_one_that_lists_somebody_else() {
+    // `remove client-key` of the last client leaves the file with its header and nobody in it.
+    // That store authorizes nobody — the agent's own startup line says "no client is authorized
+    // yet" — so the refusal says so too, exactly as for a store that was never written (review
+    // COR-R3; the exit criterion of #182 is "an empty store" against "a store that lists
+    // somebody else").
+    let home = common::scratch();
+    let path = home.write(
+        "authorized_clients",
+        "# ono authorized clients: one line per client key, strictly parsed.\n",
+    );
+    let emptied = AuthorizedClients::open(&path).expect("an emptied store reads");
+    let refused = try_connect_proving(
+        client_config("testhost"),
+        server_config().with_authorization(ServerAuthorization::Store(Arc::new(emptied))),
+        Some(other_client_key()),
+    )
+    .await
+    .err()
+    .expect("§59.1: an unlisted client is refused");
+
+    assert_eq!(
+        refused.metadata().get("store_present"),
+        Some(&Value::Bool(false)),
+        "a store that authorizes nobody is not a list somebody is on, got {refused:?}"
+    );
+    assert!(
+        refused.message().contains("no client is authorized yet"),
+        "the sentence says it as the startup line does, got {}",
+        refused.message()
+    );
+}
+
+#[tokio::test]
 async fn should_carry_exactly_the_keys_the_contract_lets_cross_the_wire() {
     // Every refusal of the census, sent by the agent's pre-negotiation refusal path with every
     // key it explains *and* one it does not, arrives with exactly its `over_the_wire` keys. A
@@ -199,6 +233,20 @@ async fn should_carry_exactly_the_keys_the_contract_lets_cross_the_wire() {
                 Value::string("/home/operator/.config/ono/authorized_clients"),
             )
             .with_metadata("private_key", Value::string("-----BEGIN PRIVATE KEY-----"));
+
+        // The agent's half, observed on the wire (review TST-4): the client below filters what
+        // it reads, so a peer reading the raw `Reject` is the one that shows what the agent
+        // let cross.
+        let written = raw_details(error.clone()).await;
+        assert_eq!(
+            written,
+            row.over_the_wire
+                .iter()
+                .cloned()
+                .collect::<BTreeSet<String>>(),
+            "refusals.yaml `{}`: the agent writes exactly the `over_the_wire` keys",
+            row.error
+        );
 
         let (near, far) = tokio::io::duplex(64 * 1024);
         let agent = tokio::spawn(async move {
@@ -381,4 +429,61 @@ async fn should_send_a_refusal_an_older_client_still_reads() {
         serde_json::from_slice(frame.payload()).expect("an older client parses the refusal");
     assert_eq!(older.code, "remote.unauthorized");
     assert_eq!(older.message, "refused for the test");
+}
+
+#[tokio::test]
+async fn should_keep_no_more_of_a_hostile_refusal_sentence_than_its_bound() {
+    // Review SEC-5: `details` is bounded by the census; the sentence was bounded only by the
+    // frame limit, a mebibyte a client then renders. It is cut at its bound when read.
+    let sentence = "é".repeat(4096);
+    let payload = format!(r#"{{"code":"remote.unauthorized","message":"{sentence}"}}"#);
+    let refused = refused_with(payload.as_bytes()).await;
+    assert_eq!(refused.code(), ErrorCode::RemoteUnauthorized);
+    assert!(
+        refused.message().len() <= ono_protocol::MAX_REFUSAL_MESSAGE + '…'.len_utf8(),
+        "the sentence is cut at its bound, got {} bytes",
+        refused.message().len()
+    );
+    assert!(refused.message().ends_with('…'), "and says it was cut");
+}
+
+/// The `details` keys of the `Reject` the agent's refusal path writes for `error`, read off the
+/// wire by a peer that says hello and then reads raw bytes.
+async fn raw_details(error: ErrorValue) -> BTreeSet<String> {
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+    let (mut near, far) = tokio::io::duplex(64 * 1024);
+    let agent = tokio::spawn(async move {
+        ono_protocol::refuse(
+            UnauthenticatedTransport::new(far),
+            &error,
+            &Limits::default(),
+        )
+        .await
+    });
+    let mut hello = BytesMut::new();
+    ono_protocol::encode(
+        &Frame::new(FrameKind::Hello, 0, b"{}".to_vec()),
+        &Limits::default(),
+        &mut hello,
+    )
+    .expect("a frame");
+    near.write_all(&hello).await.expect("hello is written");
+    near.shutdown().await.expect("the peer hangs up its side");
+    let mut wire = Vec::new();
+    within(near.read_to_end(&mut wire))
+        .await
+        .expect("the refusal is read");
+    let _ = within(agent).await;
+    let mut buffer = BytesMut::from(&wire[..]);
+    let frame = ono_protocol::decode(&mut buffer, &Limits::default())
+        .expect("a frame")
+        .expect("one whole frame");
+    assert_eq!(frame.kind(), FrameKind::Reject);
+    let document: serde_json::Value =
+        serde_json::from_slice(frame.payload()).expect("the Reject is JSON");
+    document
+        .get("details")
+        .and_then(serde_json::Value::as_object)
+        .map(|details| details.keys().cloned().collect())
+        .unwrap_or_default()
 }

@@ -525,7 +525,10 @@ async fn should_drop_a_handshake_that_has_not_completed_within_the_timeout() {
     let agent = listening(
         ono_protocol::Limits::default()
             .with_max_pending_handshakes(1)
-            .with_handshake_timeout(std::time::Duration::from_millis(200)),
+            // Since the deadline runs from accept and covers TLS *and* the hello (ADR-1057, as
+            // amended), the legitimate client below must fit both into it: 200 ms did not on a
+            // loaded two-core host. Two seconds still makes the silent peer the one let go.
+            .with_handshake_timeout(std::time::Duration::from_secs(2)),
         &[&client],
     )
     .await;
@@ -751,8 +754,9 @@ async fn should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revo
     // A client the store *never* listed is not a grant being withdrawn: it is being refused, and
     // §54.1 and §59.9 want that refusal to arrive. The interleaving that lost it on a loaded
     // machine — the sweep running between the peer's TLS handshake and its `Hello` — is forced
-    // here rather than waited for: the stranger is admitted and holds its connection until a
-    // sweep has provably run over it.
+    // here rather than waited for: the stranger holds its connection until a sweep has provably
+    // run. Since review SEC-3 a stranger is refused before it is admitted, so it waits holding
+    // the pending-handshake slot, never a live one the sweep could close.
     let doomed = PeerIdentity::generate().expect("a client identity is generated");
     let kept = PeerIdentity::generate().expect("a client identity is generated");
     let stranger = PeerIdentity::generate().expect("an identity nobody authorized");
@@ -761,9 +765,10 @@ async fn should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revo
     let pending = within(tls_connect(&agent.address, &stranger))
         .await
         .expect("mutual TLS completes: the stranger's key is real, only nobody authorized it");
-    until("the stranger is admitted and waiting to say hello", || {
-        agent.connections.live() == 1
-    })
+    until(
+        "the stranger is waiting to say hello, and is not admitted",
+        || agent.connections.pending() == 1 && agent.connections.live() == 0,
+    )
     .await;
 
     // A grant that really is withdrawn, so the sweep has something to do and says that it did.
@@ -903,4 +908,134 @@ async fn should_tell_a_client_whose_handshake_timed_out_that_it_did() {
         "§14.1: the agent's record names the authenticated peer it gave up on, got {:?}",
         agent.audit.lines()
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_not_let_unknown_keys_that_never_say_hello_lock_an_authorized_client_out() {
+    // Review SEC-3. Any TLS peer with a fresh self-signed key completes mutual TLS; if it is
+    // admitted to the live ceiling before the store is asked, enough of them that never say
+    // hello hold every live slot and an authorized client is refused. Authorization is decided
+    // from the store right after TLS, before admission, so an unknown key only ever holds a
+    // pending-handshake slot, which it held for TLS anyway.
+    let authorized = PeerIdentity::generate().expect("a client identity is generated");
+    let agent = listening(
+        ono_protocol::Limits::default()
+            .with_max_connections(2)
+            .with_max_pending_handshakes(64)
+            .with_handshake_timeout(std::time::Duration::from_secs(20)),
+        &[&authorized],
+    )
+    .await;
+
+    let mut silent = Vec::new();
+    for _ in 0..32 {
+        let stranger = PeerIdentity::generate().expect("an unknown identity is generated");
+        silent.push(
+            within(tls_connect(&agent.address, &stranger))
+                .await
+                .expect("mutual TLS completes for any key"),
+        );
+    }
+    until(
+        "the agent has taken all 32 strangers' TLS handshakes",
+        || {
+            agent.connections.pending() + agent.connections.live() >= 32
+                || agent.connections.live() >= 2
+        },
+    )
+    .await;
+
+    let link = within(link(&agent, &authorized))
+        .await
+        .expect("strangers that never said hello do not hold the authorized client's slot");
+    assert!(still_serves(&link).await);
+    drop(silent);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_give_the_hello_only_what_the_tls_handshake_left_of_the_one_deadline() {
+    // v0.4.1 §12.2: "A peer that does not complete TLS plus Ono protocol negotiation within the
+    // timeout MUST be disconnected." One deadline, started at accept: a peer that spends most of
+    // it in TLS has only the rest for its `Hello` (review ARC-4, SEC-3). The network between the
+    // two ends holds the client's TLS bytes for 1.5 s of a 2 s deadline; the client then says
+    // hello 1 s after TLS — inside a fresh deadline, past the one it was given.
+    let client = PeerIdentity::generate().expect("a client identity is generated");
+    let agent = listening(
+        ono_protocol::Limits::default().with_handshake_timeout(std::time::Duration::from_secs(2)),
+        &[&client],
+    )
+    .await;
+    let slow = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a loopback relay binds");
+    let relay = slow.local_addr().expect("bound").to_string();
+    let upstream = agent.address.clone();
+    let relaying = tokio::spawn(async move {
+        let (inbound, _) = slow.accept().await.expect("the client reaches the relay");
+        let outbound = tokio::net::TcpStream::connect(&upstream)
+            .await
+            .expect("the relay reaches the agent");
+        let (mut from_client, mut to_client) = inbound.into_split();
+        let (mut from_agent, mut to_agent) = outbound.into_split();
+        let back = tokio::spawn(async move {
+            let _ = tokio::io::copy(&mut from_agent, &mut to_client).await;
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+        let _ = tokio::io::copy(&mut from_client, &mut to_agent).await;
+        let _ = back.await;
+    });
+
+    let late = within(tls_connect(&relay, &client))
+        .await
+        .expect("mutual TLS completes, slowly");
+    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    let refused = within(negotiate(&agent, late))
+        .await
+        .expect_err("the hello came after the one deadline");
+    assert_eq!(
+        refused.code(),
+        ErrorCode::RemoteHandshakeTimeout,
+        "§12.2: TLS and the Ono negotiation share one deadline, got {refused:?}"
+    );
+    relaying.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_refuse_promptly_a_stranger_that_says_hello_after_its_deadline() {
+    // A key nobody authorized completes TLS, is not admitted, and says hello only after the one
+    // deadline it was given has passed (ADR-1057 amended). It is told so, or finds the
+    // connection closed — promptly, never a hang.
+    let stranger = PeerIdentity::generate().expect("an identity nobody authorized");
+    let agent = listening(
+        ono_protocol::Limits::default()
+            .with_handshake_timeout(std::time::Duration::from_millis(500)),
+        &[],
+    )
+    .await;
+    for wait in [600_u64, 1_200] {
+        let pending = within(tls_connect(&agent.address, &stranger))
+            .await
+            .expect("mutual TLS completes");
+        // Waiting is the case here: past the deadline (600 ms), and past the refusal's own bound
+        // too (1.2 s), which is when the agent has let the socket go.
+        tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+        let started = std::time::Instant::now();
+        let refused = within(negotiate(&agent, pending))
+            .await
+            .expect_err("a stranger past its deadline is not linked");
+        assert!(
+            matches!(
+                refused.code(),
+                ErrorCode::RemoteUnauthorized
+                    | ErrorCode::RemoteHandshakeTimeout
+                    | ErrorCode::RemoteUnreachable
+            ),
+            "refused or closed, got {refused:?}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "promptly, not after a hang: {:?}",
+            started.elapsed()
+        );
+    }
 }

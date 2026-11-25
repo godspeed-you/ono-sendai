@@ -51,6 +51,9 @@ pub struct Federation {
 enum Told {
     Listed(ono_protocol::LinkTable),
     Refused(ErrorValue),
+    /// The far side's handshake did not offer the request: decided here, from what this side
+    /// negotiated, never from text the far side wrote (review SEC-12).
+    NotOffered(ErrorValue),
     NotAsked(&'static str),
 }
 
@@ -102,6 +105,12 @@ pub async fn second_hop(
                     .push(report(link, refusal_status(&error), None, Some(&error)));
                 continue;
             }
+            Told::NotOffered(error) => {
+                federation
+                    .report
+                    .push(report(link, "not_offered", None, Some(&error)));
+                continue;
+            }
             Told::NotAsked(reason) => {
                 federation
                     .report
@@ -117,11 +126,7 @@ pub async fn second_hop(
             &link.name,
             ono_spatial_core::BootIdentity::unknown_boot(&link.name),
         );
-        let observed = table
-            .observed_at
-            .as_deref()
-            .and_then(|at| at.parse::<Timestamp>().ok())
-            .unwrap_or(now);
+        let observed = table.observed_at.unwrap_or(now);
         for entry in &table.links {
             let (target, joins) = place_of(entry, link, hop1, center, own, &mut drawn);
             if let Some(place) = joins {
@@ -146,7 +151,7 @@ pub async fn second_hop(
 #[cfg(feature = "remote")]
 async fn ask(prober: &crate::spatial::links::Prober) -> Told {
     if !prober.offers_links() {
-        return Told::Refused(ErrorValue::new(
+        return Told::NotOffered(ErrorValue::new(
             ono_core::ErrorCode::RemoteProtocolMismatch,
             format!(
                 "the far side does not offer `{}`",
@@ -172,12 +177,6 @@ fn refusal_status(error: &ErrorValue) -> &'static str {
         ErrorCode::RemoteCapabilityDenied
         | ErrorCode::RemoteUnauthorized
         | ErrorCode::RemoteUnauthenticated => "not_permitted",
-        ErrorCode::RemoteProtocolMismatch
-            if error.metadata().get("capability").is_some()
-                || error.message().contains("does not offer") =>
-        {
-            "not_offered"
-        }
         _ => "unavailable",
     }
 }
@@ -253,10 +252,13 @@ fn place_of(
         &name,
         ono_spatial_core::BootIdentity::unknown_boot(&name),
     );
-    ono_spatial_core::space::learn(&scope);
+    // Learned within a bound: a hostile peer answering every map with fresh names must not grow
+    // a long-lived shell's geography for ever (review SEC-7).
+    ono_spatial_core::space::learn_reported(&scope);
     let root = space::root().spatial_id_in(Some(&scope));
     drawn.insert(key, root.clone());
-    let place = HorizonPlace::new(root.clone(), 2, None).in_state(Some(entry.state.clone()));
+    let place =
+        HorizonPlace::new(root.clone(), 2, None).in_state(Some(entry.state.as_str().to_owned()));
     (root, Some(place))
 }
 
@@ -276,7 +278,7 @@ fn edge(
     let relation = ono_spatial_core::relation::spec("host.linked_to")
         .map(ono_spatial_core::RelationSpec::relation_type)
         .unwrap_or_else(|| unreachable!("`host.linked_to` is declared in relations.yaml"));
-    let claimed = if entry.state == "connected" {
+    let claimed = if entry.state == ono_protocol::LinkState::Connected {
         "exact"
     } else {
         "user_declared"
@@ -311,8 +313,8 @@ fn edge(
     .with_attribute("verified", Value::Bool(false))
     .with_attribute("far_name", Value::string(&entry.name))
     .with_attribute("far_host", Value::string(&entry.host))
-    .with_attribute("transport", Value::string(&entry.transport))
-    .with_attribute("state", Value::string(&entry.state))
+    .with_attribute("transport", Value::string(entry.transport.as_str()))
+    .with_attribute("state", Value::string(entry.state.as_str()))
     .with_attribute("fingerprint", text(entry.fingerprint.as_ref()))
     .with_attribute("boot_id", text(entry.boot_id.as_ref()))
     .with_attribute("round_trip", nanos(entry.round_trip_ns))
@@ -322,4 +324,23 @@ fn edge(
         "back_to_this_host",
         Value::Bool(entry.fingerprint.is_some() && entry.fingerprint.as_deref() == own),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn should_not_take_a_far_sides_words_for_a_status_this_side_decides() {
+        // Review SEC-12: "not offered" is what this side's handshake negotiated. A far side that
+        // refuses with a sentence that merely says so is a refusal, not a missing feature.
+        let worded = ErrorValue::new(
+            ono_core::ErrorCode::RemoteProtocolMismatch,
+            "the far side does not offer `ono.link.links/1`",
+        )
+        .with_metadata("capability", Value::string("ono.link.links/1"));
+        assert_eq!(refusal_status(&worded), "unavailable");
+        let denied = ErrorValue::new(ono_core::ErrorCode::RemoteCapabilityDenied, "no");
+        assert_eq!(refusal_status(&denied), "not_permitted");
+    }
 }

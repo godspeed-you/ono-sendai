@@ -1031,29 +1031,22 @@ fn link_record(link: &LinkRow, schema: &Arc<Schema>) -> Result<RecordValue, Erro
 
 /// The streams the link carries right now, read when the table is read (#219 (b), ADR-1099):
 /// null where no agent link carries any — a definition, or the agentless fallback.
+#[cfg(feature = "remote")]
 fn streams_of(link: &LinkRow) -> Value {
-    #[cfg(feature = "remote")]
-    {
-        let Some(prober) = link.prober.as_ref().filter(|_| link.state == "connected") else {
-            return Value::Null;
-        };
-        Value::list(prober.open_streams().into_iter().map(|stream| {
-            let mut fields = ono_value::MapValue::new();
-            fields.insert("id".into(), Value::Int(i128::from(stream.id)));
-            fields.insert("kind".into(), Value::string(stream.kind));
-            fields.insert(
-                "target".into(),
-                stream.target.as_deref().map_or(Value::Null, Value::string),
-            );
-            fields.insert("opened_at".into(), Value::Timestamp(stream.opened_at));
-            Value::Map(Arc::new(fields))
-        }))
-    }
-    #[cfg(not(feature = "remote"))]
-    {
-        let _ = link;
-        Value::Null
-    }
+    let Some(prober) = link.prober.as_ref().filter(|_| link.state == "connected") else {
+        return Value::Null;
+    };
+    Value::list(prober.open_streams().into_iter().map(|stream| {
+        let mut fields = ono_value::MapValue::new();
+        fields.insert("id".into(), Value::Int(i128::from(stream.id)));
+        fields.insert("kind".into(), Value::string(stream.kind));
+        fields.insert(
+            "target".into(),
+            stream.target.as_deref().map_or(Value::Null, Value::string),
+        );
+        fields.insert("opened_at".into(), Value::Timestamp(stream.opened_at));
+        Value::Map(Arc::new(fields))
+    }))
 }
 
 #[cfg(feature = "remote")]
@@ -1093,8 +1086,9 @@ fn host_record(
 
 /// What a host's reachability is, as far as this session can tell without dialling it
 /// (ADR-1096).
+#[cfg(feature = "remote")]
 struct Reachability {
-    /// `reachable`, `unreachable`, `unauthorized` or `unknown`.
+    /// `reachable`, `unreachable` or `unknown`.
     state: &'static str,
     /// Why — the evidence, or why there is none.
     reason: String,
@@ -1106,9 +1100,9 @@ struct Reachability {
 ///
 /// Transport reachability is not authorization, and neither is a missing answer: a probe that
 /// was answered is `reachable`; one that was not answered in time, or a link that failed, is
-/// `unreachable`; a probe the far side refused as not authorized is `unauthorized`; everything
-/// else — no link held, a link not established or not followed, a far side that offers no probe
-/// — is `unknown`, with the reason. Nothing here dials a host.
+/// `unreachable`; everything else — no link held, a link not established or not followed, a far
+/// side that offers no probe, a probe that failed for another reason — is `unknown`, with the
+/// reason. Nothing here dials a host.
 #[cfg(feature = "remote")]
 fn reachability(held: Option<&LinkRow>) -> Reachability {
     use crate::spatial::links::LatencyStatus;
@@ -1174,19 +1168,6 @@ fn reachability(held: Option<&LinkRow>) -> Reachability {
             ono_protocol::PROBE_CAPABILITY
         )),
         LatencyStatus::Unavailable => match failure {
-            Some(
-                code @ (ErrorCode::RemoteUnauthorized
-                | ErrorCode::RemoteUnauthenticated
-                | ErrorCode::RemoteCapabilityDenied),
-            ) => Reachability {
-                state: "unauthorized",
-                reason: format!(
-                    "the far side of `{}` answered, and refused the probe: {}",
-                    link.name,
-                    code.name()
-                ),
-                since,
-            },
             Some(ErrorCode::RemoteUnreachable) => Reachability {
                 state: "unreachable",
                 reason: format!("the link `{}` failed: the far side is gone", link.name),

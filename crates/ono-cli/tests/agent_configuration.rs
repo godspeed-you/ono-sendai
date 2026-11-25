@@ -189,6 +189,29 @@ fn should_read_no_configuration_file_when_told_not_to() {
 }
 
 #[test]
+fn should_keep_the_environments_ceilings_when_told_to_read_no_configuration_file() {
+    // v0.6.5's listener read the `ONO_LIMITS_REMOTE_*` variables whatever `--no-config` said, and
+    // the advice the agent gives on a configuration it cannot read is `--no-config`: dropping an
+    // operator's tighter ceiling there would widen the listener with no word (review COR-R1,
+    // v0.4.1 §55.2). `--no-config` leaves the files out; the environment still applies.
+    let home = scratch();
+    configure(&home, "set config limits.remote_connections = 3\n");
+
+    let agent = agent(
+        &home,
+        &["--no-config"],
+        &[("ONO_LIMITS_REMOTE_CONNECTIONS", "1")],
+    );
+
+    assert_eq!(
+        agent.field("maximum connections"),
+        Some("1"),
+        "the environment's ceiling holds under `--no-config`, the file's does not, got:\n{}",
+        agent.said()
+    );
+}
+
+#[test]
 fn should_refuse_to_listen_when_the_configuration_file_sets_a_ceiling_out_of_range() {
     let home = scratch();
     configure(&home, "set config limits.remote_connections = 0\n");
@@ -280,4 +303,68 @@ fn should_describe_the_remote_ceilings_as_enforced_by_the_listening_agent() {
              and its description says so rather than promising a later phase, got {said:?}"
         );
     }
+}
+
+/// Runs `ono --agent --listen 127.0.0.1:0 <after…>` in `home` to its end, and what it said.
+fn agent_to_its_end(home: &Scratch, after: &[&str]) -> (std::process::ExitStatus, String) {
+    // Bounded: an agent that wrongly accepts what it is given would listen for ever.
+    let output = Command::new("timeout")
+        .args(["-s", "KILL", "20"])
+        .arg(binary())
+        .args(["--agent", "--listen", "127.0.0.1:0"])
+        .args(after)
+        .env("HOME", home.path())
+        .env("XDG_CONFIG_HOME", home.path())
+        .env_remove("ONO_CONFIG")
+        .env_remove("ONO_CONFIG_DIR")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("the agent runs");
+    (
+        output.status,
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn should_refuse_two_held_links_of_one_name_as_a_usage_error() {
+    // Review COR-7: a name is what a held link's table entry and its measurements are keyed by;
+    // two links under one name would be one entry reporting two hosts.
+    let home = scratch();
+    let (status, said) = agent_to_its_end(
+        &home,
+        &["--link", "a=127.0.0.1:1", "--link", "a=127.0.0.1:2"],
+    );
+    assert_eq!(
+        status.code(),
+        Some(2),
+        "a usage error, got {status:?}: {said}"
+    );
+    assert!(
+        said.contains("`a`"),
+        "the refusal names the name given twice, got {said}"
+    );
+}
+
+#[test]
+fn should_dial_no_held_link_before_its_configuration_is_known_to_be_usable() {
+    // Review ARC-12: an agent that refuses its configuration must not already have dialled the
+    // links it was told to hold. The next hop here is a listener the test owns.
+    let next_hop = std::net::TcpListener::bind("127.0.0.1:0").expect("a listener");
+    next_hop.set_nonblocking(true).expect("non-blocking");
+    let port = next_hop.local_addr().expect("bound").port();
+    let home = scratch();
+    configure(&home, "set config limits.remote_connections = 0\n");
+
+    let (status, said) = agent_to_its_end(&home, &["--link", &format!("hop=127.0.0.1:{port}")]);
+    assert!(
+        !status.success(),
+        "the configuration is refused, got {said}"
+    );
+    assert!(
+        matches!(next_hop.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+        "nothing was dialled: {said}"
+    );
 }

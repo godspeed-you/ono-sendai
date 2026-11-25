@@ -106,11 +106,15 @@ fields:
     nullable: true
     doc: >-
       What `map links --connections` found (v0.4 §14.5, §19.4, ADR-1098). An entry with `subject:
-      link` says what one link let this session read — `status` `read`, `not_permitted`,
-      `unavailable` or `not_asked`, with `reason`. An entry with `subject: connection` names a
-      connection of this host (`connection`, `tcp <local> → <remote>`) that was `correlated` — one
-      link, drawn as a `connection.reaches_host` edge — or `ambiguous` — several links on the same
-      evidence, none picked and no edge drawn — with its `basis` (`two_sided` or `address`) and
-      `links`. Null for every map that did not ask.
+      link` says what one link let this session read — `status` `read`, `partial` (a table cut at
+      its bound or failed part way: what it did not show cannot be excluded), `not_permitted`,
+      `unavailable` or `not_asked`, with `reason`. An entry with `subject: this host` says this
+      host's own connection table was `unavailable` or `partial`. An entry with `subject:
+      connection` names a connection of this host (`connection`, `tcp <local> → <remote>`) that
+      was `correlated` — one link, drawn as a `connection.reaches_host` edge — or `ambiguous` —
+      several links on the same evidence, or one while another link's table is partial; none
+      picked and no edge drawn — with its `basis` (`two_sided` or `address`), `links`, and
+      `partial` (the candidate links whose tables were partial). Null for every map that did not
+      ask.
 default_view:
   columns: [center, zoom_level, completeness, generated_at]

@@ -233,3 +233,138 @@ async fn should_tell_a_holder_when_its_link_is_gone() {
     within(fixture.link.closed()).await;
     assert!(!fixture.link.is_alive());
 }
+
+#[tokio::test]
+async fn should_forget_a_probe_whose_caller_went_away_and_drop_its_late_answer() {
+    // A dropped probe future (a Ctrl-C during `look`) must take its stream with it, and the late
+    // answer must be dropped as a frame that crossed with a cancellation — not fail the whole
+    // link as a credit overrun (review PRF-1). The probe is answered in the agent's own loop, in
+    // order, so the late answer reaches the client before the next probe's does.
+    let tapped = tap::connect(
+        client_config("testhost"),
+        probing_agent(),
+        DemoService::new(Arc::new(Observed::default())),
+    )
+    .await
+    .expect("the handshake succeeds");
+    tapped.tap.drop_kind(FrameKind::Probe);
+    let id = {
+        let probing = tapped.link.probe(Duration::from_secs(5));
+        tokio::pin!(probing);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), probing.as_mut())
+                .await
+                .is_err(),
+            "nothing has answered yet"
+        );
+        let open = tapped.link.open_streams();
+        assert_eq!(open.len(), 1, "the probe holds one stream, got {open:?}");
+        open[0].id
+    };
+    assert!(
+        tapped.link.open_streams().is_empty(),
+        "a probe nobody waits for any more leaves no stream behind, got {:?}",
+        tapped.link.open_streams()
+    );
+
+    tapped
+        .tap
+        .inject(Frame::new(FrameKind::Probe, id, b"null".to_vec()));
+    tapped.tap.pass_kind(FrameKind::Probe);
+    for _ in 0..2 {
+        within(tapped.link.probe(Duration::from_secs(5)))
+            .await
+            .expect("the link survived the late answer and is probed again");
+    }
+    assert!(tapped.link.is_alive());
+}
+
+#[tokio::test]
+async fn should_end_the_connection_of_a_peer_that_asks_for_probes_and_never_reads_the_answers() {
+    // A probe costs the peer nothing to ask and is answered without credit. A peer that asks and
+    // never reads would grow the agent's outbound queue without limit (review PRF-2, SEC-1): the
+    // answers it leaves unread count against an allowance, and past it the agent ends the
+    // connection with a structured refusal and an audit record (ADR-1115).
+    let audit = Arc::new(common::Recording::default());
+    let tapped = tap::connect_through(
+        client_config("testhost"),
+        probing_agent().with_audit(audit.clone()),
+        DemoService::new(Arc::new(Observed::default())),
+        None,
+        1024,
+    )
+    .await
+    .expect("the handshake succeeds");
+    tapped.tap.hold_answers();
+    let asked = u32::try_from(ono_protocol::MAX_UNCREDITED_FRAMES).expect("fits") + 256;
+    for id in 0..asked {
+        tapped.tap.inject(Frame::new(
+            FrameKind::Probe,
+            1_000_000 + id * 2,
+            b"null".to_vec(),
+        ));
+    }
+    let outcome = within(tapped.server)
+        .await
+        .expect("the serving task does not panic");
+    let refusal = outcome.expect_err("the agent ends a connection that does not read its answers");
+    assert_eq!(refusal.code(), ErrorCode::RemoteProtocolMismatch);
+    assert!(
+        refusal.message().contains("unread"),
+        "the refusal names the bound, got {}",
+        refusal.message()
+    );
+    assert!(
+        audit
+            .lines()
+            .iter()
+            .any(|line| line.contains("connection.limit_denied")),
+        "the agent records why it ended the connection, got {:?}",
+        audit.lines()
+    );
+}
+
+#[tokio::test]
+async fn should_let_go_of_a_peer_that_stops_reading_once_the_session_has_ended() {
+    // The writer must not hold the socket for a peer that stopped reading after the session it
+    // belonged to has ended (review SEC-2): what is still queued gets the handshake timeout to
+    // leave, then the socket is dropped and the rest is never written.
+    let limits = ono_protocol::Limits::default().with_handshake_timeout(Duration::from_millis(300));
+    let tapped = tap::connect_through(
+        client_config("testhost"),
+        probing_agent().with_limits(limits),
+        DemoService::new(Arc::new(Observed::default())),
+        None,
+        1024,
+    )
+    .await
+    .expect("the handshake succeeds");
+    let before = tapped.tap.delivered();
+    tapped.tap.hold_answers();
+    // Far more answers than the 1 KiB the socket holds, far fewer than the allowance.
+    let asked: u32 = 400;
+    for id in 0..asked {
+        tapped.tap.inject(Frame::new(
+            FrameKind::Probe,
+            1_000_000 + id * 2,
+            b"null".to_vec(),
+        ));
+    }
+    tapped.tap.hang_up();
+    within(tapped.server)
+        .await
+        .expect("the serving task does not panic")
+        .expect("a caller that hangs up ends the session cleanly");
+    // Past the writer's last deadline the client reads again, to the end of what the agent
+    // wrote.
+    tokio::time::sleep(Duration::from_millis(1_500)).await;
+    tapped.tap.release_answers();
+    within(tapped.tap.agent_closed()).await;
+    let answer = 12 + 4; // one `end` frame: header and a `null` payload
+    let delivered = tapped.tap.delivered() - before;
+    assert!(
+        delivered < asked as usize * answer,
+        "the writer let the socket go at its deadline instead of waiting for the peer to read \
+         all {asked} answers: {delivered} bytes reached it"
+    );
+}

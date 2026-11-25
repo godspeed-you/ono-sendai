@@ -543,11 +543,11 @@ built.
 ```text
 crates=48
 workspace_members=50
-tests=8009
+tests=8043
 tests_that_can_skip=125
 expected_ci_skips=16
 acceptance_cases=335
-adrs=758
+adrs=759
 command_contract_files=16
 commands=227
 stripped_bytes.kuang-compile.aarch64-unknown-linux-gnu=5591976

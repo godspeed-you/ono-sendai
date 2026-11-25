@@ -84,6 +84,7 @@ Refusal proved by:
 - `crates/ono-protocol/tests/authorization.rs::should_offer_only_the_capabilities_the_clients_policy_allows`
 - `crates/ono-protocol/tests/authorization.rs::should_leave_an_ungranted_action_capability_out_of_the_offer_the_provider_advertises`
 - `crates/ono-protocol/tests/link_table.rs::should_refuse_and_record_a_link_table_the_connection_may_not_observe`
+- `crates/ono-protocol/tests/probe.rs::should_end_the_connection_of_a_peer_that_asks_for_probes_and_never_reads_the_answers`
 
 ## `provider.act`
 

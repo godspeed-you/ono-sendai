@@ -322,3 +322,45 @@ fn should_refuse_to_pin_rather_than_overwrite_a_store_it_cannot_read() {
         "and the store it could not read is left exactly as it was"
     );
 }
+
+#[test]
+fn should_refuse_an_update_within_a_bound_while_another_account_holds_the_lock() {
+    // Review SEC-A: the update lock is taken on the store's directory, which any account that can
+    // open the directory can lock too. Holding it must not hang its owner's every update: past a
+    // bound the update is refused, naming the path, and nothing is written.
+    for store in [Store::Trust, Store::Authorization] {
+        let home = scratch();
+        let path = home.path().join(store.file_name());
+        store.add(&path, 0).expect("the first update lands");
+        let held = std::fs::File::open(home.path()).expect("the directory opens");
+        held.lock().expect("this test holds the lock");
+
+        let started = std::time::Instant::now();
+        let refused = store
+            .add(&path, 1)
+            .expect_err("an update does not wait for ever on a lock somebody else holds");
+        let waited = started.elapsed();
+        assert_eq!(
+            refused.code(),
+            ono_core::ErrorCode::IoBusy,
+            "got {refused:?}"
+        );
+        assert!(
+            refused
+                .message()
+                .contains(&home.path().display().to_string()),
+            "the refusal names the directory whose lock is held, got {}",
+            refused.message()
+        );
+        assert!(
+            waited < ono_protocol::STORE_LOCK_WAIT * 3,
+            "refused within the bound, waited {waited:?}"
+        );
+        drop(held);
+        assert_eq!(
+            store.fingerprints(&path).len(),
+            1,
+            "nothing was written while the lock was held"
+        );
+    }
+}

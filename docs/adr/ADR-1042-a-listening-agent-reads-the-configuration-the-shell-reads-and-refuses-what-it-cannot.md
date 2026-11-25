@@ -84,6 +84,17 @@ pending-handshake ceiling from `config.ono` closes the second connection),
 `should_describe_the_remote_ceilings_as_enforced_by_the_listening_agent`; and acceptance case
 `400-a-listening-agent-reads-its-ceilings-from-the-configuration-file`.
 
+**Amended in the v0.6.6 remediation (review COR-R1).** Rule 1's "`--no-config` before `--agent`
+reads none of them" made `--no-config` drop the `ONO_LIMITS_REMOTE_*` variables too — and v0.6.5's
+listener applied them unconditionally (ADR-0504: the environment was the only layer it read),
+while rule 3's own advice sends an operator to `--no-config`. An operator whose tighter ceiling
+lived in the environment was silently given Appendix A's wider figures. Now, for `--listen`,
+`--no-config` leaves the configuration *files* out and still applies the environment layer
+(`ono_cli::config::load_environment`), with rule 3's refusal for a variable it cannot read; the
+advice says so. The shell's own `--no-config`, which reads no layer at all, is unchanged: it is
+not a security ceiling, and widening nothing there needs no exception. Encoded by
+`crates/ono-cli/tests/agent_configuration.rs::should_keep_the_environments_ceilings_when_told_to_read_no_configuration_file`.
+
 ## Alternatives considered
 
 **Read only the `limits.remote_*` lines out of `config.ono`.** A small parser for

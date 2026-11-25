@@ -76,6 +76,19 @@ impl CommandImpl for Look {
             let json = arguments.flag("json");
             let now = Timestamp::now();
 
+            // §19.1: the link map at a root shows a latency, measured now rather than at the
+            // handshake — on demand, bounded and reused (ADR-1095). Deeper in, no link map is
+            // drawn and nothing is probed. The probe pass is made before the spatial session is
+            // taken, so no other command waits behind a peer that answers nothing (review ARC-2).
+            let at_root = {
+                let session = spatial_session().await;
+                ono_spatial_query::resolve::space_of(session.current_place())
+                    .is_some_and(|space| space.kind == ono_spatial_core::SpaceKind::Root)
+            };
+            if at_root && crate::spatial::historical::active().is_none() {
+                crate::spatial::links::measure().await;
+            }
+
             let mut session = spatial_session().await;
             let changes = window_of(arguments.option("changes"), session.preferences());
             with_pins(&mut session, self.pins.as_ref(), now).await?;
@@ -128,15 +141,6 @@ impl CommandImpl for Look {
                 } else {
                     None
                 };
-                // §19.1: the link map at a root shows a latency, measured now rather than at the
-                // handshake — on demand, bounded and reused (ADR-1095). Deeper in, no link map
-                // is drawn and nothing is probed.
-                let here = session.current_place().clone();
-                if ono_spatial_query::resolve::space_of(&here)
-                    .is_some_and(|space| space.kind == ono_spatial_core::SpaceKind::Root)
-                {
-                    crate::spatial::links::measure().await;
-                }
                 place_view(
                     &PlaceWorld::Present(&session),
                     &neighborhood,
@@ -1728,6 +1732,27 @@ impl CommandImpl for Follow {
             // orientation query merely declined to spend the budget on; `--resolve` is the
             // request for the rest — a relation whose class is `expensive` or `external`, which a
             // named `follow` still will not pay for by itself (§34.2, ADR-0495).
+            // ADR-1098: whether a connection reaches a linked host is read across the links —
+            // the far sides' connection tables — and `follow` crosses no link (§35.4), so no
+            // `--resolve` pays for it here. The request that does is named (v0.4.1 §34.3).
+            if specs[0].id == "connection.reaches_host"
+                && object_type.is_a(ono_spatial_core::SpatialType::Connection)
+                && !crate::spatial::links::all().is_empty()
+            {
+                return Err(ErrorValue::new(
+                    ErrorCode::SpatialUnsupported,
+                    format!(
+                        "the `{relation}` of this connection is not read by `follow`: \
+                         {}",
+                        crate::spatial::relations::CORRELATION_REQUEST
+                    ),
+                )
+                .with_help(
+                    "`map links --connections` correlates this host's connections with the \
+                     hosts this session links to and draws the edge on its evidence; `jump \
+                     <link>` stands on a linked host (spec v0.4 §14.5, §35.4; ADR-1098)",
+                ));
+            }
             let interest = crate::spatial::relations::Interest::here()
                 .along(Some(relation.clone()))
                 .complete(arguments.flag("resolve"))

@@ -245,7 +245,7 @@ struct Registered {
     opened: OpenStream,
 }
 
-/// One stream open on a link right now, as the link itself knows it (ADR-0105, ADR-1112).
+/// One stream open on a link right now, as the link itself knows it (ADR-0105, ADR-1099).
 ///
 /// The streams a link multiplexes are objects with an identity: the id both ends route by, what
 /// opened it, what it asked about and when. `trace link` draws them, so a reader can see what a
@@ -356,6 +356,16 @@ impl LinkInner {
         // to land; a peer that overruns its window still fills the queue and fails the link.
         let (sender, receiver) = mpsc::channel(self.window as usize + 1);
         let id = self.with_streams(|streams| {
+            // Checked again under the lock `fail` drains under: `fail` marks the link dead
+            // before it drains, so a stream registered here is either drained and told, or
+            // never registered. Checked only before the lock, a stream could register just
+            // after the drain, on a dead link, and wait for ever.
+            if !self.alive.load(Ordering::SeqCst) {
+                return Err(self
+                    .status()
+                    .err()
+                    .unwrap_or_else(|| unreachable("the link is closed")));
+            }
             if streams.len() >= self.limits.max_streams() {
                 return Err(ErrorValue::from(ProtocolError::TooManyStreams {
                     limit: self.limits.max_streams(),
@@ -379,13 +389,62 @@ impl LinkInner {
                 .err()
                 .unwrap_or_else(|| unreachable("the link is closed")));
         }
-        Ok(Opened { id, receiver })
+        Ok(Opened {
+            id,
+            receiver,
+            guard: StreamGuard {
+                inner: Arc::clone(self),
+                id,
+                armed: true,
+            },
+        })
     }
 }
 
+/// A stream this side opened and is waiting on.
+///
+/// Whoever awaits the answer may be dropped mid-wait — a Ctrl-C during `look` or `map links`
+/// drops the command's future — and the stream must go with it: the guard cancels it unless the
+/// waiter disarmed it by finishing (review PRF-1). Without it the stream stays registered, holds
+/// one of `max_streams`, and its late answer meets a receiver that is gone.
 struct Opened {
     id: u32,
     receiver: mpsc::Receiver<Inbound>,
+    guard: StreamGuard,
+}
+
+impl Opened {
+    /// The answer arrived: forget the stream; nothing is sent.
+    fn release(mut self) {
+        self.guard.armed = false;
+        self.guard.inner.release(self.id);
+    }
+
+    /// The waiter gives up: forget the stream and tell the far side.
+    fn cancel(mut self) {
+        self.guard.armed = false;
+        self.guard.inner.cancel_stream(self.id);
+    }
+
+    /// Hands the stream to an owner that cancels it on drop itself ([`RemoteStream`]).
+    fn into_parts(mut self) -> (u32, mpsc::Receiver<Inbound>) {
+        self.guard.armed = false;
+        (self.id, self.receiver)
+    }
+}
+
+struct StreamGuard {
+    inner: Arc<LinkInner>,
+    id: u32,
+    armed: bool,
+}
+
+impl Drop for StreamGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.inner.cancel_stream(self.id);
+        }
+    }
 }
 
 /// The local end of a remote link.
@@ -579,7 +638,7 @@ impl Link {
         while let Some(inbound) = opened.receiver.recv().await {
             match inbound {
                 Inbound::Outcome(outcome) => {
-                    self.inner.release(opened.id);
+                    opened.release();
                     return Ok(*outcome);
                 }
                 Inbound::Failure(error) => refusal = Some(*error),
@@ -587,7 +646,7 @@ impl Link {
                 Inbound::End => break,
             }
         }
-        self.inner.release(opened.id);
+        opened.release();
         Err(refusal.unwrap_or_else(|| unreachable("the remote ended the action without answering")))
     }
 
@@ -628,9 +687,10 @@ impl Link {
     /// Sent only when the handshake negotiated the request; otherwise the refusal is local. The
     /// agent checks the connection may observe before it answers, and a refusal arrives as its
     /// structured error — never as an empty table. A table larger than
-    /// [`MAX_LINK_TABLE_ENTRIES`](crate::MAX_LINK_TABLE_ENTRIES) or with a field longer than
-    /// [`MAX_LINK_FIELD_BYTES`](crate::MAX_LINK_FIELD_BYTES) is refused when it is decoded, and
-    /// fails the link as a protocol mismatch, as any malformed frame does.
+    /// [`MAX_LINK_TABLE_ENTRIES`](crate::MAX_LINK_TABLE_ENTRIES), with a field longer than
+    /// [`MAX_LINK_FIELD_BYTES`](crate::MAX_LINK_FIELD_BYTES) or a state or transport this build
+    /// does not know is refused when it is decoded: this request fails as a protocol mismatch,
+    /// and the link and its other streams are unharmed.
     ///
     /// # Errors
     ///
@@ -654,7 +714,7 @@ impl Link {
             .any(|offered| offered == id)
     }
 
-    /// The streams open on this link right now, in id order (ADR-0105, ADR-1112).
+    /// The streams open on this link right now, in id order (ADR-0105, ADR-1099).
     #[must_use]
     pub fn open_streams(&self) -> Vec<OpenStream> {
         let mut open: Vec<OpenStream> = self.inner.with_streams(|streams| {
@@ -697,10 +757,10 @@ impl Link {
     }
 
     fn start(&self, kind: FrameKind, message: Message) -> Result<RemoteStream, ErrorValue> {
-        let opened = self.inner.open(kind, &message)?;
+        let (id, receiver) = self.inner.open(kind, &message)?.into_parts();
         Ok(RemoteStream {
-            id: opened.id,
-            receiver: opened.receiver,
+            id,
+            receiver,
             link: Arc::clone(&self.inner),
             window: self.inner.window,
             unacknowledged: 0,
@@ -734,29 +794,29 @@ async fn probe(
     let answer = tokio::time::timeout(timeout, opened.receiver.recv()).await;
     match answer {
         Ok(Some(Inbound::End)) => {
-            inner.release(opened.id);
+            opened.release();
             Ok(started.elapsed())
         }
         Ok(Some(Inbound::Failure(error))) => {
-            inner.release(opened.id);
+            opened.release();
             Err(*error)
         }
         Ok(Some(_)) => {
-            inner.cancel_stream(opened.id);
+            opened.cancel();
             Err(ErrorValue::from(ProtocolError::MalformedPayload {
                 kind: FrameKind::Probe,
                 detail: "a probe is answered with an end and nothing else".to_owned(),
             }))
         }
         Ok(None) => {
-            inner.release(opened.id);
+            opened.release();
             Err(inner
                 .status()
                 .err()
                 .unwrap_or_else(|| unreachable("the link closed before the probe was answered")))
         }
         Err(_elapsed) => {
-            inner.cancel_stream(opened.id);
+            opened.cancel();
             Err(unreachable(format!(
                 "the far side did not answer a probe within {} ms",
                 timeout.as_millis()
@@ -793,18 +853,18 @@ async fn links(
             }
             Ok(Some(Inbound::Failure(error))) => refusal = Some(*error),
             Ok(Some(Inbound::End)) => {
-                inner.release(opened.id);
+                opened.release();
                 break;
             }
             Ok(Some(_)) => {
-                inner.cancel_stream(opened.id);
+                opened.cancel();
                 return Err(ErrorValue::from(ProtocolError::MalformedPayload {
                     kind: FrameKind::ListLinks,
                     detail: "a link table request is answered with one table and an end".to_owned(),
                 }));
             }
             Ok(None) => {
-                inner.release(opened.id);
+                opened.release();
                 return Err(refusal.unwrap_or_else(|| {
                     inner.status().err().unwrap_or_else(|| {
                         unreachable("the link closed before the link table arrived")
@@ -812,7 +872,7 @@ async fn links(
                 }));
             }
             Err(_elapsed) => {
-                inner.cancel_stream(opened.id);
+                opened.cancel();
                 return Err(unreachable(format!(
                     "the far side did not send its link table within {} ms",
                     timeout.as_millis()
@@ -900,10 +960,12 @@ impl Prober {
         let Some(inner) = self.inner.upgrade() else {
             return Err(unreachable("the link is closed"));
         };
-        let opened = inner.open(FrameKind::StartQuery, &Message::StartQuery(query.clone()))?;
+        let (id, receiver) = inner
+            .open(FrameKind::StartQuery, &Message::StartQuery(query.clone()))?
+            .into_parts();
         Ok(RemoteStream {
-            id: opened.id,
-            receiver: opened.receiver,
+            id,
+            receiver,
             window: inner.window,
             link: inner,
             unacknowledged: 0,
@@ -1104,6 +1166,12 @@ fn spawn_reader<R>(
             };
             let message = match decode_message(frame.kind(), frame.payload(), &schemas, &limits) {
                 Ok(message) => message,
+                // A link table this side must not believe — over its bounds, an unknown state —
+                // arrived whole in a frame that was read whole: it fails the request it answers,
+                // not the link every other stream rides on (reviews COR-4, SEC-4).
+                Err(error) if frame.kind() == FrameKind::LinkTable => {
+                    Message::Failure(ErrorValue::from(error))
+                }
                 Err(error) => {
                     inner.fail(&ErrorValue::from(error));
                     return;
@@ -1136,11 +1204,17 @@ fn spawn_reader<R>(
             let Some(sender) = sender else {
                 continue;
             };
-            if sender.try_send(inbound).is_err() {
-                inner.fail(&ErrorValue::from(ProtocolError::CreditExceeded {
-                    stream: frame.stream(),
-                }));
-                return;
+            match sender.try_send(inbound) {
+                Ok(()) => {}
+                // The waiter went away between the lookup and the send: the frame crossed with
+                // the stream's cancellation, exactly as a frame for a stream already gone did.
+                Err(mpsc::error::TrySendError::Closed(_)) => inner.release(frame.stream()),
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    inner.fail(&ErrorValue::from(ProtocolError::CreditExceeded {
+                        stream: frame.stream(),
+                    }));
+                    return;
+                }
             }
         }
     });

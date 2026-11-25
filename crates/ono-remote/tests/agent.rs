@@ -185,8 +185,8 @@ async fn should_serve_the_agents_link_table_only_where_it_keeps_one() {
     let entry = ono_protocol::LinkEntry {
         name: "db01".to_owned(),
         host: "db01:7022".to_owned(),
-        transport: "tcp".to_owned(),
-        state: "connected".to_owned(),
+        transport: ono_protocol::LinkTransport::Tcp,
+        state: ono_protocol::LinkState::Connected,
         fingerprint: None,
         boot_id: None,
         round_trip_ns: None,

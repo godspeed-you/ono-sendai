@@ -493,6 +493,8 @@ fn parse(text: &str, path: &Path) -> Result<Vec<TrustEntry>, ErrorValue> {
 
 fn io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
     let code = match error.kind() {
+        // Another process holds the update lock past its bound (ADR-1041, review SEC-A).
+        std::io::ErrorKind::WouldBlock => ErrorCode::IoBusy,
         std::io::ErrorKind::NotFound => ErrorCode::IoNotFound,
         std::io::ErrorKind::PermissionDenied => ErrorCode::IoPermissionDenied,
         _ => ErrorCode::IoNotFound,

@@ -81,3 +81,17 @@ mutation's plan, a reduced link's `answers`, and null locally.
   completed; the caller must see the link end (§16.5: a failure is not an empty result).
 - **A write deadline on the session writer.** Would end slow but healthy readers; out of this
   decision's scope.
+
+## Amendment (v0.6.6 remediation): a stream opened as its link fails
+
+`LinkInner::open` checked the link alive and then registered the stream under the streams lock;
+`fail` marks the link dead and then drains the streams under that lock. A stream opened in
+between — checked alive, then the drain, then the registration — sat on a dead link that nothing
+would ever end, and its reader waited for ever. The liveness check is now repeated inside the
+lock, so a stream is either registered before the drain (and told) or refused. Present since
+before v0.6.6 (`42cf37d6`'s `open` has the same shape); found as an intermittent 20 s hang of
+`crates/ono-remote/tests/limits.rs::should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revocation_sweep_runs_first`,
+whose `still_serves` query races the revoked session's close. Encoded by
+`crates/ono-protocol/tests/streams.rs::should_end_every_stream_opened_while_the_link_is_failing`
+(a thousand links failed while streams are being opened; without the fix it failed four runs
+in five at three hundred).

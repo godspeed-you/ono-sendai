@@ -43,6 +43,14 @@ and is dropped (the existing crossing-with-cancel rule). So probes cannot accumu
 tasks: a probe is one stream for at most its timeout, and each stream counts against
 `max_streams`.
 
+*Amended in the v0.6.6 remediation (review PRF-1).* The same holds when the waiter itself goes
+away — a Ctrl-C during `look` or `map links` drops the future mid-wait: every request this side
+opens and awaits (probe, link table, action) holds its stream through a guard that cancels it
+unless the waiter finished, and a late answer that meets a receiver already gone is a frame
+crossing a cancellation, dropped, never a credit overrun that fails the link. Tests:
+`crates/ono-protocol/tests/probe.rs::should_forget_a_probe_whose_caller_went_away_and_drop_its_late_answer`,
+`crates/ono-protocol/tests/link_table.rs::should_forget_a_request_whose_caller_went_away_and_drop_its_late_answer`.
+
 **When the shell probes — on demand, never in the background.** An idle shell with links sends
 nothing it was not asked to. The shell probes when it draws something that shows a latency: the
 local root's link map (`look` at the root), `map links`, and each poll of `watch host`
@@ -99,3 +107,9 @@ labelled `handshake`.
   asked, not on the link.
 - **Bumping `PROTOCOL_VERSION`.** ADR-1056 reserves that for a change of meaning; a new request
   behind an announced id is its case 2.
+
+*Amended in the v0.6.6 remediation (review ARC-3).* The field `latency_status` was first declared
+`required` in place in a `/1` schema, which v0.2 §10.4 counts as a versioned schema change
+("adding a required field"). Following the repository's precedent (ADR-0134, ADR-0996), it is
+declared `nullable` instead: this build always produces it, and a consumer of `ono.link-place/1` that
+predates it stays valid. No version bump.

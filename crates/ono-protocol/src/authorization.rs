@@ -314,7 +314,11 @@ impl AuthorizedClients {
     /// refusal allows. The path is in the operator's own diagnostic and in the audit trail, which
     /// is where somebody who can fix it is reading.
     fn unlisted(&self, fingerprint: Fingerprint) -> ErrorValue {
-        let condition = if self.present {
+        // "There is a list somebody is on": a file that exists and names a client. A store
+        // emptied by `remove client-key` authorizes nobody, as a missing one does, and the
+        // agent's startup line says so; the refusal says the same (ADR-1056, review COR-R3).
+        let lists_somebody = self.present && !self.entries.is_empty();
+        let condition = if lists_somebody {
             "is authenticated and is not authorized on this host"
         } else {
             "is authenticated and is not authorized on this host, where no client is authorized yet"
@@ -325,7 +329,7 @@ impl AuthorizedClients {
         )
         .with_retryable(false)
         .with_metadata("peer_fingerprint", Value::string(&fingerprint.to_string()))
-        .with_metadata("store_present", Value::Bool(self.present))
+        .with_metadata("store_present", Value::Bool(lists_somebody))
         .with_help(format!(
             "authentication proves which key connected, never that the operator wants it here \
              (v0.4.1 section 9.1). On the agent's host, `add client-key {fingerprint}` authorizes \
@@ -759,30 +763,6 @@ impl PeerAuthorization {
     }
 }
 
-/// Writes `entries` to `path`, atomically, leaving the previous store intact if anything fails.
-///
-/// §9.8: write to a temporary, fsync it, rename it over the store, then sync the directory. A
-/// reader therefore sees the old file or the new one and never a prefix of the new one, and an
-/// update that dies part-way leaves a store that still loads — which matters more here than for
-/// most files, because §9.2's strict parser would refuse a half-written store and take the
-/// agent's whole policy down with it.
-///
-/// The file is created `0600`. It is the operator's decision about who may reach this machine,
-/// and an account that can rewrite it can authorize itself. The write is serialised with every
-/// other update of a store in the same directory, and the trust store is written by the same
-/// sequence (ADR-1041).
-///
-/// # Errors
-///
-/// `io.permission_denied` naming the path that could not be written. The store at `path` is
-/// unchanged whenever this returns an error.
-pub fn write_store(path: &Path, entries: &[AuthorizedClient]) -> Result<(), ErrorValue> {
-    let locked =
-        crate::store_file::lock(path).map_err(|(at, error)| store_io_error(&at, &error))?;
-    crate::store_file::replace(&locked, path, render(entries).as_bytes())
-        .map_err(|(at, error)| store_io_error(&at, &error))
-}
-
 /// Changes the store at `path` as `change` says, starting from the file as it is now.
 ///
 /// The read, the change and the write happen under one lock (ADR-1041), so two updates — from
@@ -813,6 +793,8 @@ pub fn update_store<T>(
 
 fn store_io_error(path: &Path, error: &std::io::Error) -> ErrorValue {
     let code = match error.kind() {
+        // Another process holds the update lock past its bound (ADR-1041, review SEC-A).
+        std::io::ErrorKind::WouldBlock => ErrorCode::IoBusy,
         std::io::ErrorKind::NotFound => ErrorCode::IoNotFound,
         _ => ErrorCode::IoPermissionDenied,
     };

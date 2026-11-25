@@ -56,10 +56,10 @@ struct Launched {
 fn launch(home: &Scratch, listen: &str, extra: &[String]) -> Launched {
     let mut args: Vec<&str> = vec!["--agent", "--listen", listen];
     args.extend(extra.iter().map(String::as_str));
-    let mut process: ono_testkit::OwnedChild = Command::new(binary())
-        .args(&args)
-        .env("HOME", home.path())
-        .env("XDG_CONFIG_HOME", home.path())
+    let mut command = Command::new(binary());
+    command.args(&args);
+    super::in_scratch_homes(&mut command, home);
+    let mut process: ono_testkit::OwnedChild = command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -254,10 +254,10 @@ pub struct Streaming {
 impl Streaming {
     /// Starts `ono -c script` in `home`.
     pub fn start(home: &Scratch, script: &str) -> Self {
-        let mut process: ono_testkit::OwnedChild = Command::new(binary())
-            .args(["-c", script])
-            .env("HOME", home.path())
-            .env("XDG_CONFIG_HOME", home.path())
+        let mut command = Command::new(binary());
+        command.args(["-c", script]);
+        super::in_scratch_homes(&mut command, home);
+        let mut process: ono_testkit::OwnedChild = command
             .env("NO_COLOR", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

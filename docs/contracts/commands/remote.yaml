@@ -22,6 +22,12 @@ commands:
       - {name: at, type: string, doc: "Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path."}
     privilege: none
     streaming: true
+    note: >-
+      Reading the host table probes the link this session holds to each host (`ono.link.probe/1`,
+      ADR-1096): a listing waits at most two seconds for the probes, side by side, and reuses a
+      measurement for five, and its `reachability` column says what the latest probe found.
+      Nothing is dialled — a host without a held link is `unknown`, and `test host` is what dials
+      one.
     phase: H
     examples:
       - get host
@@ -276,8 +282,8 @@ commands:
     phase: H
     note: >-
       Each poll reads the host table, and reading it probes the link this session holds to each
-      host (`ono.link.probe/1`, ADR-1096): `reachability` is `reachable`, `unreachable`,
-      `unauthorized` or `unknown`, with its reason and since when, and a transition is a
+      host (`ono.link.probe/1`, ADR-1096): `reachability` is `reachable`, `unreachable` or
+      `unknown`, with its reason and since when, and a transition is a
       `changed` event. Nothing is dialled — a host without a held link is `unknown`, and `test
       host` is what dials one. A probe waits at most two seconds and is reused for five, so a
       fast `--every` does not multiply the traffic.

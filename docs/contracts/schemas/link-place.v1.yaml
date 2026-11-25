@@ -98,7 +98,7 @@ fields:
       connection, not an earlier one under the same name — was never probed.
   latency_status:
     type: enum
-    required: true
+    nullable: true
     values: [measured, timed_out, not_offered, unavailable]
     doc: >-
       What the latest probe found: `measured` (answered; `latency` is its round trip),

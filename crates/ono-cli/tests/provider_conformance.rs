@@ -1146,8 +1146,8 @@ async fn should_shape_ono_host_1_the_way_ono_shell_declares_it() {
             harness::FieldContract { name: "source", ty: "string", required: true, nullable: false, unit: None },
             harness::FieldContract { name: "link", ty: "string", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "transport", ty: "enum<ssh|local>", required: false, nullable: true, unit: None },
-            harness::FieldContract { name: "reachability", ty: "enum<reachable|unreachable|unauthorized|unknown>", required: true, nullable: false, unit: None },
-            harness::FieldContract { name: "reachability_reason", ty: "string", required: true, nullable: false, unit: None },
+            harness::FieldContract { name: "reachability", ty: "enum<reachable|unreachable|unknown>", required: false, nullable: true, unit: None },
+            harness::FieldContract { name: "reachability_reason", ty: "string", required: false, nullable: true, unit: None },
             harness::FieldContract { name: "reachability_since", ty: "timestamp", required: false, nullable: true, unit: None },
         ],
     }).await;

@@ -25,6 +25,52 @@ pub const MAX_LINK_TABLE_ENTRIES: usize = 64;
 /// The longest any text field of an entry may be, in bytes.
 pub const MAX_LINK_FIELD_BYTES: usize = 256;
 
+/// How a far link's bytes travel. A closed set: a value the decoder does not know refuses the
+/// table (review ARC-6) rather than flowing into a map as text nobody defined.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkTransport {
+    /// Ono's own authenticated transport.
+    Tcp,
+    /// Carried over OpenSSH.
+    Ssh,
+    /// A local agent process.
+    Local,
+}
+
+impl LinkTransport {
+    /// The word `ono.link/1` spells.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tcp => "tcp",
+            Self::Ssh => "ssh",
+            Self::Local => "local",
+        }
+    }
+}
+
+/// Whether a far link is up, as the far side last saw it. A closed set, like [`LinkTransport`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LinkState {
+    /// The far side holds the link established.
+    Connected,
+    /// The far side holds the definition, not a connection.
+    Disconnected,
+}
+
+impl LinkState {
+    /// The word `ono.link/1` spells.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Connected => "connected",
+            Self::Disconnected => "disconnected",
+        }
+    }
+}
+
 /// One link the far side holds, as the far side observed it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkEntry {
@@ -32,10 +78,10 @@ pub struct LinkEntry {
     pub name: String,
     /// The address the link reaches (`host:port` for the authenticated transport).
     pub host: String,
-    /// How the bytes travel: `tcp`, `ssh` or `local`.
-    pub transport: String,
-    /// `connected` or `disconnected`, as the far side last saw it.
-    pub state: String,
+    /// How the bytes travel.
+    pub transport: LinkTransport,
+    /// Whether the link is up, as the far side last saw it.
+    pub state: LinkState,
     /// The fingerprint of the key the next hop proved on this link, where it proved one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<String>,
@@ -48,12 +94,12 @@ pub struct LinkEntry {
     /// The far side's latest probe of the link, in nanoseconds (ADR-1095).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latency_ns: Option<u64>,
-    /// When that probe was made, RFC 3339.
+    /// When that probe was made (RFC 3339 on the wire).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub measured_at: Option<String>,
-    /// Since when the link has been in `state`, RFC 3339.
+    pub measured_at: Option<jiff::Timestamp>,
+    /// Since when the link has been in `state` (RFC 3339 on the wire).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub since: Option<String>,
+    pub since: Option<jiff::Timestamp>,
 }
 
 /// A far side's link table: its links, and whether it left any out.
@@ -64,21 +110,44 @@ pub struct LinkTable {
     /// Whether the far side holds more links than it sent.
     #[serde(default)]
     pub truncated: bool,
-    /// When the far side assembled the table, RFC 3339.
+    /// When the far side assembled the table (RFC 3339 on the wire).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_at: Option<String>,
+    pub observed_at: Option<jiff::Timestamp>,
 }
 
 impl LinkTable {
-    /// A table of `links`, cut to [`MAX_LINK_TABLE_ENTRIES`] and marked when it was cut.
+    /// A table of `links` this side may send as it is: cut to [`MAX_LINK_TABLE_ENTRIES`], and
+    /// marked when it was cut.
+    ///
+    /// What an agent puts in its table came partly from its own next hops — a boot id, a
+    /// fingerprint — and an honest agent must not send a table its peer is bound to refuse
+    /// (review COR-4, SEC-4). So an optional field longer than [`MAX_LINK_FIELD_BYTES`] is left
+    /// out (unknown, never cut into something else), and an entry whose name or host is longer
+    /// is left out and the table marked truncated.
     #[must_use]
-    pub fn of(mut links: Vec<LinkEntry>) -> Self {
-        let truncated = links.len() > MAX_LINK_TABLE_ENTRIES;
-        links.truncate(MAX_LINK_TABLE_ENTRIES);
+    pub fn of(links: Vec<LinkEntry>) -> Self {
+        let long = |text: &str| text.len() > MAX_LINK_FIELD_BYTES;
+        let mut truncated = false;
+        let mut kept = Vec::new();
+        for mut entry in links {
+            if long(&entry.name) || long(&entry.host) {
+                truncated = true;
+                continue;
+            }
+            if entry.fingerprint.as_deref().is_some_and(long) {
+                entry.fingerprint = None;
+            }
+            if entry.boot_id.as_deref().is_some_and(long) {
+                entry.boot_id = None;
+            }
+            kept.push(entry);
+        }
+        truncated |= kept.len() > MAX_LINK_TABLE_ENTRIES;
+        kept.truncate(MAX_LINK_TABLE_ENTRIES);
         Self {
-            links,
+            links: kept,
             truncated,
-            observed_at: Some(jiff::Timestamp::now().to_string()),
+            observed_at: Some(jiff::Timestamp::now()),
         }
     }
 
@@ -99,19 +168,12 @@ impl LinkTable {
             )));
         }
         let long = |text: &str| text.len() > MAX_LINK_FIELD_BYTES;
-        if self.observed_at.as_deref().is_some_and(long) {
-            return Err(refuse("a link table's time is too long".to_owned()));
-        }
         for entry in &self.links {
             let texts = [
                 Some(entry.name.as_str()),
                 Some(entry.host.as_str()),
-                Some(entry.transport.as_str()),
-                Some(entry.state.as_str()),
                 entry.fingerprint.as_deref(),
                 entry.boot_id.as_deref(),
-                entry.measured_at.as_deref(),
-                entry.since.as_deref(),
             ];
             if texts.into_iter().flatten().any(long) {
                 return Err(refuse(format!(

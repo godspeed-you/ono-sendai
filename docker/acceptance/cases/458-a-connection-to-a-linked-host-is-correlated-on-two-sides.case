@@ -5,8 +5,12 @@
 # tables are read like any read, on request: `map links --connections`.
 #
 # Two agents on 127.0.0.2 and 127.0.0.3, each with its own home and key. In one container every
-# agent shares the kernel's socket table, so one link proves a correlation and two prove that
-# ambiguity is said rather than resolved.
+# agent shares the kernel's socket table and its boot, so each is proven to be this machine and a
+# loopback mirror is honest evidence (a loopback mirror from another machine is none). What one
+# container can prove is the wiring end to end: the shell's own link connection is correlated
+# with an agent that is this machine, two such agents are said to be ambiguous, and nothing is
+# read unasked. It does not prove a correlation between two machines — no case can, offline; the
+# evidence rules are proved against far sides whose tables the Rust suite writes (ADR-1098).
 case: map links --connections correlates a connection with a linked host on two-sided evidence, and says when it cannot tell
 timeout: 180
 env: NO_COLOR=1

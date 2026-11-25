@@ -934,13 +934,35 @@ fn text_of(value: &Value) -> Option<String> {
 #[derive(Debug)]
 pub struct MapLinks {
     pins: Option<crate::spatial::PinStore>,
+    /// The session's configuration directory (ADR-0010), where its link identity lives.
+    config_dir: Option<std::path::PathBuf>,
 }
 
 impl MapLinks {
-    /// The implementation registered against `ono.place.map-links`.
+    /// The implementation registered against `ono.place.map-links`, for a session whose
+    /// configuration directory is `config_dir` — the session's host sources, not the process
+    /// environment, which is what its own links present (review ARC-8).
     #[must_use]
-    pub fn new(pins: Option<crate::spatial::PinStore>) -> Self {
-        Self { pins }
+    pub fn new(
+        pins: Option<crate::spatial::PinStore>,
+        config_dir: Option<std::path::PathBuf>,
+    ) -> Self {
+        Self { pins, config_dir }
+    }
+
+    /// This shell's own link fingerprint, where it has an identity already — never creating one
+    /// to draw a map (ADR-1097): a far link back to it is a cycle to this host.
+    fn own_fingerprint(&self) -> Option<String> {
+        #[cfg(feature = "remote")]
+        {
+            crate::trust::existing_link_identity(self.config_dir.as_deref()?)
+                .map(|identity| identity.fingerprint().to_string())
+        }
+        #[cfg(not(feature = "remote"))]
+        {
+            let _ = &self.config_dir;
+            None
+        }
     }
 }
 
@@ -968,6 +990,9 @@ impl CommandImpl for MapLinks {
                     usize::try_from(*depth).unwrap_or(1)
                 }
                 Some(other) => {
+                    // The words fit the value (review COR-9): below one there is no smaller map
+                    // of links, above two a hop nobody asks for.
+                    let deeper = matches!(other, Value::Int(depth) if *depth > 2);
                     return Err(ErrorValue::new(
                         ErrorCode::TypeMismatch,
                         format!(
@@ -980,23 +1005,38 @@ impl CommandImpl for MapLinks {
                         "limit",
                         Value::Int(crate::spatial::federation::MAX_DEPTH as i128),
                     )
-                    .with_help(
+                    .with_help(if deeper {
                         "a linked host tells about the links it holds; it asks nobody further on \
-                         your behalf, so a third hop is never drawn (ADR-1097)",
-                    ));
+                         your behalf, so a third hop is never drawn (ADR-1097)"
+                    } else {
+                        "`1` (the default) draws this host and the links it holds; `2` also each \
+                         linked host's own links (ADR-1097)"
+                    }));
                 }
             };
             let request = MapRequest::new().all(arguments.flag("all")).depth(depth);
             let now = Timestamp::now();
 
-            let mut session = spatial_session().await;
-            crate::spatial::commands::with_pins(&mut session, self.pins.as_ref(), now).await?;
+            // `--connections` correlates this host's own connections; standing inside a link,
+            // "this host" is not the one the session is in.
+            if arguments.flag("connections") && spatial_session().await.current_scope().is_remote()
+            {
+                return Err(ErrorValue::new(
+                    ErrorCode::SpatialUnsupported,
+                    "`map links --connections` correlates this host's own connections; \
+                     run it on the local host, not inside a link",
+                )
+                .with_help("`home` returns to the local host (spec v0.4 §19.2, ADR-1098)"));
+            }
 
             // §19.3 draws the local host beside the linked ones, so the map is centred on this
             // host's root whatever place the session is standing in — including a place on the
             // far side of one of these very links.
             let center = space::root().spatial_id_in(None);
-            // The links' latencies, measured now (ADR-1095): on demand, bounded, reused.
+            // Everything this map asks across the links is asked before the spatial session is
+            // taken (review ARC-2): another command — a `look` — is not held behind a peer that
+            // answers nothing. The links' latencies are measured now (ADR-1095): on demand,
+            // bounded, reused.
             crate::spatial::links::measure().await;
             let mut horizon = MapHorizon::new();
             horizon.place(HorizonPlace::new(center.clone(), 0, None));
@@ -1015,47 +1055,59 @@ impl CommandImpl for MapLinks {
                 horizon.edge(link_edge(&center, &root, &link, now));
                 hop1.push((link, root));
             }
-            // ADR-1098: which of this host's connections reach a linked host — on request,
-            // because it reads the far sides' socket and address tables.
-            let correlations = if arguments.flag("connections") {
-                if session.current_scope().is_remote() {
-                    return Err(ErrorValue::new(
-                        ErrorCode::ResolveTargetNotFound,
-                        "`map links --connections` correlates this host's own connections; \
-                         run it on the local host, not inside a link",
-                    ));
+            // ADR-1098's correlation and ADR-1097's second hop are asked side by side, each
+            // within its own bound: `--depth 2 --connections` costs the probe pass and then the
+            // longer of the two, never their sum.
+            let gathering = async {
+                if arguments.flag("connections") {
+                    Some(crate::spatial::correlate::gather(ctx.providers(), &hop1).await)
+                } else {
+                    None
                 }
-                let correlation = crate::spatial::correlate::connections(
-                    ctx.providers(),
-                    &mut session,
-                    &hop1,
-                    now,
-                )
-                .await?;
-                for place in correlation.places {
-                    horizon.place(place);
-                }
-                for edge in correlation.edges {
-                    horizon.edge(edge);
-                }
-                Value::list(correlation.report)
-            } else {
-                Value::Null
             };
-            let federation = if depth >= 2 {
-                let own = own_fingerprint();
-                let federation =
-                    crate::spatial::federation::second_hop(&center, &hop1, own.as_deref(), now)
-                        .await?;
-                for place in federation.places {
-                    horizon.place(place);
+            let own = self.own_fingerprint();
+            let asking = async {
+                if depth >= 2 {
+                    Some(
+                        crate::spatial::federation::second_hop(&center, &hop1, own.as_deref(), now)
+                            .await,
+                    )
+                } else {
+                    None
                 }
-                for edge in federation.edges {
-                    horizon.edge(edge);
+            };
+            let (evidence, federation) = futures::future::join(gathering, asking).await;
+            let federation = match federation {
+                Some(federation) => {
+                    let federation = federation?;
+                    for place in federation.places {
+                        horizon.place(place);
+                    }
+                    for edge in federation.edges {
+                        horizon.edge(edge);
+                    }
+                    Value::list(federation.report)
                 }
-                Value::list(federation.report)
-            } else {
-                Value::Null
+                None => Value::Null,
+            };
+
+            let mut session = spatial_session().await;
+            crate::spatial::commands::with_pins(&mut session, self.pins.as_ref(), now).await?;
+            // ADR-1098: which of this host's connections reach a linked host — on request,
+            // because it reads the far sides' connection and address tables.
+            let correlations = match &evidence {
+                Some(evidence) => {
+                    let correlation =
+                        crate::spatial::correlate::draw(evidence, &mut session, &hop1, now)?;
+                    for place in correlation.places {
+                        horizon.place(place);
+                    }
+                    for edge in correlation.edges {
+                        horizon.edge(edge);
+                    }
+                    Value::list(correlation.report)
+                }
+                None => Value::Null,
             };
 
             let pins = session.pins().clone();
@@ -1095,25 +1147,6 @@ impl CommandImpl for MapLinks {
             ])))
         })
     }
-}
-
-/// This shell's own link fingerprint, where it has an identity already — never creating one to
-/// draw a map (ADR-1097): a far link back to it is a cycle to this host.
-fn own_fingerprint() -> Option<String> {
-    #[cfg(feature = "remote")]
-    {
-        let environment: Vec<(String, String)> = std::env::vars().collect();
-        let sources = crate::hosts::HostSources::from_environment(
-            environment
-                .iter()
-                .map(|(name, value)| (name.as_str(), value.as_str())),
-        );
-        let directory = sources.config_dir?;
-        crate::trust::existing_link_identity(&directory)
-            .map(|identity| identity.fingerprint().to_string())
-    }
-    #[cfg(not(feature = "remote"))]
-    None
 }
 
 /// The edge one link draws on the federated map (§19.3, §19.4, §11.5).

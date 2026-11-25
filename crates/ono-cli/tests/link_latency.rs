@@ -13,10 +13,24 @@
     reason = "a test states its preconditions directly (AGENTS.md section 16)"
 )]
 
-use ono_testkit::ono;
+use ono_testkit::scratch;
 use serde_json::Value;
 
 mod support;
+use support::peers::{Peer, pin};
+
+/// A shell in a scratch home of its own running `script` (no developer home is read or written).
+fn ono(script: &str) -> ono_testkit::Run {
+    support::ono_at_home(&scratch(), script)
+}
+
+/// The `kill` program; `kill` is a native verb of the shell, the program is reached by its path.
+fn kill_program() -> &'static str {
+    ["/usr/bin/kill", "/bin/kill"]
+        .into_iter()
+        .find(|path| std::path::Path::new(path).exists())
+        .expect("a kill program")
+}
 
 const LINK: &str = "link host testbox --transport local";
 
@@ -68,14 +82,25 @@ fn should_reuse_one_probe_for_every_view_drawn_within_the_reuse_window() {
     run.assert_success();
     let views = support::json_lines(&run);
     assert_eq!(views.len(), 3, "three views, got {:?}", run.stdout());
-    let taken: Vec<Value> = views
+    let taken: Vec<jiff::Timestamp> = views
         .iter()
-        .map(|view| field(&link_in(view, "testbox"), "latency_measured_at").clone())
+        .map(|view| {
+            field(&link_in(view, "testbox"), "latency_measured_at")
+                .as_str()
+                .and_then(|text| text.parse().ok())
+                .unwrap_or_else(|| panic!("every view states when its latency was taken"))
+        })
         .collect();
-    assert!(
-        !taken[0].is_null() && taken.iter().all(|at| *at == taken[0]),
-        "one probe served every view inside the window, got {taken:?}"
-    );
+    // The contract is "at most one probe per link per window", whatever the views cost to draw
+    // (review TST-10): two views either share a measurement or carry ones at least the window
+    // apart. On an idle machine the three views share one.
+    for pair in taken.windows(2) {
+        let apart = pair[1].duration_since(pair[0]).unsigned_abs();
+        assert!(
+            pair[0] == pair[1] || apart >= std::time::Duration::from_secs(5),
+            "a second probe inside the reuse window, got {taken:?}"
+        );
+    }
 }
 
 #[test]
@@ -139,5 +164,74 @@ fn should_print_the_measured_latency_in_the_link_map() {
                 .split_whitespace()
                 .any(|word| word.ends_with("ms") || word.ends_with("us") || word.ends_with("ns")),
         "a measured latency is shown as §19.1's figure, got {line:?}"
+    );
+}
+
+#[test]
+fn should_measure_the_latency_when_the_view_is_drawn_not_when_the_link_was_made() {
+    // The figure is a probe made when the map is drawn (ADR-1095), not the handshake's: a far
+    // agent frozen after the link was made holds its connection and answers nothing, so the
+    // view drawn then says `timed_out` with no figure — the handshake's number, or any earlier
+    // one, standing in would be the carried-forward figure #308 forbids. Thawed, and past the
+    // reuse window, the next view measures again, later.
+    let client = scratch();
+    let far = Peer::start("127.0.0.40", &[]);
+    far.authorize(&client);
+    pin(&client, &far);
+    let pid = far.pid().expect("the agent runs");
+    let kill = kill_program();
+    // The script waits past the probe reuse window (five seconds, ADR-1095): a measurement
+    // younger than that is reused by design, so only a view drawn after it probes again.
+    let wait = "6s";
+    let started = jiff::Timestamp::now();
+    let run = support::ono_at_home(
+        &client,
+        &format!(
+            "link host {address} --transport tcp; {kill} -STOP {pid}; look --json; \
+             {kill} -CONT {pid}; sleep {wait}; look --json",
+            address = far.address
+        ),
+    );
+    far.thaw();
+    run.assert_success();
+    let views = support::json_lines(&run);
+    assert_eq!(views.len(), 2, "two views, got {:?}", run.stdout());
+    let frozen = link_in(&views[0], &far.address);
+    let thawed = link_in(&views[1], &far.address);
+
+    assert_eq!(
+        field(&frozen, "latency_status"),
+        "timed_out",
+        "a far side that answers nothing when the view is drawn is not measured, got {frozen}"
+    );
+    assert!(
+        field(&frozen, "latency").is_null(),
+        "an unanswered probe has no figure — never the handshake's, never an earlier one, got \
+         {frozen}"
+    );
+    assert!(
+        !field(&frozen, "round_trip").is_null(),
+        "the handshake's figure stays what it is, beside it, got {frozen}"
+    );
+    assert_eq!(
+        field(&thawed, "latency_status"),
+        "measured",
+        "the thawed agent answers the next view's probe, got {thawed}"
+    );
+    assert!(!field(&thawed, "latency").is_null(), "got {thawed}");
+    let at = |link: &Value| -> jiff::Timestamp {
+        field(link, "latency_measured_at")
+            .as_str()
+            .and_then(|text| text.parse().ok())
+            .unwrap_or_else(|| panic!("a probed link states when, got {link}"))
+    };
+    assert!(
+        at(&frozen) > started,
+        "the probe was made while the view was drawn, after the shell started (and so after \
+         nothing but the link existed), got {frozen}"
+    );
+    assert!(
+        at(&thawed) > at(&frozen),
+        "the later view measured again, later, got {frozen} then {thawed}"
     );
 }

@@ -22,8 +22,8 @@ run: |
   echo "== and the listener enforces them: one pending handshake, the next peer is closed =="
   exec 3<>/dev/tcp/127.0.0.1/7741
   exec 4<>/dev/tcp/127.0.0.1/7741
-  head -c 1 <&4 > /dev/null
-  echo "the peer over the file's pending-handshake ceiling was closed at once"
+  # Bounded, so an agent that kept the peer would fail the case rather than pass it (TST-18).
+  timeout 10 head -c 1 <&4 > /dev/null && echo "the peer over the file's pending-handshake ceiling was closed at once"
   exec 3<&-
   exec 4<&-
   kill "$AGENT" 2>/dev/null || true

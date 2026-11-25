@@ -43,8 +43,11 @@ fn entry(name: &str, state: &str) -> LinkEntry {
     LinkEntry {
         name: name.to_owned(),
         host: format!("{name}.example:7022"),
-        transport: "tcp".to_owned(),
-        state: state.to_owned(),
+        transport: ono_protocol::LinkTransport::Tcp,
+        state: match state {
+            "connected" => ono_protocol::LinkState::Connected,
+            _ => ono_protocol::LinkState::Disconnected,
+        },
         fingerprint: Some(format!("sha256:{name}")),
         boot_id: None,
         round_trip_ns: Some(1_000_000),
@@ -166,7 +169,7 @@ async fn should_refuse_and_record_a_link_table_the_connection_may_not_observe() 
 }
 
 #[tokio::test]
-async fn should_fail_the_link_as_a_mismatch_when_a_hostile_agent_sends_an_oversized_table() {
+async fn should_refuse_an_oversized_table_as_a_mismatch_and_keep_the_link() {
     // A table no honest agent builds: more entries than the bound, bypassing `LinkTable::of`.
     let hostile = LinkTable {
         links: (0..MAX_LINK_TABLE_ENTRIES * 4)
@@ -183,10 +186,18 @@ async fn should_fail_the_link_as_a_mismatch_when_a_hostile_agent_sends_an_oversi
         .await
         .expect_err("an oversized table is not believed");
     assert_eq!(refusal.code(), ErrorCode::RemoteProtocolMismatch);
+    // The request failed; the link every other stream rides on did not (reviews COR-4, SEC-4).
+    assert!(
+        tapped.link.is_alive(),
+        "the link survives a table it refused"
+    );
+    within(tapped.link.probe(WAIT))
+        .await
+        .expect("and still carries the next request");
 }
 
 #[tokio::test]
-async fn should_fail_the_link_as_a_mismatch_when_a_field_is_longer_than_the_bound() {
+async fn should_refuse_a_field_longer_than_the_bound_as_a_mismatch_and_keep_the_link() {
     let mut long = entry("db01", "connected");
     long.name = "x".repeat(MAX_LINK_FIELD_BYTES + 1);
     let tapped = tap::connect(
@@ -205,6 +216,65 @@ async fn should_fail_the_link_as_a_mismatch_when_a_field_is_longer_than_the_boun
         .await
         .expect_err("a field over the bound is not believed");
     assert_eq!(refusal.code(), ErrorCode::RemoteProtocolMismatch);
+    assert!(
+        tapped.link.is_alive(),
+        "the link survives a table it refused"
+    );
+}
+
+#[tokio::test]
+async fn should_send_a_table_whose_next_hop_reported_an_over_long_field_without_it() {
+    // An honest middle agent's table carries what its next hop said: a 300-byte boot id is the
+    // next hop's, not the agent's. The agent leaves the field out rather than sending a table its
+    // peer is bound to refuse, and the client's link is unharmed (reviews COR-4, SEC-4).
+    let mut reported = entry("db01", "connected");
+    reported.boot_id = Some("b".repeat(300));
+    reported.fingerprint = Some("f".repeat(MAX_LINK_FIELD_BYTES + 1));
+    let mut unnamed = entry("x", "connected");
+    unnamed.name = "n".repeat(MAX_LINK_FIELD_BYTES + 1);
+    let tapped = tap::connect(
+        client_config("testhost"),
+        agent(),
+        service(LinkTable::of(vec![reported, unnamed])),
+    )
+    .await
+    .expect("the handshake succeeds");
+
+    let answered = within(tapped.link.links(WAIT))
+        .await
+        .expect("a table built by `LinkTable::of` is one the client reads");
+    assert_eq!(
+        answered.links.len(),
+        1,
+        "an entry with no usable name is left out"
+    );
+    assert!(answered.truncated, "and the table says it left one out");
+    assert_eq!(answered.links[0].boot_id, None, "unknown, never cut");
+    assert_eq!(answered.links[0].fingerprint, None);
+    assert!(tapped.link.is_alive());
+}
+
+#[test]
+fn should_refuse_a_link_state_or_transport_this_build_does_not_define() {
+    // Review ARC-6: a far agent's state is a closed set on the wire, so an unknown one is
+    // refused when decoded rather than flowing into a map as text nobody defined.
+    for payload in [
+        &br#"{"links":[{"name":"a","host":"h","transport":"tcp","state":"exploded"}]}"#[..],
+        br#"{"links":[{"name":"a","host":"h","transport":"carrier-pigeon","state":"connected"}]}"#,
+        br#"{"links":[{"name":"a","host":"h","transport":"tcp","state":"connected","since":"yesterday"}]}"#,
+    ] {
+        let decoded = ono_protocol::decode_message(
+            FrameKind::LinkTable,
+            payload,
+            &ono_value::SchemaRegistry::new(),
+            &ono_protocol::Limits::default(),
+        );
+        assert!(
+            decoded.is_err(),
+            "{} is not a link table this build believes",
+            String::from_utf8_lossy(payload)
+        );
+    }
 }
 
 #[tokio::test]
@@ -268,4 +338,53 @@ async fn should_fail_the_link_as_a_mismatch_when_an_agent_receives_a_request_it_
         outcome.expect_err("not served").code(),
         ErrorCode::RemoteProtocolMismatch
     );
+}
+
+#[tokio::test]
+async fn should_forget_a_request_whose_caller_went_away_and_drop_its_late_answer() {
+    // A caller that stops waiting — a Ctrl-C during `map links --depth 2`, a `look` given up —
+    // drops the future mid-request. The stream must go with it: a late answer is a message that
+    // crossed with a cancellation, not a peer overrunning its credit, and it must not take the
+    // whole link down (review PRF-1).
+    let tapped = tap::connect(
+        client_config("testhost"),
+        agent(),
+        service(LinkTable::of(vec![entry("db01", "connected")])),
+    )
+    .await
+    .expect("the handshake succeeds");
+    // The agent does not see the request yet: its answer is held back.
+    tapped.tap.drop_kind(FrameKind::ListLinks);
+    let id = {
+        let asking = tapped.link.links(WAIT);
+        tokio::pin!(asking);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), asking.as_mut())
+                .await
+                .is_err(),
+            "nothing has answered yet"
+        );
+        let open = tapped.link.open_streams();
+        assert_eq!(open.len(), 1, "the request holds one stream, got {open:?}");
+        open[0].id
+        // The future is dropped here, unanswered.
+    };
+    assert!(
+        tapped.link.open_streams().is_empty(),
+        "a request nobody waits for any more leaves no stream behind, got {:?}",
+        tapped.link.open_streams()
+    );
+
+    // Now the answer arrives, late: the agent is asked under the abandoned stream's id.
+    tapped.tap.inject(ono_protocol::Frame::new(
+        FrameKind::ListLinks,
+        id,
+        b"null".to_vec(),
+    ));
+    tapped.tap.pass_kind(FrameKind::ListLinks);
+    let answered = within(tapped.link.links(WAIT))
+        .await
+        .expect("the link survived the late answer and serves the next request");
+    assert_eq!(answered.links.len(), 1);
+    assert!(tapped.link.is_alive());
 }

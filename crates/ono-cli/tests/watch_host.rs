@@ -115,16 +115,26 @@ fn should_emit_a_change_when_the_far_side_of_a_held_link_goes_away() {
 
     far.kill();
     let (changed, before) = watch.until(Duration::from_secs(30), |line| {
-        line.contains("\"reachability\":\"unreachable\"")
+        line.contains("\"reachability\":\"unreachable\"") && line.contains("the far side is gone")
     });
     assert!(
         changed.contains("\"kind\":\"changed\""),
         "a transition is a `changed` event, got {changed}"
     );
-    assert!(
-        before.is_empty(),
-        "nothing changed while the host stayed reachable, so nothing was emitted: {before:#?}"
-    );
+    // One event per change, never one per probe (review TST-10): whatever a loaded machine made
+    // a probe do in between, no event repeats the reachability the one before it reported.
+    let mut last = "reachable".to_owned();
+    for line in &before {
+        let now = serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|event| event["host"]["reachability"].as_str().map(str::to_owned))
+            .unwrap_or_default();
+        assert_ne!(
+            now, last,
+            "an event that reports no change was emitted: {before:#?}"
+        );
+        last = now;
+    }
 }
 
 #[test]
@@ -150,4 +160,52 @@ fn should_report_a_host_reachable_over_the_authenticated_transport_without_readi
         .find(|event| event["host"]["link"].is_string())
         .unwrap_or_else(|| panic!("an event about the linked host, got {found:#?}"))["host"];
     assert_eq!(host["reachability"], "reachable", "got {host}");
+}
+
+#[test]
+fn should_emit_one_change_to_unreachable_when_a_held_link_stops_answering_and_back_when_it_does() {
+    // The far agent is frozen, not killed: it holds its connection open and answers nothing, so
+    // the link has not failed and only a probe can tell (ADR-1096). The watch says so once, as a
+    // `changed` event to `unreachable` — the reachable measurement is reused for at most the
+    // reuse window, then the probe waits its timeout, then one poll reads it — and once more,
+    // back to `reachable`, when the agent runs again.
+    let client = scratch();
+    let far = Peer::start("127.0.0.41", &[]);
+    far.authorize(&client);
+    pin(&client, &far);
+
+    let watch = Streaming::start(
+        &client,
+        &format!(
+            "link host {} --transport tcp; watch host --every 1s | to jsonl",
+            far.address
+        ),
+    );
+    watch.until(Duration::from_secs(30), |line| {
+        line.contains("\"reachability\":\"reachable\"")
+    });
+
+    far.freeze();
+    let (changed, before) = watch.until(Duration::from_secs(30), |line| {
+        line.contains("\"reachability\":\"unreachable\"")
+    });
+    assert!(
+        changed.contains("\"kind\":\"changed\"") && changed.contains("not answered within"),
+        "an unanswered probe over an open connection is a transition to unreachable, got \
+         {changed}"
+    );
+    assert!(
+        before.is_empty(),
+        "nothing was emitted before the transition: {before:#?}"
+    );
+
+    far.thaw();
+    let (back, between) = watch.until(Duration::from_secs(30), |line| {
+        line.contains("\"reachability\":\"reachable\"")
+    });
+    assert!(back.contains("\"kind\":\"changed\""), "got {back}");
+    assert!(
+        between.is_empty(),
+        "exactly one event to unreachable, then the one back: {between:#?}"
+    );
 }

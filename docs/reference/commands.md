@@ -4962,6 +4962,8 @@ Enumerate known hosts from the configured providers and sources.
 | `--source` | `string` | Query one named host source. |
 | `--at` | `string` | Evaluate at this instant without changing the session's coordinate — one of §4.4's five selector forms (v0.5 §4.5). It uses the same engine `at` does; there is no second historical code path. |
 
+**Note.** Reading the host table probes the link this session holds to each host (`ono.link.probe/1`, ADR-1096): a listing waits at most two seconds for the probes, side by side, and reuses a measurement for five, and its `reachability` column says what the latest probe found. Nothing is dialled — a host without a held link is `unknown`, and `test host` is what dials one.
+
 **Examples**
 
 ```text
@@ -5370,7 +5372,7 @@ Emit host reachability changes as a live stream.
 |---|---|---|
 | `--every` | `duration` | Probe interval. |
 
-**Note.** Each poll reads the host table, and reading it probes the link this session holds to each host (`ono.link.probe/1`, ADR-1096): `reachability` is `reachable`, `unreachable`, `unauthorized` or `unknown`, with its reason and since when, and a transition is a `changed` event. Nothing is dialled — a host without a held link is `unknown`, and `test host` is what dials one. A probe waits at most two seconds and is reused for five, so a fast `--every` does not multiply the traffic.
+**Note.** Each poll reads the host table, and reading it probes the link this session holds to each host (`ono.link.probe/1`, ADR-1096): `reachability` is `reachable`, `unreachable` or `unknown`, with its reason and since when, and a transition is a `changed` event. Nothing is dialled — a host without a held link is `unknown`, and `test host` is what dials one. A probe waits at most two seconds and is reused for five, so a fast `--every` does not multiply the traffic.
 
 **Examples**
 
@@ -6393,7 +6395,7 @@ Draw the federated map — this host beside the hosts this session holds links t
 |---|---|---|
 | `--json` | `bool` | Write the `SpatialMap` as one JSON document rather than rendering it (v0.4 §22, §29.4). |
 | `--all` | `bool` | The explicit larger bound the default is not, still inside `spatial.map.node_budget` (v0.4 §6.9, §34.2). |
-| `--connections` | `bool` | Also draw this host's established TCP connections that reach a linked host, from each linked host's own socket and address tables, read like any read: `strong` where the far side holds the mirrored socket, `inferred` on an address alone, and nothing — said as `ambiguous` — where the evidence points at several links (v0.4 §14.5, §19.4, ADR-1098). |
+| `--connections` | `bool` | Also draw this host's established TCP connections that reach a linked host, from each linked host's own connection and address tables, read like any read: `strong` where the far side holds the mirrored socket (between loopback addresses only where the far side runs this machine's boot), `inferred` on an address alone, and nothing — said as `ambiguous` — where the evidence points at several links or another link's table is partial (v0.4 §14.5, §19.4, ADR-1098). |
 | `--depth` | `int` | `1` (the default): this host and the links it holds. `2`: also each linked host's own links, as its agent reports them where this session may observe it — drawn `inferred`, attributed to the peer that reported them (v0.4 §19.3, §19.4, ADR-1097). Nothing deeper is drawn: an agent asks nobody further on your behalf. |
 
 **Note.** §19.3: "A map MAY show multiple linked hosts when explicitly requested" — `map links` is that request, and its counterpart is the rule beside it: "The default root map SHOULD NOT automatically expand all remote graphs." So this map draws host roots and the links between them and stops there; walking a linked host is what `jump` is for (§35.4). The edges carry the §11.5 confidence of the evidence they rest on: a link this session negotiated is `exact`, a definition nobody has connected is `user_declared` (§19.4).

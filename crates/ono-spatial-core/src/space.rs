@@ -176,6 +176,9 @@ struct Geographies {
     known: BTreeMap<crate::SpatialId, (&'static CanonicalSpace, Option<SpatialScope>)>,
     /// The remote hosts whose geography is in `known`, so learning one twice is cheap.
     hosts: Vec<SpatialScope>,
+    /// The hosts learned only because a far agent reported them, oldest first — bounded by
+    /// [`MAX_REPORTED_HOSTS`], unlike the hosts this session links to.
+    reported: std::collections::VecDeque<SpatialScope>,
 }
 
 impl Geographies {
@@ -188,6 +191,7 @@ impl Geographies {
             standing: None,
             known,
             hosts: Vec::new(),
+            reported: std::collections::VecDeque::new(),
         }
     }
 
@@ -203,7 +207,34 @@ impl Geographies {
         }
         self.hosts.push(scope.clone());
     }
+
+    fn learn_reported(&mut self, scope: &SpatialScope) {
+        if self.hosts.contains(scope) {
+            return;
+        }
+        self.learn(scope);
+        self.reported.push_back(scope.clone());
+        while self.reported.len() > MAX_REPORTED_HOSTS {
+            let Some(oldest) = self.reported.pop_front() else {
+                break;
+            };
+            if self.standing.as_ref() == Some(&oldest) {
+                self.reported.push_back(oldest);
+                break;
+            }
+            for space in SPACES {
+                self.known.remove(&space.spatial_id_in(Some(&oldest)));
+            }
+            self.hosts.retain(|host| host != &oldest);
+        }
+    }
 }
+
+/// The most hosts a process keeps learned only because a far agent reported them (review SEC-7):
+/// a hostile peer that answers every `map links --depth 2` with fresh names must not grow a
+/// long-lived shell's geography for ever. The oldest is forgotten first; a host this session links
+/// to is never forgotten.
+pub const MAX_REPORTED_HOSTS: usize = 256;
 
 fn geographies() -> &'static RwLock<Geographies> {
     static GEOGRAPHIES: OnceLock<RwLock<Geographies>> = OnceLock::new();
@@ -239,7 +270,20 @@ pub fn learn(scope: &SpatialScope) {
         return;
     }
     if let Ok(mut geographies) = geographies().write() {
+        // A host once only reported and now linked to is this session's, never to be forgotten.
+        geographies.reported.retain(|reported| reported != scope);
         geographies.learn(scope);
+    }
+}
+
+/// Learns a host only reported by a far agent (§19.3's second hop), within
+/// [`MAX_REPORTED_HOSTS`]: past it, the oldest reported host is forgotten.
+pub fn learn_reported(scope: &SpatialScope) {
+    if !scope.is_remote() {
+        return;
+    }
+    if let Ok(mut geographies) = geographies().write() {
+        geographies.learn_reported(scope);
     }
 }
 
@@ -662,4 +706,32 @@ pub fn collection_for(object_type: SpatialType) -> Option<&'static CanonicalSpac
         .iter()
         .filter(|space| space.is_served())
         .find(|space| space.member_type == Some(object_type))
+}
+
+#[cfg(test)]
+mod reported_hosts {
+    use super::*;
+
+    fn host(name: &str) -> SpatialScope {
+        SpatialScope::remote_host(name, crate::BootIdentity::unknown_boot(name))
+    }
+
+    #[test]
+    fn should_forget_the_oldest_reported_host_past_the_bound_and_never_a_linked_one() {
+        let mut geographies = Geographies::local();
+        geographies.learn(&host("linked"));
+        for index in 0..MAX_REPORTED_HOSTS + 10 {
+            geographies.learn_reported(&host(&format!("reported-{index}")));
+        }
+        assert_eq!(geographies.reported.len(), MAX_REPORTED_HOSTS);
+        assert_eq!(geographies.hosts.len(), MAX_REPORTED_HOSTS + 1);
+        let id = |name: &str| root().spatial_id_in(Some(&host(name)));
+        assert!(geographies.known.contains_key(&id("linked")));
+        assert!(!geographies.known.contains_key(&id("reported-0")));
+        assert!(
+            geographies
+                .known
+                .contains_key(&id(&format!("reported-{}", MAX_REPORTED_HOSTS + 9)))
+        );
+    }
 }

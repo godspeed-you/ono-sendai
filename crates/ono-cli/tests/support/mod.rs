@@ -33,6 +33,8 @@ use ono_testkit::{Scratch, Shell};
 use serde_yaml_ng::Value;
 
 #[cfg(feature = "remote")]
+pub mod far_side;
+#[cfg(feature = "remote")]
 pub mod peers;
 
 /// The string field `field` of a record, or a panic naming the record that lacked it.
@@ -204,14 +206,42 @@ pub fn home_with_a_recorded_action() -> Scratch {
 }
 
 pub fn ono_at_home(home: &Scratch, script: &str) -> ono_testkit::Run {
-    Shell::new()
-        .env("HOME", home.path().to_string_lossy().into_owned())
-        .env(
-            "XDG_CONFIG_HOME",
-            home.path().to_string_lossy().into_owned(),
-        )
-        .args(["-c", script])
-        .run()
+    let mut shell = Shell::new();
+    for (name, value) in scratch_homes(home) {
+        shell = match value {
+            Some(value) => shell.env(name, value),
+            None => shell.env_remove(name),
+        };
+    }
+    shell.args(["-c", script]).run()
+}
+
+/// `HOME` and the XDG base directories, all inside `home`, so neither a shell nor an agent a test
+/// starts reads or writes the developer's real homes — its pins, its ledger, its plan store —
+/// whatever the runner's environment holds (review TST-11). Each is set to the place it defaults
+/// to under that `HOME` (the configuration home is `home` itself, as the suites lay it out), so a
+/// suite sees exactly what it saw with the variables unset; `XDG_RUNTIME_DIR`, which has no
+/// default, is removed.
+pub fn scratch_homes(home: &Scratch) -> Vec<(&'static str, Option<String>)> {
+    let at = |relative: &str| Some(home.path().join(relative).to_string_lossy().into_owned());
+    vec![
+        ("HOME", at("")),
+        ("XDG_CONFIG_HOME", at("")),
+        ("XDG_DATA_HOME", at(".local/share")),
+        ("XDG_STATE_HOME", at(".local/state")),
+        ("XDG_CACHE_HOME", at(".cache")),
+        ("XDG_RUNTIME_DIR", None),
+    ]
+}
+
+/// Applies [`scratch_homes`] to a command a suite starts itself.
+pub fn in_scratch_homes(command: &mut std::process::Command, home: &Scratch) {
+    for (name, value) in scratch_homes(home) {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
 }
 
 /// The manifest of the SDK's example provider package, as a plugin home holds it on disk.

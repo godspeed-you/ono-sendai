@@ -326,11 +326,15 @@ relations:
     inverse_label: host
     canonical_group: hosts
     inverse_group: hosts
-    confidence: exact
+    confidence: exact_or_provider_declared
     cost_class: remote
     doc: >-
-      A link this session holds to another host (§3.5, §19.1). Crossing it is always explicit:
-      `jump` never opens a connection because a name resembles a known place (§35.4).
+      A link between two hosts (§3.5, §19.1, §19.3). Between this host and one it links to it is
+      `exact` where the link was negotiated and `user_declared` for a definition nobody
+      connected; between a linked host and one *it* links to (`map links --depth 2`, ADR-1097) it
+      is the far side's report and `inferred`, with what the far side claimed beside it. Crossing
+      it is always explicit: `jump` never opens a connection because a name resembles a known
+      place (§35.4).
 
   - id: connection.reaches_host
     source: Connection
@@ -344,10 +348,13 @@ relations:
     cost_class: remote
     doc: >-
       A connection of this host whose far end is a host this session links to (§14.5, §19.4,
-      ADR-1098). Never `exact`: `strong` where the far side's own socket table holds the mirror
-      of the connection, `inferred` where only the remote address is one of the far side's, and
-      no edge where the evidence points at more than one link. Read across the links on request
-      — `map links --connections` — because it costs the far sides' socket and address tables.
+      ADR-1098). The confidence is the evidence's, as the correlation declares it, and never
+      `exact`: `strong` where the far side's own connection table holds the mirror of the
+      connection (between loopback addresses only where the far side runs this machine's boot),
+      `inferred` where only the remote address is one of the far side's, and no edge where the
+      evidence points at more than one link or another link's table is partial. Read across the
+      links on request — `map links --connections` — because it costs the far sides'
+      connection and address tables.
 
 # §36.1, §31.7, §31.26, ADR-0585. What a relation a KUANG/11 package contributed is, and what the
 # host keeps for itself. Nothing here is a relation of this build, so `relations:` above stays the
