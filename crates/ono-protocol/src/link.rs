@@ -245,7 +245,7 @@ struct Registered {
     opened: OpenStream,
 }
 
-/// One stream open on a link right now, as the link itself knows it (ADR-0105, ADR-1112).
+/// One stream open on a link right now, as the link itself knows it (ADR-0105, ADR-1099).
 ///
 /// The streams a link multiplexes are objects with an identity: the id both ends route by, what
 /// opened it, what it asked about and when. `trace link` draws them, so a reader can see what a
@@ -704,7 +704,7 @@ impl Link {
             .any(|offered| offered == id)
     }
 
-    /// The streams open on this link right now, in id order (ADR-0105, ADR-1112).
+    /// The streams open on this link right now, in id order (ADR-0105, ADR-1099).
     #[must_use]
     pub fn open_streams(&self) -> Vec<OpenStream> {
         let mut open: Vec<OpenStream> = self.inner.with_streams(|streams| {
