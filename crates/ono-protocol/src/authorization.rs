@@ -763,30 +763,6 @@ impl PeerAuthorization {
     }
 }
 
-/// Writes `entries` to `path`, atomically, leaving the previous store intact if anything fails.
-///
-/// §9.8: write to a temporary, fsync it, rename it over the store, then sync the directory. A
-/// reader therefore sees the old file or the new one and never a prefix of the new one, and an
-/// update that dies part-way leaves a store that still loads — which matters more here than for
-/// most files, because §9.2's strict parser would refuse a half-written store and take the
-/// agent's whole policy down with it.
-///
-/// The file is created `0600`. It is the operator's decision about who may reach this machine,
-/// and an account that can rewrite it can authorize itself. The write is serialised with every
-/// other update of a store in the same directory, and the trust store is written by the same
-/// sequence (ADR-1041).
-///
-/// # Errors
-///
-/// `io.permission_denied` naming the path that could not be written. The store at `path` is
-/// unchanged whenever this returns an error.
-pub fn write_store(path: &Path, entries: &[AuthorizedClient]) -> Result<(), ErrorValue> {
-    let locked =
-        crate::store_file::lock(path).map_err(|(at, error)| store_io_error(&at, &error))?;
-    crate::store_file::replace(&locked, path, render(entries).as_bytes())
-        .map_err(|(at, error)| store_io_error(&at, &error))
-}
-
 /// Changes the store at `path` as `change` says, starting from the file as it is now.
 ///
 /// The read, the change and the write happen under one lock (ADR-1041), so two updates — from

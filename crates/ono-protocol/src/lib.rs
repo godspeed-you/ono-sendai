@@ -75,7 +75,7 @@ pub mod transport;
 pub use audit::{Audit, AuditEvent, AuditKind, AuditSink, NoAudit};
 pub use authorization::{
     ActionGrant, AuthorizationContext, AuthorizedClient, AuthorizedClients, PeerAuthorization,
-    refusal_guidance, unauthenticated_refusal, update_store, write_store,
+    refusal_guidance, unauthenticated_refusal, update_store,
 };
 pub use connection::{MAX_UNCREDITED_FRAMES, WRITE_DEADLINE};
 pub use error::ProtocolError;
