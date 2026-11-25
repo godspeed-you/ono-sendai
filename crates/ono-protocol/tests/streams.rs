@@ -404,3 +404,38 @@ async fn should_end_the_serving_side_cleanly_when_the_link_is_dropped() {
          end of session for the remote end"
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn should_end_every_stream_opened_while_the_link_is_failing() {
+    // A stream opened in the instant the far side goes away — the link checked alive, then
+    // failed and drained its streams, then the new stream registered — was a stream on a dead
+    // link that nothing would ever end: its reader waited for ever (found as a 20 s hang of
+    // `limits.rs`'s #161 test, whose query raced the revoked session's close). Every stream
+    // opened on a link either is refused or ends, whatever the interleaving.
+    // The window is two statements wide; a thousand links make missing it vanishingly unlikely
+    // (without the fix the suite failed four runs in five at three hundred).
+    for _ in 0..1000 {
+        let fixture = common::connect().await;
+        let link = std::sync::Arc::new(fixture.link);
+        let opening = {
+            let link = std::sync::Arc::clone(&link);
+            tokio::spawn(async move {
+                let mut opened = Vec::new();
+                while let Ok(stream) = link.query(&RemoteQuery::target("process")) {
+                    opened.push(stream);
+                    tokio::task::yield_now().await;
+                }
+                opened
+            })
+        };
+        fixture.server.abort();
+        let opened = common::within(opening).await.expect("the opener ends");
+        for mut stream in opened {
+            let ended = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                while stream.recv().await.is_some() {}
+            })
+            .await;
+            assert!(ended.is_ok(), "a stream on a failed link ended");
+        }
+    }
+}

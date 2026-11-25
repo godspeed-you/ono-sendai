@@ -356,6 +356,16 @@ impl LinkInner {
         // to land; a peer that overruns its window still fills the queue and fails the link.
         let (sender, receiver) = mpsc::channel(self.window as usize + 1);
         let id = self.with_streams(|streams| {
+            // Checked again under the lock `fail` drains under: `fail` marks the link dead
+            // before it drains, so a stream registered here is either drained and told, or
+            // never registered. Checked only before the lock, a stream could register just
+            // after the drain, on a dead link, and wait for ever.
+            if !self.alive.load(Ordering::SeqCst) {
+                return Err(self
+                    .status()
+                    .err()
+                    .unwrap_or_else(|| unreachable("the link is closed")));
+            }
             if streams.len() >= self.limits.max_streams() {
                 return Err(ErrorValue::from(ProtocolError::TooManyStreams {
                     limit: self.limits.max_streams(),
