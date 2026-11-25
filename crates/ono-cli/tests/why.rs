@@ -291,6 +291,12 @@ fn should_refuse_a_target_the_past_did_not_record_as_not_recorded_rather_than_no
          refused as not recorded. Got {:?}",
         run.output()
     );
+    // Review finding R2C-3: the refusal's help is read by a person; an escaped newline is not.
+    assert!(
+        !run.stderr().contains("\\u{"),
+        "the refusal's help carries no escaped control character. Got {:?}",
+        run.stderr()
+    );
 }
 
 #[test]

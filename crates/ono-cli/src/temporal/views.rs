@@ -349,7 +349,7 @@ impl CommandImpl for Why {
                     let reach = refusal.help().unwrap_or_default().to_owned();
                     return Err(refusal.with_help(format!(
                         "no place answering to `{}` is in the history this shell can reconstruct \
-                         at {at}\n{reach}",
+                         at {at}; {reach}",
                         subject.join(" ")
                     )));
                 }
