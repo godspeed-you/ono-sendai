@@ -525,7 +525,10 @@ async fn should_drop_a_handshake_that_has_not_completed_within_the_timeout() {
     let agent = listening(
         ono_protocol::Limits::default()
             .with_max_pending_handshakes(1)
-            .with_handshake_timeout(std::time::Duration::from_millis(200)),
+            // Since the deadline runs from accept and covers TLS *and* the hello (ADR-1057, as
+            // amended), the legitimate client below must fit both into it: 200 ms did not on a
+            // loaded two-core host. Two seconds still makes the silent peer the one let go.
+            .with_handshake_timeout(std::time::Duration::from_secs(2)),
         &[&client],
     )
     .await;
@@ -995,4 +998,44 @@ async fn should_give_the_hello_only_what_the_tls_handshake_left_of_the_one_deadl
         "§12.2: TLS and the Ono negotiation share one deadline, got {refused:?}"
     );
     relaying.abort();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn should_refuse_promptly_a_stranger_that_says_hello_after_its_deadline() {
+    // A key nobody authorized completes TLS, is not admitted, and says hello only after the one
+    // deadline it was given has passed (ADR-1057 amended). It is told so, or finds the
+    // connection closed — promptly, never a hang.
+    let stranger = PeerIdentity::generate().expect("an identity nobody authorized");
+    let agent = listening(
+        ono_protocol::Limits::default()
+            .with_handshake_timeout(std::time::Duration::from_millis(500)),
+        &[],
+    )
+    .await;
+    for wait in [600_u64, 1_200] {
+        let pending = within(tls_connect(&agent.address, &stranger))
+            .await
+            .expect("mutual TLS completes");
+        // Waiting is the case here: past the deadline (600 ms), and past the refusal's own bound
+        // too (1.2 s), which is when the agent has let the socket go.
+        tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+        let started = std::time::Instant::now();
+        let refused = within(negotiate(&agent, pending))
+            .await
+            .expect_err("a stranger past its deadline is not linked");
+        assert!(
+            matches!(
+                refused.code(),
+                ErrorCode::RemoteUnauthorized
+                    | ErrorCode::RemoteHandshakeTimeout
+                    | ErrorCode::RemoteUnreachable
+            ),
+            "refused or closed, got {refused:?}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "promptly, not after a hang: {:?}",
+            started.elapsed()
+        );
+    }
 }

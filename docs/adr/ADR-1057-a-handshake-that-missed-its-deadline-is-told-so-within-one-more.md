@@ -154,3 +154,15 @@ written, and the caller has it. A caller that vanished before anything could be 
 transport failure the agent reports. For a wrapper (`ssh host ono --agent`): the refusal is on
 the wire, the exit status says whether the agent could deliver it.
 
+**What the one deadline means for the stranger of #161's test.** In
+`limits.rs::should_refuse_a_never_authorized_client_with_a_refusal_even_when_a_revocation_sweep_runs_first`
+the stranger completes TLS and waits, unadmitted, while a revocation sweep runs; its one deadline
+(10 s from accept) is far longer than the sweep (1 s), and if a loaded host ever stretched the
+wait past it, the agent writes the stranger its refusal at the deadline and lets the socket go one
+deadline later. Either way the stranger's late hello meets a refusal or a closed connection at
+once — proved by `limits.rs::should_refuse_promptly_a_stranger_that_says_hello_after_its_deadline`
+(hello 600 ms and 1.2 s after a 500 ms deadline: refused within the bound, never a hang). The
+test's intermittent hang was not this path but a stream opened as the revoked link failed
+(ADR-1099, amended). And because the deadline now covers TLS and the hello together,
+`limits.rs::should_drop_a_handshake_that_has_not_completed_within_the_timeout` gives its
+legitimate client 2 s instead of 200 ms, which a loaded two-core host could not fit both into.
