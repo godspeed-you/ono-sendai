@@ -145,3 +145,12 @@ behaviour; its assertions are unchanged.
   bounding that time by the same figure keeps the agent's cost per refused peer fixed by its own
   limits, and a peer that never reads gains nothing by it.
 
+**The stdio agent's exit status (review COR-R6), kept and recorded.** `ono --agent` over stdio whose
+only caller never says hello writes the E1502 `Reject` on stdout and exits 0; one whose caller
+hangs up before saying hello exits 1 (`remote.unreachable`); v0.6.5 exited 1 in both. Kept: ADR-0008
+gives the agent `0` when the session ended "however unimpressive the caller's manners" and `1` when
+the agent itself failed, and refusing a late caller is the agent doing its job — the refusal was
+written, and the caller has it. A caller that vanished before anything could be said is a
+transport failure the agent reports. For a wrapper (`ssh host ono --agent`): the refusal is on
+the wire, the exit status says whether the agent could deliver it.
+
