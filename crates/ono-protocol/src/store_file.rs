@@ -39,21 +39,52 @@ fn directory_of(path: &Path) -> &Path {
     }
 }
 
+/// How long an update waits for the lock another update holds before it is refused.
+///
+/// An update holds the lock for one read, one write and one rename; a holder that keeps it for
+/// longer is not an update in progress, and may be another account that can open the directory
+/// and locks it to hang this one's every trust decision (review SEC-A). So the lock is tried
+/// without blocking, again every few milliseconds, and the update is refused past this bound —
+/// failing closed: nothing is written.
+pub const STORE_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+
 /// Takes the update lock for the store at `path`, creating its directory if it is not there yet.
 ///
-/// Blocks until any other update of a store in the same directory has finished.
+/// Waits at most [`STORE_LOCK_WAIT`] for any other update of a store in the same directory to
+/// finish, without blocking the thread in the kernel.
 ///
 /// # Errors
 ///
-/// The path that could not be created or opened, and why.
+/// The path that could not be created, opened or locked, and why; a lock still held when the
+/// bound runs out is [`io::ErrorKind::WouldBlock`].
 pub(crate) fn lock(path: &Path) -> Result<Locked, (PathBuf, io::Error)> {
     let directory = directory_of(path);
     std::fs::create_dir_all(directory).map_err(|error| (directory.to_path_buf(), error))?;
     let handle = File::open(directory).map_err(|error| (directory.to_path_buf(), error))?;
-    handle
-        .lock()
-        .map_err(|error| (directory.to_path_buf(), error))?;
-    Ok(Locked { _directory: handle })
+    let deadline = std::time::Instant::now() + STORE_LOCK_WAIT;
+    loop {
+        match handle.try_lock() {
+            Ok(()) => return Ok(Locked { _directory: handle }),
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err((
+                    directory.to_path_buf(),
+                    io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        format!(
+                            "another process has held the update lock for more than {} s",
+                            STORE_LOCK_WAIT.as_secs()
+                        ),
+                    ),
+                ));
+            }
+            Err(std::fs::TryLockError::Error(error)) => {
+                return Err((directory.to_path_buf(), error));
+            }
+        }
+    }
 }
 
 /// Replaces the store at `path` with `contents`, as §9.8 describes. The caller holds `_locked`.

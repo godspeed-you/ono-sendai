@@ -96,5 +96,6 @@ pub use service::{
     RemoteService, ServerAuthorization, ServerConfig, StreamResponder, handshake_timeout_refusal,
     refuse, refuse_by, serve,
 };
+pub use store_file::STORE_LOCK_WAIT;
 pub use transport::{Transport, UnauthenticatedTransport};
 pub use trust::{Fingerprint, HostKey, TrustDecision, TrustEntry, TrustPolicy, TrustStore};

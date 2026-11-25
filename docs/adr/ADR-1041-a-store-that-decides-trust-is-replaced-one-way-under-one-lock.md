@@ -115,3 +115,21 @@ leave temporaries nobody cleans.
 **Keep the cached copy and compare-and-swap on the file's modification time.** Second-resolution
 timestamps make it unsound, and it turns a concurrent update into a failure the user has to retry
 rather than an update that waits a millisecond.
+
+## Amendment (v0.6.6 remediation, reviews SEC-A, PRF-10)
+
+The update lock was a blocking `flock` on the store's directory with no timeout. Any account that
+can open the directory — created with the umask's mode, commonly `0755` — can take the same lock
+and hang every `add`/`set`/`remove` of its owner's client and host keys, and on the handshake's
+path (first pin, a changed key) a blocked lock held a tokio worker. Now the lock is tried without
+blocking, again every 10 ms, for at most `STORE_LOCK_WAIT` (3 s); past it the update is refused
+`io.busy` (E0305) naming the directory, and nothing is written — the fail-closed direction. An
+honest update holds the lock for one read, one write and one rename, far inside the bound. A
+worker on the async path can still be held up to the bound; that is bounded, where it was not.
+
+Not changed here: the configuration directory's mode. Creating it `0700`, or refusing a store
+directory other accounts can open, would refuse existing installations whose directory is `0755`
+with no migration story; the mode and owner checks of the stores belong with the review's SEC-8,
+outside this milestone. Encoded by
+`crates/ono-protocol/tests/store_writers.rs::should_refuse_an_update_within_a_bound_while_another_account_holds_the_lock`
+(both stores; on the previous code the update blocked for as long as the lock was held).
