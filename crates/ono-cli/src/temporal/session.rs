@@ -489,6 +489,12 @@ pub fn session_coverage(
     }
 }
 
+/// The unit tests of this binary that move or read the process's one temporal state take turns
+/// at it (review finding TST-16): it is one static, and two tests changing it at once would each
+/// see the other's state.
+#[cfg(test)]
+pub(crate) static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// The bridge §14.1 reads the coordinate through, so the spatial layer keeps no second one.
 #[derive(Debug, Clone, Copy)]
 pub struct SessionEvidence;
@@ -569,6 +575,7 @@ mod tests {
 
     #[tokio::test]
     async fn should_apply_the_configuration_when_the_state_was_busy_as_it_arrived() {
+        let _turn = TURN.lock().await;
         // Issue #142: a configuration that met a held temporal state was skipped whole, and the
         // shell ran without the recorder its settings asked for. It is applied by the next holder
         // instead, before that holder reads anything.

@@ -59,9 +59,9 @@ mod tests {
     use super::*;
     use ono_temporal_core::{CoverageSummary, TemporalContext, TimeRange, TimeSelector};
 
-    /// The tests of this binary that move or read the process's one temporal coordinate take
-    /// turns at it.
-    static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    // The tests of this binary that move or read the process's one temporal coordinate take
+    // turns at it, with every other unit test of the temporal state.
+    use crate::temporal::session::TURN;
 
     #[tokio::test]
     async fn should_show_no_temporal_segment_when_the_session_is_in_the_present() {
