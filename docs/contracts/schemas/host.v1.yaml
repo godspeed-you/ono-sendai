@@ -49,16 +49,17 @@ fields:
   reachability:
     type: enum
     required: true
-    values: [reachable, unreachable, unauthorized, unknown]
+    values: [reachable, unreachable, unknown]
     doc: >-
       Whether the host answers, as the latest probe of the link this session holds to it found
       (`ono.link.probe/1`, ADR-1096). Measured when the table is read — `watch host` reads it at
       every poll — and reused for at most five seconds. `reachable`: a probe was answered.
       `unreachable`: a probe went unanswered within two seconds, or the link failed.
-      `unauthorized`: the far side answered and refused — transport reachability is not
-      authorization, and the two are never merged. `unknown`: there is no evidence — no link is
-      held (a listing never dials a host; `test host` does), the link is not established or not
-      followed, or the far side offers no probe.
+      `unknown`: there is no evidence — no link is held (a listing never dials a host; `test
+      host` does), the link is not established or not followed, the far side offers no probe,
+      or a probe failed for another reason, which `reachability_reason` names. Transport
+      reachability is not authorization: a probe reads nothing, so a host is `reachable` to a
+      client authorized to connect whatever it may read (ADR-1096).
   reachability_reason:
     type: string
     required: true

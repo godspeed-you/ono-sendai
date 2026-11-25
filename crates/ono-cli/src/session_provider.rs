@@ -1094,7 +1094,7 @@ fn host_record(
 /// What a host's reachability is, as far as this session can tell without dialling it
 /// (ADR-1096).
 struct Reachability {
-    /// `reachable`, `unreachable`, `unauthorized` or `unknown`.
+    /// `reachable`, `unreachable` or `unknown`.
     state: &'static str,
     /// Why — the evidence, or why there is none.
     reason: String,
@@ -1106,9 +1106,9 @@ struct Reachability {
 ///
 /// Transport reachability is not authorization, and neither is a missing answer: a probe that
 /// was answered is `reachable`; one that was not answered in time, or a link that failed, is
-/// `unreachable`; a probe the far side refused as not authorized is `unauthorized`; everything
-/// else — no link held, a link not established or not followed, a far side that offers no probe
-/// — is `unknown`, with the reason. Nothing here dials a host.
+/// `unreachable`; everything else — no link held, a link not established or not followed, a far
+/// side that offers no probe, a probe that failed for another reason — is `unknown`, with the
+/// reason. Nothing here dials a host.
 #[cfg(feature = "remote")]
 fn reachability(held: Option<&LinkRow>) -> Reachability {
     use crate::spatial::links::LatencyStatus;
@@ -1174,19 +1174,6 @@ fn reachability(held: Option<&LinkRow>) -> Reachability {
             ono_protocol::PROBE_CAPABILITY
         )),
         LatencyStatus::Unavailable => match failure {
-            Some(
-                code @ (ErrorCode::RemoteUnauthorized
-                | ErrorCode::RemoteUnauthenticated
-                | ErrorCode::RemoteCapabilityDenied),
-            ) => Reachability {
-                state: "unauthorized",
-                reason: format!(
-                    "the far side of `{}` answered, and refused the probe: {}",
-                    link.name,
-                    code.name()
-                ),
-                since,
-            },
             Some(ErrorCode::RemoteUnreachable) => Reachability {
                 state: "unreachable",
                 reason: format!("the link `{}` failed: the far side is gone", link.name),

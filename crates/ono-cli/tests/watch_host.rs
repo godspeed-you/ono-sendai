@@ -151,3 +151,51 @@ fn should_report_a_host_reachable_over_the_authenticated_transport_without_readi
         .unwrap_or_else(|| panic!("an event about the linked host, got {found:#?}"))["host"];
     assert_eq!(host["reachability"], "reachable", "got {host}");
 }
+
+#[test]
+fn should_emit_one_change_to_unreachable_when_a_held_link_stops_answering_and_back_when_it_does() {
+    // The far agent is frozen, not killed: it holds its connection open and answers nothing, so
+    // the link has not failed and only a probe can tell (ADR-1096). The watch says so once, as a
+    // `changed` event to `unreachable` — the reachable measurement is reused for at most the
+    // reuse window, then the probe waits its timeout, then one poll reads it — and once more,
+    // back to `reachable`, when the agent runs again.
+    let client = scratch();
+    let far = Peer::start("127.0.0.41", &[]);
+    far.authorize(&client);
+    pin(&client, &far);
+
+    let watch = Streaming::start(
+        &client,
+        &format!(
+            "link host {} --transport tcp; watch host --every 1s | to jsonl",
+            far.address
+        ),
+    );
+    watch.until(Duration::from_secs(30), |line| {
+        line.contains("\"reachability\":\"reachable\"")
+    });
+
+    far.freeze();
+    let (changed, before) = watch.until(Duration::from_secs(30), |line| {
+        line.contains("\"reachability\":\"unreachable\"")
+    });
+    assert!(
+        changed.contains("\"kind\":\"changed\"") && changed.contains("not answered within"),
+        "an unanswered probe over an open connection is a transition to unreachable, got \
+         {changed}"
+    );
+    assert!(
+        before.is_empty(),
+        "nothing was emitted before the transition: {before:#?}"
+    );
+
+    far.thaw();
+    let (back, between) = watch.until(Duration::from_secs(30), |line| {
+        line.contains("\"reachability\":\"reachable\"")
+    });
+    assert!(back.contains("\"kind\":\"changed\""), "got {back}");
+    assert!(
+        between.is_empty(),
+        "exactly one event to unreachable, then the one back: {between:#?}"
+    );
+}

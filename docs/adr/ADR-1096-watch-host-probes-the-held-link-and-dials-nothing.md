@@ -31,21 +31,26 @@ host that stays reachable emits nothing after its snapshot — one event per cha
 `test host` is what dials one. Opening connections from a watch would be ADR-0105's rejected
 design under another name; reachability without a link is a question the user asks explicitly.
 
-**Four states, never merged** — transport reachability is not authorization (v0.4.1 §2.1), and
-"no evidence" is not "unreachable" (§35.3):
+**Three states, never merged** — "no evidence" is not "unreachable" (§35.3):
 
 | state | evidence |
 |---|---|
 | `reachable` | a probe of the held link was answered |
 | `unreachable` | a probe went unanswered within `PROBE_TIMEOUT`, or the link failed (the far side is gone) |
-| `unauthorized` | the far side answered and refused the probe as not authorized (`remote.unauthorized`, `remote.unauthenticated`, `remote.capability_denied`) |
 | `unknown` | no link held; a definition not established; a link this session no longer follows; an agentless link (no agent to ask); an agent that does not offer the probe; a probe that failed for another reason, which the reason names |
 
-This build's agent answers every authorized connection's probe, so `unauthorized` arises only from
-a far side that refuses one; a client whose access is revoked has its connection closed (§12.5),
-which is the link failing — `unreachable` with the reason saying the far side is gone. A client
-authorized to connect but not to observe still learns the host is reachable: a probe reads
-nothing, and the connection it travels on was already authorized.
+Transport reachability is not authorization (v0.4.1 §2.1), and the probe keeps them apart by
+reading nothing: a client authorized to connect but not to observe still learns the host is
+reachable, because the connection the probe travels on was already authorized. A client whose
+access is revoked has its connection closed (§12.5), which is the link failing — `unreachable`
+with the reason saying the far side is gone.
+
+*Amended in the v0.6.6 remediation (review TST-3).* The decision first declared a fourth state,
+`unauthorized`, for "a far side that answered and refused the probe". No agent produces that
+answer — this build's agent answers every authorized connection's probe in its loop, and a
+connection that is not authorized is never established — so no test could produce the value and
+the contract would have declared a state nothing yields (#200's shape). It is removed from
+`ono.host/1`; a probe some other far side refused is `unknown`, and the reason names the code.
 
 **Bounds, cancellation and backpressure are the watch runtime's own.** A poll that probes waits at
 most 2 s (one pass, all links side by side); a dead link is detected without sending anything (a
@@ -59,8 +64,10 @@ one probe per held link per 5 s, whatever `--every` says.
 - Tests: `crates/ono-cli/tests/watch_host.rs` — reachable through a held link; `unknown` and
   nothing dialled for a host without one; `unknown` for an agentless link; a real second agent
   (`ono --agent --listen 127.0.0.2:0`, its own home and identity) that dies mid-watch produces
-  exactly one `changed` event to `unreachable` and nothing before it; a client authorized without
-  observe still sees the host reachable. Acceptance case
+  exactly one `changed` event to `unreachable` and nothing before it; one that is frozen
+  mid-watch — the connection stays open, so only the probe can tell — produces exactly one
+  `changed` to `unreachable` and, thawed, exactly one back to `reachable`; a client authorized
+  without observe still sees the host reachable. Acceptance case
   `456-watch-host-reports-reachability-through-the-held-link.case`.
 - `get host` now costs a probe per held agent link (bounded and reused as above). A listing that
   shows reachability measures it; one that would show an old figure would be the carried-forward
